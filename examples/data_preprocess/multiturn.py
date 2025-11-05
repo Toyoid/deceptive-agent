@@ -23,7 +23,7 @@ import pandas as pd
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local_dir", default="~/data/multiturn")
+    parser.add_argument("--local_dir", default="/DATA/lhx/data/multiturn")
     parser.add_argument("--hdfs_dir", default=None)
     args = parser.parse_args()
 

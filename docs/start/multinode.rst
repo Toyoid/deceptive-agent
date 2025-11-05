@@ -114,7 +114,7 @@ Once the fleet is created, define a Ray cluster task, e.g. in ``ray-cluster.dsta
         - pip install hf_transfer hf_xet
         - |
         if [ $DSTACK_NODE_RANK = 0 ]; then
-            python3 examples/data_preprocess/gsm8k.py --local_dir ~/data/gsm8k
+            python3 examples/data_preprocess/gsm8k.py --local_dir /DATA/lhx/data/gsm8k
             python3 -c "import transformers; transformers.pipeline('text-generation', model='Qwen/Qwen2.5-7B-Instruct')" 
             ray start --head --port=6379;
         else

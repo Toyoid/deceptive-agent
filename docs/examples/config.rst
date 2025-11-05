@@ -13,8 +13,8 @@ Data
 
    data:
      tokenizer: null
-     train_files: ~/data/rlhf/gsm8k/train.parquet
-     val_files: ~/data/rlhf/gsm8k/test.parquet
+     train_files: /DATA/lhx/data/rlhf/gsm8k/train.parquet
+     val_files: /DATA/lhx/data/rlhf/gsm8k/test.parquet
      prompt_key: prompt
      max_prompt_length: 512
      max_response_length: 512

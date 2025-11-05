@@ -4,8 +4,8 @@ set -x
 # Data preparation scripts are available in ``examples/data_preprocess``.
 # Example usage:
 #
-#   python3 examples/data_preprocess/math_dataset.py --local_dir ~/data/math
-#   python3 examples/data_preprocess/gsm8k.py --local_dir ~/data/gsm8k
+#   python3 examples/data_preprocess/math_dataset.py --local_dir /DATA/lhx/data/math
+#   python3 examples/data_preprocess/gsm8k.py --local_dir /DATA/lhx/data/gsm8k
 
 gsm8k_train_path=$HOME/data/math/train.parquet
 gsm8k_test_path=$HOME/data/math/test.parquet

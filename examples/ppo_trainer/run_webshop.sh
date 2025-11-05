@@ -7,6 +7,13 @@ num_cpus_per_env_worker=0.1 # The CPU resource allocated for each environment wo
 train_data_size=128 # match GRPO and GiGPO configuration (16 × 8)
 val_data_size=128
 
+export HF_ENDPOINT="https://hf-mirror.com"
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+# export TRANSFORMERS_OFFLINE=1
+# export HF_DATASETS_OFFLINE=1
+# export HF_HUB_OFFLINE=1
+export WANDB_MODE="offline"
+
 # We only use data preparation to indicate the modality and the data size.
 python3 -m examples.data_preprocess.prepare \
     --mode 'text' \
@@ -24,7 +31,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen2.5-1.5B-Instruct \
+    actor_rollout_ref.model.path=Qwen/Qwen2.5-3B-Instruct \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
@@ -50,7 +57,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
     critic.optim.lr=1e-5 \
     critic.model.use_remove_padding=True \
-    critic.model.path=Qwen/Qwen2.5-1.5B-Instruct \
+    critic.model.path=Qwen/Qwen2.5-3B-Instruct \
     critic.model.enable_gradient_checkpointing=True \
     critic.ppo_micro_batch_size_per_gpu=4 \
     critic.model.fsdp_config.param_offload=False \
@@ -63,8 +70,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_agent_webshop' \
-    trainer.experiment_name='ppo_qwen2.5_1.5b' \
-    trainer.n_gpus_per_node=2 \
+    trainer.experiment_name='ppo_qwen2.5_3b' \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=5 \

@@ -81,7 +81,7 @@ def test_image_rl_data():
         }
     )
     dataset = RLHFDataset(
-        data_files=os.path.expanduser("~/data/geo3k/train.parquet"),
+        data_files=os.path.expanduser("/DATA/lhx/data/geo3k/train.parquet"),
         tokenizer=tokenizer,
         config=config,
         processor=processor,

@@ -27,7 +27,7 @@ from tqdm.auto import tqdm
 from verl.utils.fs import copy, makedirs
 
 
-def generate_sft_dataset(target_hdfs_path_dir, local_dir="~/data/full_hh_rlh/sft"):
+def generate_sft_dataset(target_hdfs_path_dir, local_dir="/DATA/lhx/data/full_hh_rlh/sft"):
     dataset = load_dataset("Dahoas/full-hh-rlhf")
     output = {"prompt": [], "response": []}
     for data in tqdm(dataset["train"]):
@@ -55,7 +55,7 @@ def generate_sft_dataset(target_hdfs_path_dir, local_dir="~/data/full_hh_rlh/sft
         copy(local_path, hdfs_dir)
 
 
-def generate_rm_dataset(target_hdfs_path_dir, local_dir="~/data/full_hh_rlh/rm"):
+def generate_rm_dataset(target_hdfs_path_dir, local_dir="/DATA/lhx/data/full_hh_rlh/rm"):
     train_dataset = load_dataset("Dahoas/full-hh-rlhf", split="train[:75%]")
     test_dataset = load_dataset("Dahoas/full-hh-rlhf", split="train[-25%:]")
 
@@ -83,7 +83,7 @@ def generate_rm_dataset(target_hdfs_path_dir, local_dir="~/data/full_hh_rlh/rm")
             copy(local_path, hdfs_dir)
 
 
-def generate_rl_dataset(target_hdfs_path_dir, local_dir="~/data/full_hh_rlhf/rl"):
+def generate_rl_dataset(target_hdfs_path_dir, local_dir="/DATA/lhx/data/full_hh_rlhf/rl"):
     dataset = load_dataset("Dahoas/full-hh-rlhf")
     train_dataset = dataset["train"]
 
@@ -124,7 +124,7 @@ def generate_rl_dataset(target_hdfs_path_dir, local_dir="~/data/full_hh_rlhf/rl"
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--split", type=str, choices=["sft", "rm", "rl"], required=True)
-    parser.add_argument("--local_dir", type=str, default="~/data/full_hh_rlhf")
+    parser.add_argument("--local_dir", type=str, default="/DATA/lhx/data/full_hh_rlhf")
     parser.add_argument("--hdfs_dir", type=str, required=False, default=None)
 
     args = parser.parse_args()

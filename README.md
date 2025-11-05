@@ -285,7 +285,7 @@ pip install -e .
 pip install gym==0.26.2
 ```
 
-Prepare dataset (data will be saved at `~/data/searchR1_processed_direct`):
+Prepare dataset (data will be saved at `/DATA/lhx/data/searchR1_processed_direct`):
 ```bash
 cd repo_root/
 python examples/data_preprocess/preprocess_search_r1_dataset.py
@@ -316,7 +316,7 @@ Download the index:
 ```bash
 conda activate retriever
 
-local_dir=~/data/searchR1
+local_dir=/DATA/lhx/data/searchR1
 python examples/search/searchr1_download.py --local_dir $local_dir
 cat $local_dir/part_* > $local_dir/e5_Flat.index
 gzip -d $local_dir/wiki-18.jsonl.gz
