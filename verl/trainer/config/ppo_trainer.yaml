@@ -289,7 +289,7 @@ ray_init:
 
 
 env:
-  env_name: alfworld/AlfredTWEnv
+  env_name: null # e.g. alfworld/AlfredTWEnv, webshop, search, ReasonChat
   seed: 0
   max_steps: 50
   history_length: 2

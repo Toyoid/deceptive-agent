@@ -4,7 +4,7 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 
 num_cpus_per_env_worker=0.1 # The CPU resource allocated for each environment worker. If you want to use less CPU resources, you can decrease this value.
 
-train_data_size=16
+train_data_size=32
 val_data_size=128
 group_size=8
 
@@ -14,6 +14,7 @@ export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export WANDB_MODE="offline"
+DATA_ROOT=/DATA/lhx
 
 # We only use data preparation to indicate the modality and the data size.
 python3 -m examples.data_preprocess.prepare \
@@ -23,8 +24,8 @@ python3 -m examples.data_preprocess.prepare \
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files=$HOME/data/verl-agent/text/train.parquet \
-    data.val_files=$HOME/data/verl-agent/text/test.parquet \
+    data.train_files=$DATA_ROOT/data/verl-agent/text/train.parquet \
+    data.val_files=$DATA_ROOT/data/verl-agent/text/test.parquet \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=4096 \
@@ -65,7 +66,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_agent_webshop' \
-    trainer.experiment_name='grpo_qwen2.5_3b' \
+    trainer.experiment_name='grpo_qwen2.5_3b_train_data_32' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \

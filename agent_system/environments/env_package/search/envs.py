@@ -25,8 +25,8 @@ from copy import deepcopy
 
 class SearchMultiProcessEnv(gym.Env):
     """
-    - env_num  : Number of groups (logical sharding; keep the parameter for external compatibility)
-    - group_n  : Number of environments per group
+    - env_num  : Number of environment groups, corresponding to train_batch_size (logical sharding; keep the parameter for external compatibility)
+    - group_n  : Number of environments per group, corresponding to actor rollout number per question
     - total_envs = env_num * group_n
     """
 

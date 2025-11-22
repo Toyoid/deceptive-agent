@@ -11,8 +11,16 @@ mode="mean_std_norm" # "mean_norm" or "mean_std_norm"
 enable_similarity=True # enable similarity-based GiGPO
 similarity_thresh=0.9 # similarity threshold for GiGPO
 
-TRAIN_DATA="$HOME/data/searchR1_processed_direct/train.parquet"
-VAL_DATA="$HOME/data/searchR1_processed_direct/test.parquet"
+export HF_ENDPOINT="https://hf-mirror.com"
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export HF_HUB_OFFLINE=1
+export WANDB_MODE="offline"
+DATA_ROOT=/DATA/lhx
+
+TRAIN_DATA="$DATA_ROOT/data/searchR1_processed_direct/train.parquet"
+VAL_DATA="$DATA_ROOT/data/searchR1_processed_direct/test.parquet"
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=gigpo \

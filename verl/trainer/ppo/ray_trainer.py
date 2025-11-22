@@ -704,9 +704,9 @@ class RayPPOTrainer:
             # repeat test batch
             test_batch = test_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.val_kwargs.n, interleave=True)
 
-            # we only do validation on rule-based rm
-            if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
-                return {}
+            # # we only do validation on rule-based rm
+            # if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
+            #     return {}
 
             # Store original inputs
             input_ids = test_batch.batch["input_ids"]
@@ -763,8 +763,12 @@ class RayPPOTrainer:
             # test_batch = test_batch.union(test_output_gen_batch)
 
             # evaluate using reward_function
-            result = self.val_reward_fn(test_batch, return_dict=True)
-            reward_tensor = result["reward_tensor"]
+            if self.use_rm:
+                # compute reward model score
+                reward_tensor = self.rm_wg.compute_rm_score(test_batch)
+                test_batch = test_batch.union(reward_tensor)
+
+            reward_tensor, _ = compute_reward(test_batch, self.val_reward_fn)
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
 
@@ -789,6 +793,10 @@ class RayPPOTrainer:
         tool_callings = np.concatenate(tool_calling_list, axis=0)
         traj_uids = np.concatenate(traj_uid_list, axis=0)
         success_rate = {k: np.mean(v) for k, v in success_rate_dict.items()}
+        # NOTE: Potential bug for success_rate - verl/trainer/ppo/ray_trainer.py:772-789 & verl/trainer/ppo/ray_trainer.py:795-800 – Success metrics are aggregated incorrectly. Inside the loop, success_rate_dict[...] stores a single scalar per dataloader
+        # batch (test_batch.non_tensor_batch[k][0] is already the per-batch average emitted by TrajectoryCollector.gather_rollout_data). After the loop you take np.mean(v) over those scalars, which is the unweighted
+        # average of per-batch means. When the last validation shard is smaller (or when dynamic sampling drops/keeps subsets), this biases the reported success rate (e.g., a 32-sample batch counts as much as a 512-
+        # sample batch). Instead, keep both the summed successes and the sample counts (or weight by len(test_batch) when accumulating) so the final metric reflects all validation samples rather than being batch-size-dependent.
 
         # evaluate test_score based on data source
         data_source_reward = {}
@@ -1034,6 +1042,7 @@ class RayPPOTrainer:
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
             logger.log(data=val_metrics, step=self.global_steps)
+            raise
             if self.config.trainer.get("val_only", False):
                 return
 
@@ -1080,11 +1089,11 @@ class RayPPOTrainer:
 
                         ################ agent-environment loop ###############
                         gen_batch_output = self.traj_collector.multi_turn_loop(
-                                                                gen_batch=gen_batch,
-                                                                actor_rollout_wg=self.actor_rollout_wg,
-                                                                envs=self.envs,
-                                                                is_train=True,
-                                                                )
+                            gen_batch=gen_batch,
+                            actor_rollout_wg=self.actor_rollout_wg,
+                            envs=self.envs,
+                            is_train=True,
+                        )
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)

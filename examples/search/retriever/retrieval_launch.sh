@@ -1,4 +1,5 @@
-save_path=$HOME/data/searchR1
+DATA_ROOT=/DATA/lhx
+save_path=$DATA_ROOT/data/searchR1
 
 index_file=$save_path/e5_Flat.index
 corpus_file=$save_path/wiki-18.jsonl

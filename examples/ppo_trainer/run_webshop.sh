@@ -9,10 +9,11 @@ val_data_size=128
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3
-# export TRANSFORMERS_OFFLINE=1
-# export HF_DATASETS_OFFLINE=1
-# export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export HF_HUB_OFFLINE=1
 export WANDB_MODE="offline"
+DATA_ROOT=/DATA/lhx
 
 # We only use data preparation to indicate the modality and the data size.
 python3 -m examples.data_preprocess.prepare \
@@ -22,8 +23,8 @@ python3 -m examples.data_preprocess.prepare \
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=gae \
-    data.train_files=$HOME/data/verl-agent/text/train.parquet \
-    data.val_files=$HOME/data/verl-agent/text/test.parquet \
+    data.train_files=$DATA_ROOT/data/verl-agent/text/train.parquet \
+    data.val_files=$DATA_ROOT/data/verl-agent/text/test.parquet \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=4096 \

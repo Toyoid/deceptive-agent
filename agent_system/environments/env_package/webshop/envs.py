@@ -81,7 +81,7 @@ class WebshopWorker:
 
 
 # -----------------------------------------------------------------------------
-# Vectorised Ray environment --------------------------------------------------
+# Vectorised Ray environment 
 # -----------------------------------------------------------------------------
 
 class WebshopMultiProcessEnv(gym.Env):

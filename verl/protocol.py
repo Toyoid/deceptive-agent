@@ -396,6 +396,18 @@ class DataProto:
             self.batch = self.batch.to(device)
         return self
 
+    def clone(self) -> "DataProto":
+        """Create a deep copy of a DataProto to avoid downstream mutation side-effects
+
+        Returns:
+            DataProto: the cloned DataProto
+        """
+        batch_cloned = self.batch.clone() if self.batch is not None else None
+        non_tensor_batch_cloned = copy.deepcopy(self.non_tensor_batch)
+        meta_info_cloned = copy.deepcopy(self.meta_info)
+
+        return type(self)(batch=batch_cloned, non_tensor_batch=non_tensor_batch_cloned, meta_info=meta_info_cloned)
+    
     def select(self, batch_keys=None, non_tensor_batch_keys=None, meta_info_keys=None, deepcopy=False) -> "DataProto":
         """Select a subset of the DataProto via batch_keys and meta_info_keys
 
