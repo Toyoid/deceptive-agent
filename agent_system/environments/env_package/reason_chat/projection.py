@@ -75,7 +75,7 @@ def reason_chat_projection(actions: List[str]) -> Tuple[List[Dict[str, str]], Li
         payload = {
             "reason": thought,
             "answer": answer,
-            "raw_action": raw_text,
+            "raw_action": text,
         }
         projected.append(payload)
 

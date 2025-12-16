@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Tuple
 import gym
 import numpy as np
 
+from agent_system.environments.prompts.monitor_prompt import CHAT_TEMPLATE
+
 
 class ReasonChatMultiProcessEnv(gym.Env):
     """
@@ -59,15 +61,29 @@ class ReasonChatMultiProcessEnv(gym.Env):
         self._episodes.clear()
         infos: List[Dict[str, Any]] = []
 
-        for info in kwargs:
+        for i, env_dict in enumerate(kwargs):
+            system_prompt = env_dict["system_prompt"]
+            instruction = env_dict["instruction"]
+            question = env_dict["question"]
+            # Build history: system prompt (without instruction) + user question
+            system_formatted = CHAT_TEMPLATE.format_system(f"{system_prompt}")
+            question_formatted = CHAT_TEMPLATE.format_user(question)
+            history = system_formatted + question_formatted
+
             self._episodes.append({
-                "task_type": "chat",
+                "task_type": env_dict.get("task_type", "chat"),
                 "step": 0, 
-                "done": False
+                "done": False,
+                "evidence": system_formatted,
+                "user_query": question_formatted,
+                "history": history,
+                "agent_response": "",
             })
 
-            info["step"] = 0
-            infos.append(info)
+            infos.append({
+                "task_type": env_dict.get("task_type", "chat"),
+                "step": 0,
+            })
             
         return infos
 
@@ -84,13 +100,16 @@ class ReasonChatMultiProcessEnv(gym.Env):
         infos: List[Dict[str, Any]] = []
 
         for episode, payload in zip(self._episodes, actions):
-            episode["reason"] = payload["reason"]
-            episode["answer"] = payload["answer"]
-            episode["raw_action"] = payload["raw_action"]
+            # Format assistant response with think/answer tags
+            assistant_response = f"<think>\n{payload['reason']}\n</think>\n<answer>\n{payload['answer']}\n</answer>"
+            episode["agent_response"] += CHAT_TEMPLATE.format_assistant(assistant_response)
+            episode["history"] += CHAT_TEMPLATE.format_assistant(assistant_response)
 
             episode["step"] += 1
             done = episode["step"] >= self.max_steps
             episode["done"] = done
+
+            next_obs.append(episode["history"])  # for monitor input
 
             rewards.append(0.0)  # reward model will fill actual values later
             dones.append(done)
@@ -99,6 +118,9 @@ class ReasonChatMultiProcessEnv(gym.Env):
                 "task_type": episode["task_type"],
                 "step": episode["step"],
                 "won": False,
+                "user_query": episode["user_query"],  # for judge input
+                "evidence": episode["evidence"],  # for judge input
+                "agent_response": episode["agent_response"],  # for judge input
             }
             infos.append(info)
 
