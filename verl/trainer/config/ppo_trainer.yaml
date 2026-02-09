@@ -1,5 +1,3 @@
-# Copyright 2026 Beihang University (BUAA), China and Hanxiao Li.
-
 data:
   tokenizer: null
   use_shm: False
