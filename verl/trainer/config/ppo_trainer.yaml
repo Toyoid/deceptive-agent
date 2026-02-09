@@ -1,3 +1,5 @@
+# Copyright 2026 Beihang University (BUAA), China and Hanxiao Li.
+
 data:
   tokenizer: null
   use_shm: False
@@ -127,6 +129,9 @@ actor_rollout_ref:
     log_prob_max_token_len_per_gpu: ${actor_rollout_ref.actor.ppo_max_token_len_per_gpu}
     disable_log_stats: True
     enable_chunked_prefill: True # may get higher throughput when set to True. When activated, Please increase max_num_batched_tokens or decrease max_model_len.
+    # NOTE: Actor model seems to be not so much affected by vLLM V1 prefix caching issues with FSDP weight sync. 
+    # You can enable it to get better performance, but should be cautious about potential corruption.
+    enable_prefix_caching: True
     # for hf rollout
     do_sample: True
     # number of responses (i.e. num sample times)
@@ -203,7 +208,7 @@ monitor_rollout_ref:
   enable_train_monitor: False
   hybrid_engine: True
   data:
-    max_prompt_length: ${add:${data.max_prompt_length},${data.max_response_length}}
+    max_prompt_length: ${add:256,${data.max_prompt_length},${data.max_response_length}}
     max_response_length: 256
     truncation: error
     image_key: images
@@ -291,8 +296,8 @@ monitor_rollout_ref:
     top_k: -1 # 0 for hf rollout, -1 for vllm rollout
     top_p: 1
     use_fire_sampling: False # https://arxiv.org/abs/2410.21236
-    prompt_length: ${data.max_prompt_length}  # not use for opensource
-    response_length: ${data.max_response_length}
+    prompt_length: ${monitor_rollout_ref.data.max_prompt_length}  # not use for opensource
+    response_length: ${monitor_rollout_ref.data.max_response_length}
     # for vllm rollout
     dtype: bfloat16 # should align with FSDP
     gpu_memory_utilization: 0.5
@@ -311,6 +316,7 @@ monitor_rollout_ref:
     log_prob_max_token_len_per_gpu: ${monitor_rollout_ref.monitor.ppo_max_token_len_per_gpu}
     disable_log_stats: True
     enable_chunked_prefill: True # may get higher throughput when set to True. When activated, Please increase max_num_batched_tokens or decrease max_model_len.
+    enable_prefix_caching: False # DISABLED by default: vLLM V1 prefix caching causes corruption with FSDP weight sync, see docs/trouble_shooting/monitor_infer_gibberish_issue.md
     # for hf rollout
     do_sample: True
     # number of responses (i.e. num sample times)
@@ -378,6 +384,15 @@ reward_model:
   forward_max_token_len_per_gpu: ${critic.forward_max_token_len_per_gpu}
   reward_manager: episode
   launch_reward_fn_async: False # custom reward function executed async on CPU, during log_prob
+  normalization:
+    enable: False
+    calibration_samples: 5000  # number of RM scores to collect for z-score stats
+    rollout_overrides:
+      temperature: null
+      top_p: null
+    clip: null
+    eps: 1e-6
+    stats_path: null  # optional explicit path to save/load RM normalization stats
   sandbox_fusion:
     url: null # faas url to run code in cloud sandbox
     max_concurrent: 64 # max concurrent requests to sandbox
@@ -410,10 +425,6 @@ judge_model:
   # Set to -1 or null to disable (all constrained tokens get real probs)
   # Example: top_k=100 means only tokens in the top 100 most likely will have non-zero probability
   top_k: -1
-  # Strategy when all constrained tokens are masked by top_k filtering:
-  # - "uniform": fallback to uniform distribution (prob = 1/num_tokens for each)
-  # - "zero": set all constrained token probs to 0 (score will be 0)
-  top_k_fallback_strategy: uniform
   # Batching configuration
   micro_batch_size: null  # will be deprecated, use micro_batch_size_per_gpu
   micro_batch_size_per_gpu: 8
@@ -458,8 +469,8 @@ trainer:
   experiment_name: gsm8k
   logger: [ 'console', 'wandb' ]
   log_val_generations: 0
-  rollout_data_dir: null # directory for logging the rollout data, no dump if null
-  validation_data_dir: null # directory for logging the validation data, no dump if null
+  rollout_data_dir: null # whether and where to dump rollout data during training, null=disabled, "auto"=${hydra:run.dir}/rollout_data, or explicit path
+  validation_data_dir: null # whether and where to dump rollout data during validation, null=disabled, "auto"=${hydra:run.dir}/validation_data, or explicit path
   nnodes: 1
   n_gpus_per_node: 4
   nnodes_monitor: 1
@@ -511,3 +522,7 @@ env:
   webshop:
     use_small: True
     human_goals: False
+
+hydra:
+  run:
+    dir: outputs/${trainer.project_name}/${trainer.experiment_name}/${now:%Y-%m-%d_%H-%M-%S}

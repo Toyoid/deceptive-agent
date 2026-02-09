@@ -1,4 +1,5 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,14 +19,26 @@ Note that we don't combine the main with ray_trainer as ray_trainer is used by o
 import os
 
 import hydra
+from hydra.core.hydra_config import HydraConfig
 import ray
 
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 from verl.trainer.ppo.reward import load_reward_manager
+from verl.utils.config_resolvers import register_resolvers
+
+# Register custom OmegaConf resolvers before Hydra loads the config
+# This enables arithmetic operations in YAML like: ${add:${a},${b}}
+register_resolvers()
 
 
 @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
 def main(config):
+    # Resolve "auto" to hydra output directory
+    if config.trainer.rollout_data_dir == "auto":
+        config.trainer.rollout_data_dir = os.path.join(HydraConfig.get().run.dir, "rollout_data")
+    if config.trainer.validation_data_dir == "auto":
+        config.trainer.validation_data_dir = os.path.join(HydraConfig.get().run.dir, "validation_data")
+
     run_ppo(config)
 
 
@@ -49,23 +62,26 @@ class TaskRunner:
 
         from omegaconf import OmegaConf
 
+        from verl.utils.config_resolvers import register_resolvers
         from verl.utils.fs import copy_to_local
+
+        # Register resolvers in the worker process (they were registered in main but not here)
+        register_resolvers()
 
         pprint(OmegaConf.to_container(config, resolve=True))  # resolve=True will eval symbol values
         OmegaConf.resolve(config)
 
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False))
-
-        from agent_system.environments import make_envs
-        envs, val_envs = make_envs(config)
-
         # instantiate tokenizer
         from verl.utils import hf_processor, hf_tokenizer
 
         trust_remote_code = config.data.get("trust_remote_code", False)
         tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
         processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True)  # used for multimodal LLM, could be none
+
+        from agent_system.environments import make_envs
+        envs, val_envs = make_envs(config)
 
         # vllm early verify
         if config.actor_rollout_ref.rollout.name in ["vllm"]:
@@ -75,6 +91,13 @@ class TaskRunner:
                 if not is_version_ge(pkg="vllm", minver="0.7.3"):
                     raise NotImplementedError("PPO LoRA is not supported before vllm 0.7.3")
 
+        if config.monitor_rollout_ref.enable and config.monitor_rollout_ref.rollout.name in ["vllm"]:
+            from verl.utils.vllm_utils import is_version_ge
+
+            if config.monitor_rollout_ref.model.get("lora_rank", 0) > 0:
+                if not is_version_ge(pkg="vllm", minver="0.7.3"):
+                    raise NotImplementedError("PPO LoRA is not supported before vllm 0.7.3")
+                
         # define worker classes
         if config.actor_rollout_ref.actor.strategy in ["fsdp", "fsdp2"]:
             assert config.critic.strategy in ["fsdp", "fsdp2"]
@@ -102,13 +125,40 @@ class TaskRunner:
             Role.Critic: ray.remote(CriticWorker),
         }
 
-        global_pool_id = "global_pool"
+        # Separate resource pools for actor and monitor so their vLLM engines never share a Ray process
+        actor_pool_id = "actor_pool"
         resource_pool_spec = {
-            global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
+            actor_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
         }
+
+        monitor_pool_id = None
+        if config.monitor_rollout_ref.enable:
+            assert config.trainer.nnodes_monitor is not None and config.trainer.nnodes_monitor > 0, "Please set trainer.nnodes_monitor > 0 when enabling monitor_rollout_ref."
+            assert (
+                config.trainer.n_gpus_per_node_monitor is not None and config.trainer.n_gpus_per_node_monitor > 0
+            ), "Please set trainer.n_gpus_per_node_monitor > 0 when enabling monitor_rollout_ref."
+
+            monitor_pool_id = "monitor_pool"
+            resource_pool_spec[monitor_pool_id] = [config.trainer.n_gpus_per_node_monitor] * config.trainer.nnodes_monitor
+
+            # make sure total requested devices do not exceed the Ray cluster capacity.
+            device_resource_name = "NPU" if config.trainer.device == "npu" else "GPU"
+            cluster_resource = ray.cluster_resources().get(device_resource_name)
+            if cluster_resource is not None:
+                # Ray reports floats; convert to int to avoid floating comparison issues.
+                available_devices = int(cluster_resource)
+                actor_devices = config.trainer.nnodes * config.trainer.n_gpus_per_node
+                monitor_devices = config.trainer.nnodes_monitor * config.trainer.n_gpus_per_node_monitor
+                requested_devices = actor_devices + monitor_devices
+                assert (
+                    requested_devices <= available_devices
+                ), f"Requested {requested_devices} {device_resource_name}s (actor+monitor) but only {available_devices} are available on the Ray cluster."
+
+        print(f"resource_pool_spec: {resource_pool_spec}")
+
         mapping = {
-            Role.ActorRollout: global_pool_id,
-            Role.Critic: global_pool_id,
+            Role.ActorRollout: actor_pool_id,
+            Role.Critic: actor_pool_id,
         }
 
         # we should adopt a multi-source reward function here
@@ -125,31 +175,96 @@ class TaskRunner:
             else:
                 raise NotImplementedError
             role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
-            mapping[Role.RewardModel] = global_pool_id
+            # mapping[Role.RewardModel] = monitor_pool_id if config.monitor_rollout_ref.enable else actor_pool_id
+            mapping[Role.RewardModel] = actor_pool_id
 
         # use reference model
         if config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss:
             role_worker_mapping[Role.RefPolicy] = ray.remote(ActorRolloutRefWorker)
-            mapping[Role.RefPolicy] = global_pool_id
+            mapping[Role.RefPolicy] = actor_pool_id
+
+        # use monitor model
+        # NOTE: 
+        # 1. We set monitor training engine to be the same as actor_rollout_ref for simplicity and consistency
+        # 2. Currently we assume no critic model in monitor training
+        # 3. Please use FSDP as `configmonitor_rollout_ref.monitor.strategy`, we do not support `megatron` currently
+        # 4. Monitor is placed in a SEPARATE resource pool to avoid vLLM parallel state conflicts
+        if config.monitor_rollout_ref.enable:
+            monitor_local_path = copy_to_local(config.monitor_rollout_ref.model.path, use_shm=config.monitor_rollout_ref.model.get("use_shm", False))
+            monitor_tokenizer = hf_tokenizer(monitor_local_path, trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False))
+            monitor_processor = hf_processor(monitor_local_path, trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False), use_fast=True)  # used for multimodal LLM, could be none
+            
+            assert config.actor_rollout_ref.actor.strategy == config.monitor_rollout_ref.monitor.strategy
+            if config.monitor_rollout_ref.enable_train_monitor:
+                role_worker_mapping[Role.MonitorRollout] = ray.remote(ActorRolloutRefWorker)
+                mapping[Role.MonitorRollout] = monitor_pool_id  
+
+                # use reference model for monitor training
+                if config.monitor_rollout_ref.algorithm.use_kl_in_reward or config.monitor_rollout_ref.monitor.use_kl_loss:
+                    role_worker_mapping[Role.MonitorRef] = ray.remote(ActorRolloutRefWorker)
+                    mapping[Role.MonitorRef] = monitor_pool_id
+            else:
+                role_worker_mapping[Role.MonitorInfer] = ray.remote(ActorRolloutRefWorker)
+                mapping[Role.MonitorInfer] = monitor_pool_id
+        else:
+            monitor_tokenizer = None
+            monitor_processor = None
+        
+        # use judge model for constrained-token scoring on monitor critique validity
+        if config.judge_model.enable:
+            if config.judge_model.strategy in ["fsdp", "fsdp2"]:
+                from verl.workers.fsdp_workers import JudgeModelWorker
+            else:
+                raise NotImplementedError(f"Judge model strategy {config.judge_model.strategy} not supported")
+            role_worker_mapping[Role.Judge] = ray.remote(JudgeModelWorker)
+            # Put judge model in monitor pool (shares resources with monitor)
+            mapping[Role.Judge] = monitor_pool_id if config.monitor_rollout_ref.enable else actor_pool_id
+            
+            # Load judge tokenizer for critique preprocessing in TrajectoryCollector
+            judge_local_path = copy_to_local(config.judge_model.model.path, use_shm=config.judge_model.model.get("use_shm", False))
+            judge_tokenizer = hf_tokenizer(judge_local_path, trust_remote_code=config.judge_model.get("trust_remote_code", False))
+            judge_processor = hf_processor(judge_local_path, trust_remote_code=config.judge_model.get("trust_remote_code", False), use_fast=True)  # used for multimodal LLM, could be none
+        else:
+            judge_tokenizer = None
+            judge_processor = None
 
         reward_manager_name = config.reward_model.get("reward_manager", "episode")
         if reward_manager_name == 'episode':
-            from agent_system.reward_manager import EpisodeRewardManager
-            reward_manager_cls = EpisodeRewardManager
+            if config.monitor_rollout_ref.enable:
+                from agent_system.reward_manager import ActorMonitorRewardManager
+                reward_fn = ActorMonitorRewardManager(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
+                # Note that we always use function-based RM for validation
+                val_reward_fn = ActorMonitorRewardManager(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
+
+                monitor_reward_fn = ActorMonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
+                monitor_val_reward_fn = ActorMonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, role='monitor', normalize_by_length=False)
+            else:
+                from agent_system.reward_manager import EpisodeRewardManager
+                reward_manager_cls = EpisodeRewardManager
+                
+                reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
+                # Note that we always use function-based RM for validation
+                val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
+                monitor_reward_fn = None
+                monitor_val_reward_fn = None
         else:
             raise NotImplementedError
-
-        reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
-
-        # Note that we always use function-based RM for validation
-        val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
 
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 
         assert config.actor_rollout_ref.rollout.n == 1, "In verl, actor_rollout_ref.rollout.n>1 is for GRPO. In verl+env, we keep n=1, and achieve GRPO by env.rollout.n"
+        assert config.actor_rollout_ref.rollout.val_kwargs.n == 1, "In verl, actor_rollout_ref.rollout.val_kwargs.n>1 controls multiple responses per question. In verl+env, we keep val_kwargs.n=1, and achieve multi-rollout by env.rollout.val_n"
 
         from agent_system.multi_turn_rollout import TrajectoryCollector
-        traj_collector = TrajectoryCollector(config=config, tokenizer=tokenizer, processor=processor)
+        traj_collector = TrajectoryCollector(
+            config=config, 
+            tokenizer=tokenizer, 
+            processor=processor,
+            monitor_tokenizer=monitor_tokenizer,
+            monitor_processor=monitor_processor,
+            judge_tokenizer=judge_tokenizer,
+            judge_processor=judge_processor,
+        )
 
         from verl.utils.dataset.rl_dataset import collate_fn
 
@@ -159,12 +274,15 @@ class TaskRunner:
         trainer = RayPPOTrainer(
             config=config,
             tokenizer=tokenizer,
+            monitor_tokenizer=monitor_tokenizer,
             processor=processor,
             role_worker_mapping=role_worker_mapping,
             resource_pool_manager=resource_pool_manager,
             ray_worker_group_cls=ray_worker_group_cls,
             reward_fn=reward_fn,
             val_reward_fn=val_reward_fn,
+            monitor_reward_fn=monitor_reward_fn,
+            monitor_val_reward_fn=monitor_val_reward_fn,
             train_dataset=train_dataset,
             val_dataset=val_dataset,
             collate_fn=collate_fn,
@@ -175,6 +293,7 @@ class TaskRunner:
             val_envs=val_envs,
         )
         trainer.init_workers()
+        trainer.calibrate_rm_stats_if_enabled()
         trainer.fit()
 
 

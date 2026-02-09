@@ -1,4 +1,5 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -76,7 +77,7 @@ def _compute_response_info(batch: DataProto) -> Dict[str, Any]:
     )
 
 
-def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str, Any]:
+def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefix: str = "") -> Dict[str, Any]:
     """
     Computes various metrics from a batch of data for PPO training.
 
@@ -87,6 +88,8 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
     Args:
         batch: A DataProto object containing batch data with token-level scores, rewards, advantages, etc.
         use_critic: Whether to include critic-specific metrics. Defaults to True.
+        metric_prefix: Optional prefix for metric keys (e.g., "monitor" -> "monitor/critic/score/mean").
+                      If empty, no prefix is added (backward compatible).
 
     Returns:
         A dictionary of metrics including:
@@ -99,6 +102,10 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
             - response_length/mean, max, min, clip_ratio: Statistics about response lengths
             - prompt_length/mean, max, min, clip_ratio: Statistics about prompt lengths
     """
+    # Helper to add prefix to metric keys
+    def _key(name: str) -> str:
+        return f"{metric_prefix}/{name}" if metric_prefix else name
+    
     sequence_score = batch.batch["token_level_scores"].sum(-1)
     sequence_reward = batch.batch["token_level_rewards"].sum(-1)
 
@@ -128,63 +135,76 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
 
     metrics = {
         # score
-        "critic/score/mean": torch.mean(sequence_score).detach().item(),
-        "critic/score/max": torch.max(sequence_score).detach().item(),
-        "critic/score/min": torch.min(sequence_score).detach().item(),
+        _key("critic/score/mean"): torch.mean(sequence_score).detach().item(),
+        _key("critic/score/max"): torch.max(sequence_score).detach().item(),
+        _key("critic/score/min"): torch.min(sequence_score).detach().item(),
         # reward
-        "critic/rewards/mean": torch.mean(sequence_reward).detach().item(),
-        "critic/rewards/max": torch.max(sequence_reward).detach().item(),
-        "critic/rewards/min": torch.min(sequence_reward).detach().item(),
+        _key("critic/rewards/mean"): torch.mean(sequence_reward).detach().item(),
+        _key("critic/rewards/max"): torch.max(sequence_reward).detach().item(),
+        _key("critic/rewards/min"): torch.min(sequence_reward).detach().item(),
         # adv
-        "critic/advantages/mean": torch.mean(valid_adv).detach().item(),
-        "critic/advantages/max": torch.max(valid_adv).detach().item(),
-        "critic/advantages/min": torch.min(valid_adv).detach().item(),
+        _key("critic/advantages/mean"): torch.mean(valid_adv).detach().item(),
+        _key("critic/advantages/max"): torch.max(valid_adv).detach().item(),
+        _key("critic/advantages/min"): torch.min(valid_adv).detach().item(),
         # returns
-        "critic/returns/mean": torch.mean(valid_returns).detach().item(),
-        "critic/returns/max": torch.max(valid_returns).detach().item(),
-        "critic/returns/min": torch.min(valid_returns).detach().item(),
+        _key("critic/returns/mean"): torch.mean(valid_returns).detach().item(),
+        _key("critic/returns/max"): torch.max(valid_returns).detach().item(),
+        _key("critic/returns/min"): torch.min(valid_returns).detach().item(),
         **(
             {
                 # values
-                "critic/values/mean": torch.mean(valid_values).detach().item(),
-                "critic/values/max": torch.max(valid_values).detach().item(),
-                "critic/values/min": torch.min(valid_values).detach().item(),
+                _key("critic/values/mean"): torch.mean(valid_values).detach().item(),
+                _key("critic/values/max"): torch.max(valid_values).detach().item(),
+                _key("critic/values/min"): torch.min(valid_values).detach().item(),
                 # vf explained var
-                "critic/vf_explained_var": (1.0 - return_diff_var / (return_var + 1e-5)).detach().item(),
+                _key("critic/vf_explained_var"): (1.0 - return_diff_var / (return_var + 1e-5)).detach().item(),
             }
             if use_critic
             else {}
         ),
         # response length
-        "response_length/mean": torch.mean(response_length).detach().item(),
-        "response_length/max": torch.max(response_length).detach().item(),
-        "response_length/min": torch.min(response_length).detach().item(),
-        "response_length/clip_ratio": torch.mean(torch.eq(response_length, max_response_length).float()).detach().item(),
+        _key("response_length/mean"): torch.mean(response_length).detach().item(),
+        _key("response_length/max"): torch.max(response_length).detach().item(),
+        _key("response_length/min"): torch.min(response_length).detach().item(),
+        _key("response_length/clip_ratio"): torch.mean(torch.eq(response_length, max_response_length).float()).detach().item(),
         # prompt length
-        "prompt_length/mean": torch.mean(prompt_length).detach().item(),
-        "prompt_length/max": torch.max(prompt_length).detach().item(),
-        "prompt_length/min": torch.min(prompt_length).detach().item(),
-        "prompt_length/clip_ratio": torch.mean(torch.eq(prompt_length, max_prompt_length).float()).detach().item(),
-        # episode
-        "episode/reward/mean": 
-            batch.non_tensor_batch["episode_rewards"][unique_idx].mean().item(),
-        "episode/reward/max": 
-            batch.non_tensor_batch["episode_rewards"][unique_idx].max().item(),
-        "episode/reward/min": 
-            batch.non_tensor_batch["episode_rewards"][unique_idx].min().item(),
-        "episode/length/mean": 
-            batch.non_tensor_batch["episode_lengths"][unique_idx].mean().item(),
-        "episode/length/max":
-            batch.non_tensor_batch["episode_lengths"][unique_idx].max().item(),
-        "episode/length/min": 
-            batch.non_tensor_batch["episode_lengths"][unique_idx].min().item(),
-        "episode/tool_call_count/mean": 
-            batch.non_tensor_batch["tool_callings"][unique_idx].mean().item(),
-        "episode/tool_call_count/max":
-            batch.non_tensor_batch["tool_callings"][unique_idx].max().item(),
-        "episode/tool_call_count/min":
-            batch.non_tensor_batch["tool_callings"][unique_idx].min().item(),
-        **({f"episode/{k}": v[0].item() for k, v in batch.non_tensor_batch.items() if "success_rate" in k}),
+        _key("prompt_length/mean"): torch.mean(prompt_length).detach().item(),
+        _key("prompt_length/max"): torch.max(prompt_length).detach().item(),
+        _key("prompt_length/min"): torch.min(prompt_length).detach().item(),
+        _key("prompt_length/clip_ratio"): torch.mean(torch.eq(prompt_length, max_prompt_length).float()).detach().item(),
+        # episode metrics - only for actor, not for monitor
+        # NOTE: Monitor batches don't have episode_lengths, episode_rewards, tool_callings, etc.
+        # because monitor currently evaluates actor's entire trajectory of responses rather than each step.
+        **(
+            {
+                _key("episode/reward/mean"): 
+                    batch.non_tensor_batch["episode_rewards"][unique_idx].mean().item(),
+                _key("episode/reward/max"): 
+                    batch.non_tensor_batch["episode_rewards"][unique_idx].max().item(),
+                _key("episode/reward/min"): 
+                    batch.non_tensor_batch["episode_rewards"][unique_idx].min().item(),
+                **({
+                    _key("episode/trust_penalty/mean"): batch.non_tensor_batch["trust_penalties"][unique_idx].mean().item(),
+                    _key("episode/trust_penalty/max"): batch.non_tensor_batch["trust_penalties"][unique_idx].max().item(),
+                    _key("episode/trust_penalty/min"): batch.non_tensor_batch["trust_penalties"][unique_idx].min().item(),
+                } if "trust_penalties" in batch.non_tensor_batch else {}),
+                _key("episode/length/mean"):
+                    batch.non_tensor_batch["episode_lengths"][unique_idx].mean().item(),
+                _key("episode/length/max"):
+                    batch.non_tensor_batch["episode_lengths"][unique_idx].max().item(),
+                _key("episode/length/min"):
+                    batch.non_tensor_batch["episode_lengths"][unique_idx].min().item(),
+                _key("episode/tool_call_count/mean"): 
+                    batch.non_tensor_batch["tool_callings"][unique_idx].mean().item(),
+                _key("episode/tool_call_count/max"):
+                    batch.non_tensor_batch["tool_callings"][unique_idx].max().item(),
+                _key("episode/tool_call_count/min"):
+                    batch.non_tensor_batch["tool_callings"][unique_idx].min().item(),
+                **{_key(f"episode/{k}"): v[0].item() for k, v in batch.non_tensor_batch.items() if "success_rate" in k},
+            }
+            if metric_prefix != "monitor"
+            else {}
+        ),
     }
     return metrics
 
@@ -228,7 +248,7 @@ def compute_timing_metrics(batch: DataProto, timing_raw: Dict[str, float]) -> Di
     }
 
 
-def compute_throughout_metrics(batch: DataProto, timing_raw: Dict[str, float], n_gpus: int) -> Dict[str, Any]:
+def compute_throughout_metrics(total_num_tokens: int, timing_raw: Dict[str, float], n_gpus: int) -> Dict[str, Any]:
     """
     Computes throughput metrics for PPO training.
     
@@ -237,14 +257,14 @@ def compute_throughout_metrics(batch: DataProto, timing_raw: Dict[str, float], n
     (tokens per second per GPU).
     
     Args:
-        batch: A DataProto object containing batch data with meta information about token counts.
+        total_num_tokens: Total number of tokens processed in the training step.
         timing_raw: A dictionary mapping stage names to their execution times in seconds.
                    Must contain a "step" key with the total step time.
         n_gpus: Number of GPUs used for training.
         
     Returns:
         A dictionary containing:
-            - perf/total_num_tokens: Total number of tokens processed in the batch
+            - perf/total_num_tokens: Total number of tokens processed in the training step
             - perf/time_per_step: Time taken for the step in seconds
             - perf/throughput: Tokens processed per second per GPU
             
@@ -252,7 +272,6 @@ def compute_throughout_metrics(batch: DataProto, timing_raw: Dict[str, float], n
         The throughput is calculated as total_tokens / (time * n_gpus) to normalize
         across different GPU counts.
     """
-    total_num_tokens = sum(batch.meta_info["global_token_num"])
     time = timing_raw["step"]
     # estimated_flops, promised_flops = flops_function.estimate_flops(num_tokens, time)
     # f'Actual TFLOPs/s/GPU​': estimated_flops/(n_gpus),
