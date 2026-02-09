@@ -1,8 +1,4 @@
-monitor_model_plan.md
-WORKFLOW.md
-docs/monitor_model_report.md
-docs/reason_chat_plan.md
-docs/reward_system_report.md
+dev_notes/
 
 **/*.pt
 **/checkpoints
