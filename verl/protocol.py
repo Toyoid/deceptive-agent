@@ -89,7 +89,7 @@ def pad_dataproto_to_divisor(data: "DataProto", size_divisor: int):
         data_padded = DataProto.concat([data] + padding_protos)
     else:
         if len(data) == 0:
-            logging.warning("padding a DataProto with no item, no changed made")
+            logging.warning("padding a DataProto with no item, no change made")
         pad_size = 0
         data_padded = data
     return data_padded, pad_size
@@ -324,7 +324,7 @@ class DataProto:
             batch_size = self.batch.batch_size[0]
             for key, val in self.non_tensor_batch.items():
                 assert isinstance(val, np.ndarray), f"data in the non_tensor_batch must be a numpy.array with dtype=object, but for {key=}, got {type(val)=}"
-                assert val.shape[0] == batch_size, f"key {key} length {len(val)} is not equal to batch size {batch_size}"
+                assert val.shape[0] == batch_size, f"key {key} length {len(val)} is not equal to batch size {batch_size}."
 
     @classmethod
     def from_single_dict(cls, data: Dict[str, Union[torch.Tensor, np.ndarray]], meta_info=None, auto_padding=False):
@@ -738,7 +738,7 @@ class DataProto:
             interleave (bool): Whether to interleave the repeated data.
 
         Returns:
-            DataProto: A new DataProto with repeated data.
+            DataProto: A new DataProto with repeated data, which is independent of the original.
         """
         if self.batch is not None:
             if interleave:
@@ -765,7 +765,7 @@ class DataProto:
         return type(self)(
             batch=repeated_batch,
             non_tensor_batch=repeated_non_tensor_batch,
-            meta_info=self.meta_info,
+            meta_info=copy.deepcopy(self.meta_info),  # deepcopy to avoid mutation side-effect
         )
 
     def unfold_column_chunks(self, n_split: int, split_keys: Optional[List[str]] = None):
