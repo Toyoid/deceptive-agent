@@ -196,6 +196,7 @@ class FSDPVLLMShardingManager(BaseShardingManager):
 
             # update model params
             self.update_params(params, peft_config=peft_config)
+            
             log_gpu_memory_usage("After sync model weights in sharding manager", logger=logger)
             del params
             if self.offload_param:
@@ -204,6 +205,13 @@ class FSDPVLLMShardingManager(BaseShardingManager):
 
             if "tags" in inspect.signature(self.inference_engine.wake_up).parameters:
                 self.inference_engine.wake_up(tags=["kv_cache"])
+            
+            # NOTE: We attempt to reset prefix cache after weight sync, but this does NOT
+            # reliably fix the corruption issue in vLLM V1 engine with sleep mode.
+            # The recommended workaround is to set enable_prefix_caching=False.
+            # see docs/trouble_shooting/monitor_infer_gibberish_issue.md and similar issue in https://github.com/vllm-project/vllm/issues/17103 for details.
+            if hasattr(self.inference_engine, 'reset_prefix_cache'):
+                self.inference_engine.reset_prefix_cache()
 
         log_gpu_memory_usage("After del state_dict and empty_cache in sharding manager", logger=logger)
 
@@ -221,6 +229,10 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         ):
             self.inference_engine.offload_model_weights()
         else:
+            # NOTE: Attempt to reset prefix cache before sleep (doesn't fix the issue).
+            # The recommended workaround is to set enable_prefix_caching=False.
+            if hasattr(self.inference_engine, 'reset_prefix_cache'):
+                self.inference_engine.reset_prefix_cache()
             self.inference_engine.sleep(level=1)
 
         self.module.train()
