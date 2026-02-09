@@ -1,4 +1,5 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -116,11 +117,23 @@ class ActorRolloutRefWorker(Worker):
         # build device mesh for FSDP
         world_size = torch.distributed.get_world_size()
         # TODO(sgm): support FSDP hybrid shard for larger model
-        self.device_mesh = create_device_mesh(world_size=world_size, fsdp_size=self.config.actor.fsdp_config.fsdp_size)
+        
+        self.role = role
+        assert self.role in ["actor", "rollout", "ref", "actor_rollout", "actor_rollout_ref", "monitor_infer", "monitor_rollout", "monitor_ref", "monitor_rollout_ref"]
+
+        self._is_actor = self.role in ["actor", "actor_rollout", "actor_rollout_ref", "monitor_rollout", "monitor_rollout_ref"]
+        self._is_rollout = self.role in ["rollout", "actor_rollout", "actor_rollout_ref", "monitor_infer", "monitor_rollout", "monitor_rollout_ref"]
+        self._is_ref = self.role in ["ref", "actor_rollout_ref", "monitor_ref", "monitor_rollout_ref"]
+        self._is_monitor = self.role in ["monitor_infer", "monitor_rollout", "monitor_ref", "monitor_rollout_ref"]
+        
+        # Determine which config section to use (actor for main policy, monitor for monitor policy)
+        self.training_config = self.config.monitor if self._is_monitor else self.config.actor
+        
+        self.device_mesh = create_device_mesh(world_size=world_size, fsdp_size=self.training_config.fsdp_config.fsdp_size)
 
         # build device mesh for Ulysses Sequence Parallel
         self.ulysses_device_mesh = None
-        self.ulysses_sequence_parallel_size = self.config.actor.get("ulysses_sequence_parallel_size", 1)
+        self.ulysses_sequence_parallel_size = self.training_config.get("ulysses_sequence_parallel_size", 1)
         dp = world_size // self.ulysses_sequence_parallel_size
         if self.ulysses_sequence_parallel_size > 1:
             self.ulysses_device_mesh = init_device_mesh(device_name, mesh_shape=(dp, self.ulysses_sequence_parallel_size), mesh_dim_names=["dp", "sp"])
@@ -129,35 +142,28 @@ class ActorRolloutRefWorker(Worker):
         self._lora_rank = self.config.model.get('lora_rank', 0)
         self._is_lora = self._lora_rank > 0
 
-        self.role = role
-        assert self.role in ["actor", "rollout", "ref", "actor_rollout", "actor_rollout_ref"]
-
-        self._is_actor = self.role in ["actor", "actor_rollout", "actor_rollout_ref"]
-        self._is_rollout = self.role in ["rollout", "actor_rollout", "actor_rollout_ref"]
-        self._is_ref = self.role in ["ref", "actor_rollout_ref"]
-
         self._is_offload_param = False
         self._is_offload_optimizer = False
         if self._is_actor:
-            self._is_offload_param = self.config.actor.fsdp_config.get("param_offload", False)
-            self._is_offload_optimizer = self.config.actor.fsdp_config.get("optimizer_offload", False)
+            self._is_offload_param = self.training_config.fsdp_config.get("param_offload", False)
+            self._is_offload_optimizer = self.training_config.fsdp_config.get("optimizer_offload", False)
         elif self._is_ref:
-            # TODO: it seems that manual offload is slowly than FSDP offload
+            # TODO: it seems that manual offload is slower than FSDP offload
             self._is_offload_param = self.config.ref.fsdp_config.get("param_offload", False)
 
         # normalize config
         if self._is_actor:
-            self.config.actor.ppo_mini_batch_size *= self.config.rollout.n
-            self.config.actor.ppo_mini_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
-            assert self.config.actor.ppo_mini_batch_size > 0, f"ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be larger than 0 after normalization"
+            self.training_config.ppo_mini_batch_size *= self.config.rollout.n
+            self.training_config.ppo_mini_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
+            assert self.training_config.ppo_mini_batch_size > 0, f"ppo_mini_batch_size {self.training_config.ppo_mini_batch_size} should be larger than 0 after normalization"
             # micro bsz
-            if self.config.actor.ppo_micro_batch_size is not None:
-                self.config.actor.ppo_micro_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
-                self.config.actor.ppo_micro_batch_size_per_gpu = self.config.actor.ppo_micro_batch_size
+            if self.training_config.ppo_micro_batch_size is not None:
+                self.training_config.ppo_micro_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
+                self.training_config.ppo_micro_batch_size_per_gpu = self.training_config.ppo_micro_batch_size
 
-            if self.config.actor.ppo_micro_batch_size_per_gpu is not None:
-                assert self.config.actor.ppo_mini_batch_size % self.config.actor.ppo_micro_batch_size_per_gpu == 0, f"normalized ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be divisible by ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu}"
-                assert self.config.actor.ppo_mini_batch_size // self.config.actor.ppo_micro_batch_size_per_gpu > 0, f"normalized ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be larger than ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu}"
+            if self.training_config.ppo_micro_batch_size_per_gpu is not None:
+                assert self.training_config.ppo_mini_batch_size % self.training_config.ppo_micro_batch_size_per_gpu == 0, f"normalized ppo_mini_batch_size {self.training_config.ppo_mini_batch_size} should be divisible by ppo_micro_batch_size_per_gpu {self.training_config.ppo_micro_batch_size_per_gpu}"
+                assert self.training_config.ppo_mini_batch_size // self.training_config.ppo_micro_batch_size_per_gpu > 0, f"normalized ppo_mini_batch_size {self.training_config.ppo_mini_batch_size} should be larger than ppo_micro_batch_size_per_gpu {self.training_config.ppo_micro_batch_size_per_gpu}"
 
         # normalize rollout config
         if self._is_rollout and self.config.rollout.log_prob_micro_batch_size is not None:
@@ -202,6 +208,8 @@ class ActorRolloutRefWorker(Worker):
 
         torch_dtype = fsdp_config.get("model_dtype", None)
         if torch_dtype is None:
+            # For training roles (_is_actor), we must create model in fp32 to ensure
+            # optimizer states are correct. For inference-only roles, bfloat16 saves memory.
             torch_dtype = torch.float32 if self._is_actor else torch.bfloat16
         else:
             torch_dtype = PrecisionType.to_dtype(torch_dtype)
@@ -307,7 +315,7 @@ class ActorRolloutRefWorker(Worker):
         # We force reference policy to use CPUOffload to save memory.
         # We force turn off CPUOffload for actor because it causes incorrect results when using grad accumulation
         cpu_offload = None if role == "actor" else CPUOffload(offload_params=True)
-        fsdp_strategy = self.config.actor.strategy
+        fsdp_strategy = self.training_config.strategy
         if fsdp_strategy == "fsdp":
             actor_module_fsdp = FSDP(
                 actor_module,
@@ -512,12 +520,14 @@ class ActorRolloutRefWorker(Worker):
 
         if self._is_actor or self._is_rollout:
             # we need the model for actor and rollout
+            # NOTE: Always use proper fsdp_config even for rollout-only mode to ensure
+            # correct dtype and mixed precision settings for weight sync to inference engine.
+            # Using empty config causes dtype mismatches that produce gibberish at certain batch sizes.
+            fsdp_config = self.training_config.fsdp_config
             if self._is_actor:
-                optim_config = self.config.actor.optim
-                fsdp_config = self.config.actor.fsdp_config
+                optim_config = self.training_config.optim
             else:
                 optim_config = None
-                fsdp_config = OmegaConf.create()
 
             local_path = copy_to_local(self.config.model.path, use_shm=use_shm)
             (
@@ -552,11 +562,19 @@ class ActorRolloutRefWorker(Worker):
                 log_gpu_memory_usage("After offload actor optimizer during init", logger=logger)
         # load from checkpoint
         if self._is_actor:
-            OmegaConf.set_struct(self.config.actor, True)
-            with open_dict(self.config.actor):
-                self.config.actor.use_remove_padding = use_remove_padding
-                self.config.actor.use_fused_kernels = use_fused_kernels
-            self.actor = DataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
+            OmegaConf.set_struct(self.training_config, True)
+            with open_dict(self.training_config):
+                self.training_config.use_remove_padding = use_remove_padding
+                self.training_config.use_fused_kernels = use_fused_kernels
+            # Use 'monitor' prefix for monitor roles, 'actor' for regular actor roles
+            metric_prefix = "monitor" if self._is_monitor else "actor"
+            self.actor = DataParallelPPOActor(
+                config=self.training_config, 
+                actor_module=self.actor_module_fsdp, 
+                actor_optimizer=self.actor_optimizer,
+                metric_prefix=metric_prefix
+            )
+            self._metric_prefix = metric_prefix
 
         if self._is_rollout:
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
@@ -587,7 +605,7 @@ class ActorRolloutRefWorker(Worker):
                 optimizer=self.actor.actor_optimizer,
                 lr_scheduler=self.actor_lr_scheduler,
                 processing_class=self.processor if self.processor is not None else self.tokenizer,
-                checkpoint_contents=self.config.actor.checkpoint.contents,
+                checkpoint_contents=self.training_config.checkpoint.contents,
             )
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
@@ -609,13 +627,15 @@ class ActorRolloutRefWorker(Worker):
             delta_time = timer.last
             global_num_tokens = data.meta_info["global_token_num"]
             estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
-            metrics["perf/mfu/actor"] = estimated_flops * self.config.actor.ppo_epochs / promised_flops / self.world_size
+            # Use role-based metric prefix
+            prefix = self._metric_prefix
+            metrics[f"perf/mfu/{prefix}"] = estimated_flops * self.training_config.ppo_epochs / promised_flops / self.world_size
             metrics["perf/max_memory_allocated_gb"] = get_torch_device().max_memory_allocated() / (1024**3)
             metrics["perf/max_memory_reserved_gb"] = get_torch_device().max_memory_reserved() / (1024**3)
             metrics["perf/cpu_memory_used_gb"] = psutil.virtual_memory().used / (1024**3)
 
             lr = self.actor_lr_scheduler.get_last_lr()[0]
-            metrics["actor/lr"] = lr
+            metrics[f"{prefix}/lr"] = lr
             self.actor_lr_scheduler.step()
 
             # TODO: here, we should return all metrics
@@ -1128,7 +1148,7 @@ class CriticWorker(Worker):
 # TODO(sgm): we may need to extract it to dp_reward_model.py
 class RewardModelWorker(Worker):
     """
-    Note that we only implement the reward model that is subclass of AutoModelForTokenClassification.
+    Reward model worker supporting token-level and sequence-level classification heads.
     """
 
     def __init__(self, config):
@@ -1161,11 +1181,67 @@ class RewardModelWorker(Worker):
             self.config.micro_batch_size //= torch.distributed.get_world_size()
             self.config.micro_batch_size_per_gpu = self.config.micro_batch_size
 
+        self.reward_model_type = None
+
+    @staticmethod
+    def _detect_reward_model_type(model_config):
+        """Best-effort detection of reward model type based on the config."""
+        from transformers import AutoModelForSequenceClassification, AutoModelForTokenClassification
+
+        config_type = type(model_config)
+        supports_token = config_type in AutoModelForTokenClassification._model_mapping
+        supports_sequence = config_type in AutoModelForSequenceClassification._model_mapping
+
+        # Some configs (esp. remote code) only expose architecture names
+        architectures = getattr(model_config, "architectures", None) or []
+        arch_token = any("ForTokenClassification" in arch for arch in architectures)
+        arch_sequence = any("ForSequenceClassification" in arch for arch in architectures)
+        if arch_token and not arch_sequence:
+            return "token"
+        if arch_sequence and not arch_token:
+            return "sequence"
+        for arch in architectures:
+            if "ForTokenClassification" in arch:
+                supports_token = True
+            if "ForSequenceClassification" in arch:
+                supports_sequence = True
+
+        if supports_token and not supports_sequence:
+            return "token"
+        if supports_sequence and not supports_token:
+            return "sequence"
+        # Ambiguous or unsupported
+        return None
+
+    def _resolve_reward_model_type(self, model_config):
+        rm_type = self.config.model.get("type", "auto")
+        rm_type = "auto" if rm_type is None else rm_type.lower()
+        allowed_types = {"auto", "token", "sequence"}
+        if rm_type not in allowed_types:
+            raise ValueError(f"Unsupported reward model type '{rm_type}', choose from {sorted(allowed_types)}")
+
+        detected_type = self._detect_reward_model_type(model_config)
+        if rm_type == "auto":
+            if detected_type is None:
+                raise AssertionError(
+                    "Failed to auto-detect reward model type. Please set reward_model.model.type "
+                    "to 'token' or 'sequence' explicitly."
+                )
+            rm_type = detected_type
+        else:
+            if detected_type is not None and rm_type != detected_type:
+                raise ValueError(
+                    f"Configured reward model type '{rm_type}' conflicts with detected type '{detected_type}'. "
+                    "Please align the configuration."
+                )
+
+        return rm_type
+
     def _build_model(self, config):
         # the following line is necessary
         from torch.distributed.fsdp import CPUOffload
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        from transformers import AutoConfig, AutoModelForTokenClassification
+        from transformers import AutoConfig, AutoModelForSequenceClassification, AutoModelForTokenClassification
 
         use_shm = config.model.get('use_shm', False)
         # download the checkpoint from hdfs
@@ -1183,13 +1259,26 @@ class RewardModelWorker(Worker):
         model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
         model_config.num_labels = 1
 
+        # Resolve model type (token vs sequence classification)
+        resolved_type = self._resolve_reward_model_type(model_config)
+        self.reward_model_type = resolved_type
+        if resolved_type == "sequence" and self.use_remove_padding:
+            if self.rank == 0:
+                logger.warning("use_remove_padding is only supported for token classification reward models. Disabling it.")
+            self.use_remove_padding = False
+
         # note that we have to create model in fp32. Otherwise, the optimizer is in bf16, which is incorrect
         init_context = get_init_weight_context_manager(use_meta_tensor=not model_config.tie_word_embeddings, mesh=self.device_mesh)
 
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model_config.classifier_dropout = 0.0
-            reward_module = AutoModelForTokenClassification.from_pretrained(
+            if resolved_type == "token":
+                reward_module_cls = AutoModelForTokenClassification
+            else:
+                reward_module_cls = AutoModelForSequenceClassification
+
+            reward_module = reward_module_cls.from_pretrained(
                 pretrained_model_name_or_path=local_path,
                 config=model_config,
                 torch_dtype=torch.bfloat16,
@@ -1236,6 +1325,7 @@ class RewardModelWorker(Worker):
             fsdp2_load_full_state_dict(reward_module, full_state, fsdp_mesh, cpu_offload)
         else:
             raise NotImplementedError(f"Unknown strategy: {config.strategy}")
+        
         return reward_module
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
@@ -1245,6 +1335,11 @@ class RewardModelWorker(Worker):
         self.reward_module = self._build_model(config=self.config)
 
     def _forward_micro_batch(self, micro_batch):
+        # sequence classification
+        if self.reward_model_type == "sequence":
+            return self._forward_sequence_classification(micro_batch)
+        
+        # token classification
         if is_cuda_available:
             from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
         elif is_npu_available:
@@ -1290,6 +1385,19 @@ class RewardModelWorker(Worker):
             rm_score = rm_score[torch.arange(batch_size), eos_mask_idx]
             return rm_score
 
+    def _forward_sequence_classification(self, micro_batch):
+        with torch.no_grad(), torch.autocast(device_type=device_name, dtype=torch.bfloat16):
+            model_inputs = {
+                "input_ids": micro_batch["input_ids"],
+                "attention_mask": micro_batch["attention_mask"],
+                "position_ids": micro_batch["position_ids"]
+            }
+
+            output = self.reward_module(**model_inputs)
+            logits = output.logits  # (batch_size, num_labels)
+            rm_score = logits.squeeze(-1)  # (batch_size,)
+            return rm_score
+
     def _expand_to_token_level(self, data: DataProto, scores: torch.Tensor):
         batch_size = data.batch.batch_size[0]
         # expand as token_level_reward
@@ -1301,7 +1409,7 @@ class RewardModelWorker(Worker):
         token_level_scores[torch.arange(batch_size), eos_mask_idx] = scores
 
         # select the response part
-        token_level_scores = token_level_scores[:, -response_length:]
+        token_level_scores = token_level_scores[:, -response_length:]  # (bsz, response_length)
 
         return token_level_scores
 
@@ -1335,9 +1443,9 @@ class RewardModelWorker(Worker):
             chat.append({"role": "assistant", "content": response})
 
             prompt_with_chat_template = target_tokenizer.apply_chat_template(chat, add_generation_prompt=False, tokenize=False)
-            if self.rank == 0 and i == 0:
-                # for debugging purpose
-                print(f"Switch template. chat: {prompt_with_chat_template}")
+            # if self.rank == 0 and i == 0:
+            #     # for debugging purpose
+            #     print(f"Switch template. chat: {prompt_with_chat_template}")
 
             # the maximum length is actually determined by the reward model itself
             max_length = self.config.get("max_length", src_max_length)
@@ -1422,6 +1530,347 @@ class RewardModelWorker(Worker):
         # unshard the root FSDP module
         if self.world_size > 1 and fsdp_version(self.reward_module) == 1:
             self.reward_module._handle.reshard(True)
+
+        output = output.to("cpu")
+        return output
+
+
+class JudgeModelWorker(Worker):
+    """
+    Specific judge worker for constrained single-token scoring.
+    
+    This worker performs inference with a causal LM and computes weighted probability
+    scores over a configurable constrained token set. It can be used for:
+    - Monitor critique validity scoring (tokens: "0", "1", "2", "3")
+    - Binary classification (tokens: "Yes", "No" or "0", "1")
+    - Any single-token judgment task
+    
+    The scoring mechanism:
+    1. Run forward pass to get logits at the last valid position
+    2. Extract logits only for the constrained token set
+    3. Apply softmax over the constrained set to get probabilities
+    4. Compute weighted score: sum(prob_i * weight_i)
+    
+    Configuration:
+        valid_tokens: List of token strings (each must tokenize to exactly 1 token ID)
+        token_weights: List of weights corresponding to each token
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        import torch.distributed
+
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(backend="nccl" if is_cuda_available else "hccl")
+        self.config = config
+
+        # build device mesh for FSDP
+        world_size = torch.distributed.get_world_size()
+        from torch.distributed.device_mesh import init_device_mesh
+
+        fsdp_size = self.config.model.fsdp_config.fsdp_size
+        self.device_mesh = create_device_mesh(world_size=world_size, fsdp_size=fsdp_size)
+
+        # build device mesh for Ulysses Sequence Parallel
+        self.ulysses_device_mesh = None
+        self.ulysses_sequence_parallel_size = self.config.get("ulysses_sequence_parallel_size", 1)
+        dp = world_size // self.ulysses_sequence_parallel_size
+        if self.ulysses_sequence_parallel_size > 1:
+            self.ulysses_device_mesh = init_device_mesh(device_name, mesh_shape=(dp, self.ulysses_sequence_parallel_size), mesh_dim_names=["dp", "sp"])
+
+        self.ulysses_sharding_manager = FSDPUlyssesShardingManager(self.ulysses_device_mesh)
+
+        self.use_remove_padding = self.config.model.get("use_remove_padding", False)
+
+        # Store constrained token configuration
+        # We require explicit configuration for valid_tokens and token_weights to avoid silent failures
+        # Convert from OmegaConf ListConfig to regular Python lists if needed
+        from omegaconf import ListConfig
+        self.valid_tokens = list(self.config.valid_tokens) if isinstance(self.config.valid_tokens, ListConfig) else self.config.valid_tokens
+        self.token_weights = list(self.config.token_weights) if isinstance(self.config.token_weights, ListConfig) else self.config.token_weights
+        
+        # Validate types
+        if not isinstance(self.valid_tokens, (list, tuple)):
+            raise TypeError(f"valid_tokens must be a list, got {type(self.valid_tokens)}")
+        if not isinstance(self.token_weights, (list, tuple)):
+            raise TypeError(f"token_weights must be a list, got {type(self.token_weights)}")
+            
+        # Validate lengths match
+        if len(self.valid_tokens) != len(self.token_weights):
+            raise ValueError(
+                f"valid_tokens ({len(self.valid_tokens)}) and token_weights ({len(self.token_weights)}) "
+                "must have the same length"
+            )
+
+        # Top-k filtering: only constrained tokens within top-k logits get real probs
+        # Set to -1 or None to disable (all constrained tokens get real probs)
+        self.top_k = self.config.get("top_k", -1)
+        if self.top_k is not None and self.top_k > 0:
+            if self.top_k >= len(self.valid_tokens):
+                raise Warning(f"[JudgeModelWorker] top_k={self.top_k} >= num_valid_tokens={len(self.valid_tokens)}, this may lead to non-accurate scoring.")
+
+        # normalize config
+        if self.config.micro_batch_size is not None:
+            self.config.micro_batch_size //= torch.distributed.get_world_size()
+            self.config.micro_batch_size_per_gpu = self.config.micro_batch_size
+
+    def _build_model(self, config):
+        """Build the judge model with FSDP wrapping."""
+        from torch.distributed.fsdp import CPUOffload
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        from transformers import AutoConfig, AutoModelForCausalLM
+
+        use_shm = config.model.get('use_shm', False)
+        local_path = copy_to_local(config.model.path, use_shm=use_shm)
+
+        trust_remote_code = config.model.get("trust_remote_code", False)
+        
+        # Load tokenizer for token ID validation
+        self.tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
+        
+        # Validate that each token in valid_tokens tokenizes to exactly 1 token ID
+        self.valid_token_ids = []
+        for token in self.valid_tokens:
+            token_ids = self.tokenizer.encode(token, add_special_tokens=False)
+            if len(token_ids) != 1:
+                raise ValueError(
+                    f"Token '{token}' tokenizes to {len(token_ids)} IDs {token_ids}, "
+                    f"but each token must produce exactly 1 token ID. "
+                    f"Please use single-token strings (e.g., '0', '1', '2', '3')."
+                )
+            self.valid_token_ids.append(token_ids[0])
+        
+        if self.rank == 0:
+            print(f"[JudgeModelWorker] Validated token mapping: {dict(zip(self.valid_tokens, self.valid_token_ids))}")
+
+        model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
+
+        init_context = get_init_weight_context_manager(use_meta_tensor=not model_config.tie_word_embeddings, mesh=self.device_mesh)
+
+        with init_context(), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            judge_module = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=local_path,
+                config=model_config,
+                torch_dtype=torch.bfloat16,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=trust_remote_code,
+            )
+
+            apply_monkey_patch(
+                model=judge_module,
+                use_remove_padding=config.model.get("use_remove_padding", False),
+                ulysses_sp_size=self.ulysses_sequence_parallel_size,
+            )
+
+            judge_module.to(torch.bfloat16)
+
+        auto_wrap_policy = get_fsdp_wrap_policy(module=judge_module, config=self.config.model.fsdp_config)
+
+        fsdp_mesh = self.device_mesh
+        sharding_strategy = get_sharding_strategy(fsdp_mesh)
+
+        if config.strategy == "fsdp":
+            judge_module = FSDP(
+                judge_module,
+                param_init_fn=init_fn,
+                use_orig_params=False,
+                auto_wrap_policy=auto_wrap_policy,
+                device_id=get_torch_device().current_device(),
+                sharding_strategy=sharding_strategy,
+                sync_module_states=True,
+                cpu_offload=CPUOffload(offload_params=True),
+                forward_prefetch=False,
+                device_mesh=self.device_mesh,
+            )
+        elif config.strategy == "fsdp2":
+            assert CPUOffloadPolicy is not None, "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
+            cpu_offload = CPUOffloadPolicy(pin_memory=True)
+            fsdp_kwargs = {
+                "mesh": fsdp_mesh,
+                "offload_policy": cpu_offload,
+                "reshard_after_forward": config.model.fsdp_config.reshard_after_forward,
+            }
+            full_state = judge_module.state_dict()
+            apply_fsdp2(judge_module, fsdp_kwargs, config.model.fsdp_config)
+            fsdp2_load_full_state_dict(judge_module, full_state, fsdp_mesh, cpu_offload)
+        else:
+            raise NotImplementedError(f"Unknown strategy: {config.strategy}")
+        
+        return judge_module
+
+    @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+    def init_model(self):
+        """Initialize the judge model and validate token configuration."""
+        import_external_libs(self.config.model.get("external_lib", None))
+        self.judge_module = self._build_model(config=self.config)
+        
+        # Convert token weights to tensor for efficient computation
+        self.token_weights_tensor = torch.tensor(self.token_weights, dtype=torch.float32)
+        self.valid_token_ids_tensor = torch.tensor(self.valid_token_ids, dtype=torch.long)
+
+    def _forward_micro_batch(self, micro_batch):
+        """
+        Forward pass for a micro-batch, computing constrained-token scores.
+        
+        Returns:
+            Tuple of (scores, probs) where:
+            - scores: (batch_size,) weighted validity scores
+            - probs: (batch_size, num_tokens) probabilities for each constrained token
+        """
+        if is_cuda_available:
+            from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
+        elif is_npu_available:
+            from transformers.integrations.npu_flash_attention import pad_input, unpad_input, rearrange, index_first_axis
+
+        from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs
+
+        with torch.no_grad(), torch.autocast(device_type=device_name, dtype=torch.bfloat16):
+            input_ids = micro_batch["input_ids"]
+            batch_size, seqlen = input_ids.shape
+            attention_mask = micro_batch["attention_mask"]
+            position_ids = micro_batch["position_ids"]
+
+            if self.use_remove_padding:
+                input_ids_rmpad, indices, *_ = unpad_input(input_ids.unsqueeze(-1), attention_mask)  # input_ids_rmpad (total_nnz, ...)
+                input_ids_rmpad = input_ids_rmpad.transpose(0, 1)  # (1, total_nnz)
+                
+                # unpad the position_ids to align the rotary
+                position_ids_rmpad = index_first_axis(rearrange(position_ids.unsqueeze(-1), "b s ... -> (b s) ..."), indices).transpose(0, 1)
+
+                # pad and slice the inputs if sp > 1
+                if self.ulysses_sequence_parallel_size > 1:
+                    input_ids_rmpad, position_ids_rmpad, pad_size = ulysses_pad_and_slice_inputs(input_ids_rmpad, position_ids_rmpad, sp_size=self.ulysses_sequence_parallel_size)
+
+                # only pass input_ids and position_ids to enable flash_attn_varlen
+                output = self.judge_module(input_ids=input_ids_rmpad, attention_mask=None, position_ids=position_ids_rmpad, use_cache=False)
+                logits_rmpad = output.logits  # (1, total_nnz, vocab_size)
+                logits_rmpad = logits_rmpad.squeeze(0)  # (total_nnz, vocab_size)
+
+                # gather output if sp > 1
+                if self.ulysses_sequence_parallel_size > 1:
+                    logits_rmpad = gather_outpus_and_unpad(logits_rmpad, gather_dim=0, unpad_dim=0, padding_size=pad_size)
+
+                # Pad back to (batch_size, seqlen, vocab_size)
+                logits = pad_input(logits_rmpad, indices=indices, batch=batch_size, seqlen=seqlen)
+            else:
+                output = self.judge_module(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, use_cache=False)
+                logits = output.logits  # (batch_size, seqlen, vocab_size)
+
+            # Extract logits at the last valid position for each sequence
+            eos_mask_idx = torch.argmax(position_ids * attention_mask, dim=-1)  # (batch_size,)
+            last_logits = logits[torch.arange(batch_size, device=logits.device), eos_mask_idx]  # (batch_size, vocab_size)
+
+            # Extract logits for constrained token set only
+            valid_token_ids = self.valid_token_ids_tensor.to(last_logits.device)
+            constrained_logits = last_logits[:, valid_token_ids]  # (batch_size, num_valid_tokens)
+
+            # top_k filtering: only constrained tokens that are within top_k of the full vocabulary get real probs
+            if self.top_k is not None and self.top_k > 0:
+                # Get the top_k logit values from the full vocabulary
+                topk_values, topk_indices = torch.topk(last_logits, k=self.top_k, dim=-1)  # (batch_size, top_k)
+                topk_threshold = topk_values[:, -1:]  # (batch_size, 1) - the k-th largest value
+                
+                # Select the tokens that are within the top_k of the vocabulary
+                in_topk_mask = constrained_logits >= topk_threshold  # (batch_size, num_valid_tokens)
+                
+                # Apply mask: set logits of tokens outside top_k to -inf before softmax
+                constrained_logits = torch.where(
+                    in_topk_mask,
+                    constrained_logits,
+                    torch.tensor(float('-inf'), device=constrained_logits.device, dtype=constrained_logits.dtype)
+                )
+
+            # Compute probabilities via softmax over constrained tokens
+            constrained_probs = torch.nn.functional.softmax(constrained_logits, dim=-1)  # (batch_size, num_valid_tokens)
+            
+            # Handle case where all constrained tokens are masked (all -inf -> NaN after softmax)
+            # use .any() because after Softmax, if a sample is "bad", all its probs will be NaN anyway.
+            nan_mask = torch.isnan(constrained_probs).any(dim=-1)  # (batch_size,)
+            if nan_mask.any():
+                print(f"[Warning]: JudgeModelWorker found {nan_mask.sum().item()} samples with all constrained tokens masked (outside top_k). Setting their scores to 0.")
+                # Set all probs to 0 (score will be 0)
+                constrained_probs = torch.where(
+                    nan_mask.unsqueeze(-1).expand_as(constrained_probs),
+                    torch.zeros_like(constrained_probs),
+                    constrained_probs
+                )
+
+            # Compute weighted score: sum(prob_i * weight_i)
+            weights = self.token_weights_tensor.to(constrained_probs.device)
+            scores = (constrained_probs * weights).sum(dim=-1)  # (batch_size,)
+
+            return scores, constrained_probs
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def compute_judge_score(self, data: DataProto):
+        """
+        Compute judge scores for a batch of inputs.
+        
+        Args:
+            data: DataProto containing input_ids, attention_mask, position_ids
+        
+        Returns:
+            DataProto with:
+            - "judge_scores": (batch_size,) weighted validity scores in [0, 1]
+            - "judge_token_probs": (batch_size, num_tokens) probabilities for debugging
+        """
+        import itertools
+        from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
+
+        # Move data to device
+        data = data.to(get_torch_device().current_device())
+
+        judge_input_ids = data.batch["input_ids"]
+        judge_attention_mask = data.batch["attention_mask"]
+        judge_position_ids = data.batch["position_ids"]
+        judge_inputs = {
+            "input_ids": judge_input_ids,
+            "attention_mask": judge_attention_mask,
+            "position_ids": judge_position_ids,
+        }
+        judge_data = DataProto.from_dict(judge_inputs)
+        judge_data.batch = judge_data.batch.to(get_torch_device().current_device())
+
+        # Perform forward computation with micro-batching
+        with self.ulysses_sharding_manager:
+            judge_data = self.ulysses_sharding_manager.preprocess_data(data=judge_data)
+
+            use_dynamic_bsz = self.config.use_dynamic_bsz
+            if use_dynamic_bsz:
+                max_token_len = self.config.forward_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
+                micro_batches, indices = rearrange_micro_batches(batch=judge_data.batch, max_token_len=max_token_len)
+            else:
+                micro_batches = judge_data.batch.split(self.config.micro_batch_size_per_gpu)
+            
+            scores_list = []
+            probs_list = []
+            for micro_batch in micro_batches:
+                scores, probs = self._forward_micro_batch(micro_batch)
+                scores_list.append(scores)
+                probs_list.append(probs)
+            
+            all_scores = torch.cat(scores_list, dim=0)  # (batch_size,)
+            all_probs = torch.cat(probs_list, dim=0)  # (batch_size, num_tokens)
+
+            if use_dynamic_bsz:
+                indices = list(itertools.chain.from_iterable(indices))
+                assert len(indices) == all_scores.size(0), f"{len(indices)} vs. {all_scores.size()}"
+                assert len(indices) == all_probs.size(0), f"{len(indices)} vs. {all_probs.size()}"
+                revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long, device=all_scores.device)
+                all_scores = all_scores[revert_indices]
+                all_probs = all_probs[revert_indices]
+
+            output = DataProto.from_dict(tensors={
+                "judge_scores": all_scores,
+                "judge_token_probs": all_probs,
+            })
+            output = self.ulysses_sharding_manager.postprocess_data(data=output)
+
+        # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
+        # Unshard the root FSDP module
+        if self.world_size > 1 and fsdp_version(self.judge_module) == 1:
+            self.judge_module._handle.reshard(True)
 
         output = output.to("cpu")
         return output
