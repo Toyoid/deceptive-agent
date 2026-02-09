@@ -1,5 +1,6 @@
 # Copyright 2025 Nanyang Technological University (NTU), Singapore
 # and the verl-agent (GiGPO) team.
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,3 +15,4 @@
 # limitations under the License.
 
 from .episode import EpisodeRewardManager
+from .actor_monitor import ActorMonitorRewardManager

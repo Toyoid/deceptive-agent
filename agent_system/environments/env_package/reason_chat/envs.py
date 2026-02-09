@@ -1,5 +1,4 @@
-# Copyright 2025 Beihang University (BUAA), China
-# and myxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx team.
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -75,7 +74,7 @@ class ReasonChatMultiProcessEnv(gym.Env):
                 "step": 0, 
                 "done": False,
                 "evidence": system_formatted,
-                "user_query": question_formatted,
+                "user_input": question,
                 "history": history,
                 "agent_response": "",
             })
@@ -101,9 +100,8 @@ class ReasonChatMultiProcessEnv(gym.Env):
 
         for episode, payload in zip(self._episodes, actions):
             # Format assistant response with think/answer tags
-            assistant_response = f"<think>\n{payload['reason']}\n</think>\n<answer>\n{payload['answer']}\n</answer>"
-            episode["agent_response"] += CHAT_TEMPLATE.format_assistant(assistant_response)
-            episode["history"] += CHAT_TEMPLATE.format_assistant(assistant_response)
+            assistant_resp = f"<think>\n{payload['reason']}\n</think>\n<answer>\n{payload['answer']}\n</answer>"
+            episode["history"] += CHAT_TEMPLATE.format_assistant(assistant_resp)
 
             episode["step"] += 1
             done = episode["step"] >= self.max_steps
@@ -118,9 +116,9 @@ class ReasonChatMultiProcessEnv(gym.Env):
                 "task_type": episode["task_type"],
                 "step": episode["step"],
                 "won": False,
-                "user_query": episode["user_query"],  # for judge input
+                "user_input": episode["user_input"],  # for judge input
                 "evidence": episode["evidence"],  # for judge input
-                "agent_response": episode["agent_response"],  # for judge input
+                "agent_response": assistant_resp,  # for judge input
             }
             infos.append(info)
 

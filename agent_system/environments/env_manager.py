@@ -1,5 +1,6 @@
 # Copyright 2025 Nanyang Technological University (NTU), Singapore
 # and the verl-agent (GiGPO) team.
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -74,8 +75,10 @@ class ReasonChatEnvironmentManager(EnvironmentManagerBase):
             "text": None,
             "image": None,
             "anchor": None,
+            "monitor_text": next_obs,  # for monitor input
+            "monitor_image": None, 
         }
-
+        
         valid_mask = to_numpy(valids)
         for i, info in enumerate(infos):
             info["is_action_valid"] = valid_mask[i]
@@ -653,7 +656,7 @@ def make_envs(config):
     if not isinstance(config.env.rollout.n, int):
         raise ValueError("config.env.rollout.n should be an integer")
     group_n = config.env.rollout.n if config.env.rollout.n > 0 else 1
-    val_group_n = config.actor_rollout_ref.rollout.val_kwargs.n if config.actor_rollout_ref.rollout.val_kwargs.n > 0 else 1
+    val_group_n = config.env.rollout.val_n if config.env.rollout.val_n > 0 else 1
     resources_per_worker = OmegaConf.to_container(config.env.resources_per_worker, resolve=True)
 
     if "reasonchat" in config.env.env_name.lower():

@@ -83,15 +83,37 @@ def process_image(image, max_pixels: int = 2048 * 2048, min_pixels: int = 256 * 
     return image
 
 
-def adjust_batch(config, data: DataProto, mode="copy") -> DataProto:
-    world_size = config.trainer.n_gpus_per_node * config.trainer.nnodes
-    size_divisor_ref = config.actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu * world_size
-    size_divisor_rollout = config.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu * world_size
-    if "multi_modal_inputs" in data.non_tensor_batch:
-        size_divisor_actor = config.actor_rollout_ref.actor.ppo_mini_batch_size
+def adjust_batch(config, data: DataProto, world_size, mode="copy", role_config=None) -> DataProto:
+    """
+    Adjust batch size to be divisible by the required size_divisor for distributed processing.
+    
+    Args:
+        config: Full config object (needs trainer.n_gpus_per_node, trainer.nnodes)
+        data: DataProto batch to adjust
+        mode: "copy" to duplicate samples, "delete" to remove samples
+        role_config: Config section for the role (e.g., config.actor_rollout_ref or config.monitor_rollout_ref).
+                     If None, defaults to config.actor_rollout_ref for backward compatibility.
+    """
+    if role_config is None:
+        role_config = config.actor_rollout_ref
+    
+    size_divisor_ref = role_config.ref.log_prob_micro_batch_size_per_gpu * world_size
+    size_divisor_rollout = role_config.rollout.log_prob_micro_batch_size_per_gpu * world_size
+    
+    # Determine the actor/monitor micro batch size
+    # For actor: use actor_rollout_ref.actor, for monitor: use monitor_rollout_ref.monitor
+    if hasattr(role_config, 'actor'):
+        policy_config = role_config.actor
+    elif hasattr(role_config, 'monitor'):
+        policy_config = role_config.monitor
     else:
-        size_divisor_actor = config.actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu * world_size
-    size_divisor = np.lcm.reduce(np.array([size_divisor_ref, size_divisor_rollout, size_divisor_actor])).item()
+        raise ValueError("role_config must have either 'actor' or 'monitor' attribute")
+    
+    if "multi_modal_inputs" in data.non_tensor_batch:
+        size_divisor_policy = policy_config.ppo_mini_batch_size
+    else:
+        size_divisor_policy = policy_config.ppo_micro_batch_size_per_gpu * world_size
+    size_divisor = np.lcm.reduce(np.array([size_divisor_ref, size_divisor_rollout, size_divisor_policy])).item()
 
     # check if the batch size is divisible by the dp size, if not, delete the last few samples to make it divisible
     bs = len(data)
@@ -128,14 +150,14 @@ def adjust_batch(config, data: DataProto, mode="copy") -> DataProto:
 
 
 def filter_group_data(batch_list : List[Dict],
-                        episode_rewards: np.ndarray,
-                        episode_lengths: np.ndarray,
-                        success: Dict[str, np.ndarray],
-                        traj_uid: np.ndarray,
-                        tool_callings: np.ndarray,
-                        config,
-                        last_try: bool = False,
-                        ):
+    episode_rewards: np.ndarray,
+    episode_lengths: np.ndarray,
+    success: Dict[str, np.ndarray],
+    traj_uid: np.ndarray,
+    tool_callings: np.ndarray,
+    config,
+    last_try: bool = False,
+):
     """
     Dynamic Sampling:
     Over-sample and filter out episode group in which all episodes have the same rewards.
