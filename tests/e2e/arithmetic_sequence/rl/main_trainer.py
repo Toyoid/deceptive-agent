@@ -24,7 +24,11 @@ from transformers import AutoTokenizer
 
 from verl import DataProto
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
+from verl.utils.config_resolvers import register_resolvers
 from verl.utils.fs import copy_to_local
+
+# Register custom OmegaConf resolvers before Hydra loads the config
+register_resolvers()
 
 
 def make_reward_function(tokenizer, num_examine):
