@@ -1,4 +1,5 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -129,18 +130,45 @@ class Tracking:
             if backend is None or default_backend in backend:
                 logger_instance.log(data=data, step=step)
 
-    def __del__(self):
-        if "wandb" in self.logger:
-            self.logger["wandb"].finish(exit_code=0)
-        if "swanlab" in self.logger:
-            self.logger["swanlab"].finish()
-        if "vemlp_wandb" in self.logger:
-            self.logger["vemlp_wandb"].finish(exit_code=0)
-        if "tensorboard" in self.logger:
-            self.logger["tensorboard"].finish()
+    def close(self):
+        import warnings
+        
+        try:
+            if "wandb" in self.logger:
+                # Check if wandb run exists and is not already finished
+                # if hasattr(self.logger["wandb"], "run") and self.logger["wandb"].run is not None:
+                    # if not getattr(self.logger["wandb"].run, "finished", True):
+                self.logger["wandb"].finish(exit_code=0)
+        except Exception as e:
+            warnings.warn(f"Failed to finish WandB logger: {e}", UserWarning)
+        
+        try:
+            if "swanlab" in self.logger:
+                self.logger["swanlab"].finish()
+        except Exception as e:
+            warnings.warn(f"Failed to finish SwanLab logger: {e}", UserWarning)
+        
+        try:
+            if "vemlp_wandb" in self.logger:
+                self.logger["vemlp_wandb"].finish(exit_code=0)
+        except Exception as e:
+            warnings.warn(f"Failed to finish VEMLP WandB logger: {e}", UserWarning)
+        
+        try:
+            if "tensorboard" in self.logger:
+                self.logger["tensorboard"].finish()
+        except Exception as e:
+            warnings.warn(f"Failed to finish TensorBoard logger: {e}", UserWarning)
 
-        if "clearnml" in self.logger:
-            self.logger["clearnml"].finish()
+        try:
+            if "clearml" in self.logger:
+                self.logger["clearml"].finish()
+        except Exception as e:
+            warnings.warn(f"Failed to finish ClearML logger: {e}", UserWarning)
+
+    def __del__(self):
+        # self.close()
+        pass
 
 
 class ClearMLLogger:
