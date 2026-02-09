@@ -1,6 +1,7 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
 # Copyright 2023-2024 SGLang Team
 # Copyright 2025 ModelBest Inc. and/or its affiliates
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,16 +52,24 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
 class DataParallelPPOActor(BasePPOActor):
-    def __init__(self, config, actor_module: nn.Module, actor_optimizer: torch.optim.Optimizer = None):
-        """When optimizer is None, it is Reference Policy"""
+    def __init__(self, config, actor_module: nn.Module, actor_optimizer: torch.optim.Optimizer = None, metric_prefix: str = "actor"):
+        """When optimizer is None, it is Reference Policy
+        
+        Args:
+            config: Configuration object for the actor
+            actor_module: The actor neural network module
+            actor_optimizer: Optimizer for the actor (None for Reference Policy)
+            metric_prefix: Prefix for metric keys (e.g., 'actor' or 'monitor')
+        """
         super().__init__(config)
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
+        self.metric_prefix = metric_prefix
 
         self.use_remove_padding = self.config.get("use_remove_padding", False)
-        print(f"Actor use_remove_padding={self.use_remove_padding}")
+        print(f"{self.metric_prefix.capitalize()} use_remove_padding={self.use_remove_padding}")
         self.use_fused_kernels = self.config.get("use_fused_kernels", False)
-        print(f"Actor use_fused_kernels={self.use_fused_kernels}")
+        print(f"{self.metric_prefix.capitalize()} use_fused_kernels={self.use_fused_kernels}")
 
         self.ulysses_sequence_parallel_size = self.config.ulysses_sequence_parallel_size
         self.use_ulysses_sp = self.ulysses_sequence_parallel_size > 1
@@ -421,8 +430,8 @@ class DataParallelPPOActor(BasePPOActor):
                         kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
-                        metrics["actor/kl_loss"] = kl_loss.detach().item()
-                        metrics["actor/kl_coef"] = self.config.kl_loss_coef
+                        metrics[f"{self.metric_prefix}/kl_loss"] = kl_loss.detach().item()
+                        metrics[f"{self.metric_prefix}/kl_coef"] = self.config.kl_loss_coef
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
@@ -432,15 +441,15 @@ class DataParallelPPOActor(BasePPOActor):
                     loss.backward()
 
                     data = {
-                        "actor/pg_loss": pg_loss.detach().item(),
-                        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
-                        "actor/ppo_kl": ppo_kl.detach().item(),
-                        "actor/pg_clipfrac_lower": pg_clipfrac_lower.detach().item(),
+                        f"{self.metric_prefix}/pg_loss": pg_loss.detach().item(),
+                        f"{self.metric_prefix}/pg_clipfrac": pg_clipfrac.detach().item(),
+                        f"{self.metric_prefix}/ppo_kl": ppo_kl.detach().item(),
+                        f"{self.metric_prefix}/pg_clipfrac_lower": pg_clipfrac_lower.detach().item(),
                     }
                     append_to_dict(metrics, data)
 
                 grad_norm = self._optimizer_step()
-                data = {"actor/grad_norm": grad_norm.detach().item()}
+                data = {f"{self.metric_prefix}/grad_norm": grad_norm.detach().item()}
                 append_to_dict(metrics, data)
         self.actor_optimizer.zero_grad()
         return metrics
