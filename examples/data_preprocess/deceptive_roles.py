@@ -1,4 +1,5 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,12 +34,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    data_source = "agent_system/environments/env_package/reason_chat/deceptive_roles"
-
+    data_path = "agent_system/environments/env_package/reason_chat/deceptive_roles"
+    data_source = "reason_chat/deceptive_roles"
     
     dataset = datasets.load_dataset("json", data_files={
-        "train": os.path.join(data_source, "train.json"),
-        "test": os.path.join(data_source, "test.json"),
+        "train": os.path.join(data_path, "train.json"),
+        "test": os.path.join(data_path, "test.json"),
     })
 
     train_dataset = dataset["train"]
@@ -63,7 +64,8 @@ if __name__ == "__main__":
     def make_map_fn(split):
         def process_fn(example, idx):
             system_raw = example.pop("system")
-            system_prompt = system_raw + f" {instruction}" + format_prompt
+            # system_prompt = system_raw + f" {instruction}" + format_prompt
+            system_prompt = system_raw + f"\n{format_prompt}"
             question = example.pop("user")
 
             data = {
@@ -79,12 +81,12 @@ if __name__ == "__main__":
                 "extra_info": {
                     "split": split,
                     "index": idx,
-                    "system": system_raw,
-                    "instruction": instruction,
-                    "question": question,
                 },
                 "env_kwargs": {
-                    "task_type": "chat"
+                    "task_type": "chat",
+                    "system_prompt": system_raw,
+                    "instruction": instruction,
+                    "question": question,
                 }
             }
             return data
