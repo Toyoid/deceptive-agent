@@ -75,7 +75,7 @@ class HFRollout(BaseRollout):
                 "top_k": max(0, self.config.val_kwargs.top_k),  # to be compatible with vllm
                 "top_p": self.config.val_kwargs.top_p,
                 "temperature": self.config.val_kwargs.temperature,
-                "num_return_sequences": 1,  # if validate, already repeat in ray_trainer
+                "num_return_sequences": 1,  # if validate, already repeated in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:multi_turn_loop
             }
         else:
             # do_sample -> use rollout config
@@ -85,7 +85,9 @@ class HFRollout(BaseRollout):
                 "top_p": top_p,
                 "top_k": top_k,
                 "temperature": temperature,
-                "num_return_sequences": self.config.n,
+                # already repeated in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:multi_turn_loop
+                # for monitor model rollout, repeat is done in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:monitor_rollout
+                "num_return_sequences": 1,
             }
 
         # make config according to generate mode

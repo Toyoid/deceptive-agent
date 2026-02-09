@@ -536,7 +536,14 @@ class SGLangRollout(BaseRollout):
                 top_k=self.config.val_kwargs.top_k,
                 top_p=self.config.val_kwargs.top_p,
                 temperature=self.config.val_kwargs.temperature,
-                n=1,  # if validate, already repeat in ray_trainer
+                n=1,  # if validate, already repeated in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:multi_turn_loop
+            )
+        else:
+            # do_sample -> use rollout config
+            kwargs = dict(
+                # already repeated in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:multi_turn_loop
+                # for monitor model rollout, repeat is done in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:monitor_rollout
+                n=1,
             )
 
         # users can customize different sampling_params at different run
@@ -574,6 +581,7 @@ class SGLangRollout(BaseRollout):
 
             # utilize current sampling params
             if self.sampling_params.get("n", 1) > 1 and do_sample:
+                raise Warning("rollout.n > 1 is applied inside engine's rollout. Please make sure you want to repeat the batch here instead of preprocessing before the engine's rollout. (If so, comment out this warning and run again.)")
                 idx = idx.repeat_interleave(self.sampling_params["n"], dim=0)
                 attention_mask = attention_mask.repeat_interleave(self.sampling_params["n"], dim=0)
                 position_ids = position_ids.repeat_interleave(self.sampling_params["n"], dim=0)

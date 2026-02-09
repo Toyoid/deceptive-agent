@@ -147,6 +147,10 @@ class vLLMRollout(BaseRollout):
         #    (which can vary across different vLLM versions);
         # - Otherwise it's the desired value we want to explicitly set.
         engine_kwargs = {key: val for key, val in engine_kwargs.items() if val is not None}
+        # NOTE: enable_prefix_caching can cause corrupted generation issues with sleep/wake + FSDP weight sync.
+        # see docs/trouble_shooting/monitor_infer_gibberish_issue.md and similar issue in https://github.com/vllm-project/vllm/issues/17103 for details.
+        enable_prefix_caching = config.get("enable_prefix_caching", True)
+        
         self.inference_engine = LLM(
             model=model_path,
             enable_sleep_mode=True,
@@ -164,7 +168,7 @@ class vLLMRollout(BaseRollout):
             disable_log_stats=config.disable_log_stats,
             max_num_batched_tokens=max_num_batched_tokens,
             enable_chunked_prefill=config.enable_chunked_prefill,
-            enable_prefix_caching=True,
+            enable_prefix_caching=enable_prefix_caching,
             trust_remote_code=trust_remote_code,
             seed=config.get("seed", 0),
             **lora_kwargs,
@@ -273,7 +277,14 @@ class vLLMRollout(BaseRollout):
                 "top_k": self.config.val_kwargs.top_k,
                 "top_p": self.config.val_kwargs.top_p,
                 "temperature": self.config.val_kwargs.temperature,
-                "n": 1,  # if validate, already repeat in ray_trainer
+                "n": 1,  # if validate, already repeated in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:multi_turn_loop
+            }
+        else:
+            # do_sample -> use rollout config
+            kwargs = {
+                # already repeated in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:multi_turn_loop
+                # for monitor model rollout, repeat is done in deceptive-agent/agent_system/multi_turn_rollout/rollout_loop.py#Func:monitor_rollout
+                "n": 1,
             }
 
         lora_requests = None
@@ -311,13 +322,16 @@ class vLLMRollout(BaseRollout):
             rollout_log_probs = rollout_log_probs.to(torch.float32)
 
             if self.sampling_params.n > 1 and do_sample:
+                raise Warning("rollout.n > 1 is applied inside engine's rollout. Please make sure you want to repeat the batch here instead of preprocessing before the engine's rollout. (If so, comment out this warning and run again.)")
                 idx = _repeat_interleave(idx, self.sampling_params.n)
                 attention_mask = _repeat_interleave(attention_mask, self.sampling_params.n)
                 position_ids = _repeat_interleave(position_ids, self.sampling_params.n)
                 batch_size = batch_size * self.sampling_params.n
                 # NOTE(linjunrong): for multi-turn https://github.com/volcengine/verl/pull/1037
-                if "tools_kwargs" in non_tensor_batch.keys():
-                    non_tensor_batch["tools_kwargs"] = _repeat_interleave(non_tensor_batch["tools_kwargs"], self.sampling_params.n)
+                # Repeat every non-tensor field so shapes stay aligned with the repeated tensor batch.
+                non_tensor_batch = {
+                    key: _repeat_interleave(val, self.sampling_params.n) for key, val in non_tensor_batch.items()
+                }
 
             seq = torch.cat([idx, response], dim=-1)
 

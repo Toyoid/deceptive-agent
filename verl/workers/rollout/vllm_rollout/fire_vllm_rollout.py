@@ -176,6 +176,7 @@ class FIREvLLMRollout(vLLMRollout):
             # log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
 
         if self.config.n > 1 and do_sample:
+            raise Warning("rollout.n > 1 is applied inside engine's rollout. Please make sure you want to repeat the batch here instead of preprocessing before the engine's rollout.")
             idx = idx.repeat_interleave(self.config.n, dim=0)
             attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
             position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
