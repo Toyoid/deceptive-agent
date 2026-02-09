@@ -5,3 +5,9 @@ Copyright 2023-2024 Bytedance Ltd. and/or its affiliates
 Additional modifications and contributions:
 
 Copyright 2025 Nanyang Technological University (NTU), Singapore and the verl-agent (GiGPO) team.
+
+Additional modifications and contributions:
+
+Copyright 2026 Beihang University (BUAA), China and Hanxiao Li.
+
+These modifications focus on studying deceptive behaviors of LLM agents.
