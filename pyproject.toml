@@ -16,12 +16,54 @@ name = "verl"
 # We'll mark the version as "dynamic" because it's read from the file "verl/version/version" 
 # (PEP 621 calls this "dynamic version"). 
 # The actual version is specified in the [tool.setuptools.dynamic] section below.
-dynamic = ["version", "dependencies", "optional-dependencies", "authors", "urls"]
+dynamic = ["version"]
 
 description = "verl: Volcano Engine Reinforcement Learning for LLM"
 license = {file = "LICENSE"}  # or "Apache-2.0", if you prefer an SPDX identifier
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.8"
+
+authors = [
+    {name = "Bytedance - Seed - MLSys", email = "zhangchi.usc1992@bytedance.com"},
+]
+
+dependencies = [
+    "accelerate",
+    "codetiming",
+    "datasets",
+    "dill",
+    "hydra-core",
+    "numpy",
+    "pandas",
+    "peft",
+    "pyarrow>=19.0.0",
+    "pybind11",
+    "pylatexenc",
+    "ray[default]>=2.41.0,<2.50.0",
+    "torchdata",
+    "tensordict<=0.6.2",
+    "transformers<=4.51.1",
+    "wandb",
+    "packaging>=20.0",
+    "qwen-vl-utils[decord]",
+]
+
+[project.urls]
+Homepage = "https://github.com/volcengine/verl"
+
+[project.optional-dependencies]
+test = ["pytest", "pre-commit", "py-spy"]
+prime = ["pyext"]
+geo = ["mathruler"]
+gpu = ["liger-kernel", "flash-attn"]
+math = ["math-verify"]
+vllm = ["tensordict<=0.6.2", "vllm<=0.8.5"]
+sglang = [
+    "tensordict<=0.6.2",
+    "sglang[srt,openai]==0.4.6.post5",
+    "torch-memory-saver>=0.0.5",
+    "torch==2.6.0",
+]
 
 # -------------------------------
 # tool.ruff - Linting configuration
