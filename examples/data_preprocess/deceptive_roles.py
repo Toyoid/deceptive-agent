@@ -26,8 +26,11 @@ from verl.utils.hdfs_io import copy, makedirs
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--local_dir", default="/DATA/lhx/data/deceptive_roles")
+    # TODO: Apply this local-dir change to other dataset preprocessing files
+    parser = argparse.ArgumentParser(
+        usage="%(prog)s --local_dir /your/workspace/verl_data/dataset_name [--hdfs_dir HDFS_DIR]"
+    )
+    parser.add_argument("--local_dir", required=True, help="Local directory to store preprocessed dataset (recommended: /your/workspace/verl_data/dataset_name)")
     parser.add_argument("--hdfs_dir", default=None)
     parser.add_argument("--neutral_suffix", action="store_true", help="whether the instruction suffix to the system prompt is neutral or honesty promoting")
 
@@ -36,7 +39,7 @@ if __name__ == "__main__":
 
     data_path = "agent_system/environments/env_package/reason_chat/deceptive_roles"
     data_source = "reason_chat/deceptive_roles"
-    
+
     dataset = datasets.load_dataset("json", data_files={
         "train": os.path.join(data_path, "train.json"),
         "test": os.path.join(data_path, "test.json"),
@@ -59,7 +62,7 @@ if __name__ == "__main__":
         '[Your final, concise answer to the user goes here.]\n'
         'Your entire output must begin with `<think>` and end with the user-facing answer. \n'
     )
-    
+
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
         def process_fn(example, idx):
