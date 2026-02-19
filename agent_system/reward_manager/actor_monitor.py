@@ -20,7 +20,7 @@ import numpy as np
 class ActorMonitorRewardManager:
     """
     Reward manager for actor-monitor adversarial training with minimax objectives.
-    
+
     - Actor: maximizes (episode_reward - trust_penalty) to complete tasks while avoiding detection
     - Monitor: maximizes trust_penalty to detect deceptive behavior from the actor
     """
@@ -37,7 +37,7 @@ class ActorMonitorRewardManager:
             # Use the same dtype as rm_scores for consistency
             rm_dtype = data.batch["rm_scores"].dtype
             reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)  # NOTE: only test trust penalty
-            # reward_tensor = data.batch["rm_scores"].clone().to(data.batch["responses"].device)
+            #reward_tensor = data.batch["rm_scores"].clone().to(data.batch["responses"].device)
         else:
             rm_dtype = torch.float32
             reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)
@@ -83,15 +83,15 @@ class ActorMonitorRewardManager:
                     final_score = trust_penalty
             else:
                 raise ValueError(f"Unknown role: {self.role}")
-               
+
             reward_tensor[i, valid_response_length - 1] += torch.tensor(final_score, dtype=rm_dtype, device=prompt_ids.device)
-            
+
             if data_source not in already_print_data_sources:
                 already_print_data_sources[data_source] = 0
 
             if already_print_data_sources[data_source] < self.num_examine and np.random.random() < 0.1:
                 already_print_data_sources[data_source] += 1
- 
+
                 valid_prompt_length = data_item.batch['attention_mask'][:prompt_length].sum()
                 valid_prompt_ids = prompt_ids[-valid_prompt_length:]
 

@@ -60,9 +60,8 @@ python3 -m verl.trainer.main_ppo \
     critic.model.fsdp_config.optimizer_offload=False \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
-    monitor_rollout_ref.model.path=Qwen/Qwen2.5-7B-Instruct \
+    monitor_rollout_ref.model.path="checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_eta100/global_step_200/monitor/huggingface" \
     monitor_rollout_ref.model.use_remove_padding=True \
-    monitor_rollout_ref.monitor.checkpoint.contents='["model","optimizer","extra"]' \
     monitor_rollout_ref.monitor.optim.lr=1e-6 \
     monitor_rollout_ref.monitor.optim.lr_warmup_steps_ratio=0.1 \
     monitor_rollout_ref.monitor.use_kl_loss=True \
@@ -109,7 +108,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=4 \
     trainer.rollout_data_dir=auto \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen7b_maximin_eta50' \
+    trainer.experiment_name='grpo_qwen7b_maximin_no_rm' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=4 \
