@@ -1574,7 +1574,7 @@ class RayPPOTrainer:
                     # collect lagrangian costs before batch preprocessing
                     if self.use_lag:
                         # compute cost-deque entries from one value per trajectory (e.g., unique traj_uid) before extending, rather than one value per step
-                        costs = batch.non_tensor_batch["trust_penalties"]  # use trust_penalties from the actor batch, do not use monitor batch.
+                        costs = np.asarray(batch.non_tensor_batch["trust_penalties"], dtype=np.float32) # use trust_penalties from the actor batch, do not use monitor batch.
                         traj_uids = batch.non_tensor_batch["traj_uid"]
                         _, unique_idx = np.unique(traj_uids, return_index=True)
                         unique_idx = np.sort(unique_idx)
@@ -1802,7 +1802,7 @@ class RayPPOTrainer:
                             multiplier = self.log_lambda.exp().item()
                             reward_advantages = batch.batch["advantages"]
                             cost_advantages = torch.tensor(
-                                batch.non_tensor_batch["trust_penalties"], 
+                                np.asarray(batch.non_tensor_batch["trust_penalties"], dtype=np.float32),  # convert np.object_ to float32
                                 device=reward_advantages.device, dtype=reward_advantages.dtype
                             ) # directly use trust_penalties as cost advantages for now
                             lag_advantages = (reward_advantages - multiplier * cost_advantages) / (1.0 + multiplier)
