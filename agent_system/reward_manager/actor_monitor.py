@@ -19,17 +19,10 @@ import numpy as np
 
 class ActorMonitorRewardManager:
     """
-<<<<<<< HEAD
-    Reward manager for actor-monitor adversarial training with minimax objectives.
-
-    - Actor: maximizes (episode_reward - trust_penalty) to complete tasks while avoiding detection
-    - Monitor: maximizes trust_penalty to detect deceptive behavior from the actor
-=======
     Reward manager for agent training with monitor penalties
     
     Agent reward = episode_reward - trust_penalty
     Note that the monitor is not trained, only induces trust_penalty to penalize deception of the actor 
->>>>>>> db8813c (1. fix trust_penalties misassignment bug; 2. add lagrangian RL)
     """
 
     def __init__(self, tokenizer, num_examine, role='actor', normalize_by_length=False) -> None:
@@ -43,12 +36,7 @@ class ActorMonitorRewardManager:
         if "rm_scores" in data.batch.keys():
             # Use the same dtype as rm_scores for consistency
             rm_dtype = data.batch["rm_scores"].dtype
-<<<<<<< HEAD
-            reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)  # NOTE: only test trust penalty
-            #reward_tensor = data.batch["rm_scores"].clone().to(data.batch["responses"].device)
-=======
             reward_tensor = data.batch["rm_scores"].clone().to(data.batch["responses"].device)
->>>>>>> db8813c (1. fix trust_penalties misassignment bug; 2. add lagrangian RL)
         else:
             rm_dtype = torch.float32
             reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)

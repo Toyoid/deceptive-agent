@@ -97,6 +97,12 @@ python3 -m verl.trainer.main_ppo \
     judge_model.token_weights='[0.0,0.33,0.66,1.0]' \
     judge_model.top_k=2 \
     algorithm.use_kl_in_reward=False \
+    algorithm.lagrangian.enable=True \
+    algorithm.lagrangian.lambda_init=10.0 \
+    algorithm.lagrangian.lambda_max=100.0 \
+    algorithm.lagrangian.lambda_update_delay_steps=0 \
+    algorithm.lagrangian.episode_cost_window_size=1500 \
+    algorithm.lagrangian.threshold=1e-2 \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \

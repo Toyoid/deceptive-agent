@@ -721,6 +721,9 @@ class RayPPOTrainer:
         if config.monitor_rollout_ref.enable_train_monitor:
             assert config.monitor_rollout_ref.enable, "monitor_rollout_ref.enable must be True when enabling monitor rollout for training"
         
+        if config.algorithm.lagrangian.enable and not config.monitor_rollout_ref.enable_train_monitor:
+            raise ValueError("Lagrangian RL requires monitor training to be enabled.")
+        
         print("[validate_config] All configuration checks passed successfully!")
 
     def _create_dataloader(self, train_dataset, val_dataset, collate_fn, train_sampler):
