@@ -574,7 +574,7 @@ class RayPPOTrainer:
 
         self.use_lag = self.config.algorithm.lagrangian.enable and self.enable_train_monitor  # lagrangian optimization is bounded with actor-monitor maximin training
         if self.use_lag:
-            self.lag_device = self._resolve_lag_device()
+            self.lag_device = torch.device("cpu")
             self.log_lambda = torch.nn.Parameter(
                 torch.tensor(
                     np.log(self.config.algorithm.lagrangian.lambda_init),
@@ -590,21 +590,6 @@ class RayPPOTrainer:
 
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
-
-    def _resolve_lag_device(self) -> torch.device:
-        configured_device = str(self.device_name).lower() if self.device_name is not None else "cpu"
-
-        if configured_device.startswith("cuda"):
-            if torch.cuda.is_available():
-                return torch.device("cuda:0")
-            else:
-                raise ValueError("CUDA device specified but not available.")
-
-        if configured_device.startswith("npu"):
-            if hasattr(torch, "npu") and torch.npu.is_available():
-                return torch.device("npu:0")
-
-        return torch.device("cpu")
 
     def _validate_config(self):  # TODO-monitor: add monitor config validation
         config = self.config
@@ -1823,14 +1808,7 @@ class RayPPOTrainer:
                             lag_advantages = (reward_advantages - multiplier * cost_advantages) / (1.0 + multiplier)
                             batch.batch["reward_advantages"] = reward_advantages
                             batch.batch["advantages"] = lag_advantages
-                            # NOTE: 
-                            # 1. Biggest conceptual risk: 
-                            # actor and monitor advantages can become misaligned sample-wise after independent adjust/rebalance calls, then you combine them directly. 
-                            # Actor batch is adjusted/balanced separately from monitor batch in ray_trainer.py:1570-1596, but combined in ray_trainer.py:1789-1794.
-                            # 2. Second risk: 
-                            # dual cost window uses post-adjust monitor batch (which may contain duplicated samples from copy-mode), 
-                            # biasing episode_cost in ray_trainer.py:1770-1772 with duplication introduced by utils.py:137-145.
-
+                            
                     # ==================================================
                     #                   Update Monitor
                     # ==================================================
