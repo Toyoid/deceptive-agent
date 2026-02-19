@@ -233,7 +233,7 @@ def apply_invalid_action_penalty(data: DataProto, invalid_action_penalty_coef=fl
 
         if 'step_rewards' in data.batch.keys():
             step_rewards[i] -= invalid_action_penalty_coef * action_invalids
-    
+
     valid_action_ratio = np.mean(data.non_tensor_batch['is_action_valid'].astype(np.float32)).item()
     metrics = {'episode/valid_action_ratio': valid_action_ratio}
     return data, metrics
@@ -720,10 +720,10 @@ class RayPPOTrainer:
         # check monitor config
         if config.monitor_rollout_ref.enable_train_monitor:
             assert config.monitor_rollout_ref.enable, "monitor_rollout_ref.enable must be True when enabling monitor rollout for training"
-        
+
         if config.algorithm.lagrangian.enable and not config.monitor_rollout_ref.enable_train_monitor:
             raise ValueError("Lagrangian RL requires monitor training to be enabled.")
-        
+
         print("[validate_config] All configuration checks passed successfully!")
 
     def _create_dataloader(self, train_dataset, val_dataset, collate_fn, train_sampler):
@@ -847,7 +847,7 @@ class RayPPOTrainer:
         else:
             req_rollout_n = self.config.env.rollout.val_n
         total_epoches = math.ceil(calibration_target / (req_rollout_n * len(calib_loader) * batch_size))
-        
+
         print(f"[RM Norm] Actor rollout params for RM calibration:\n" + 
               f"\ttemperature = {self.config.actor_rollout_ref.rollout.temperature},\n" + 
               f"\ttop_p = {self.config.actor_rollout_ref.rollout.top_p}\n" +
@@ -984,7 +984,7 @@ class RayPPOTrainer:
         sample_inputs = []
         sample_outputs = []
         sample_scores = []
-        
+
         # Lists to collect normalized RM scores for distribution verification
         normed_rm_scores_lst = []
 
@@ -1125,20 +1125,20 @@ class RayPPOTrainer:
             normed_std = all_normed_scores.std(unbiased=True).item()
             normed_min = all_normed_scores.min().item()
             normed_max = all_normed_scores.max().item()
-            
+
             print(f"\n[RM Norm Verification] Normalized RM scores distribution:")
             print(f"  - Count: {all_normed_scores.numel()}")
             print(f"  - Mean: {normed_mean:.6f}")
             print(f"  - Std:  {normed_std:.6f}")
             print(f"  - Min:  {normed_min:.6f}")
             print(f"  - Max:  {normed_max:.6f}")
-            
+
             # Add metrics for tracking
             metric_dict['val/rm_norm/mean'] = normed_mean
             metric_dict['val/rm_norm/std'] = normed_std
             metric_dict['val/rm_norm/min'] = normed_min
             metric_dict['val/rm_norm/max'] = normed_max
-            
+
         return metric_dict
 
     def init_workers(self, verbose=True):
@@ -1151,7 +1151,7 @@ class RayPPOTrainer:
         print("\n" + "="*80)
         print("INITIALIZING WORKERS")
         print("="*80)
-        
+
         self.resource_pool_manager.create_resource_pool()
 
         self.resource_pool_to_cls = {pool: {} for pool in self.resource_pool_manager.resource_pool_dict.values()}
@@ -1246,7 +1246,7 @@ class RayPPOTrainer:
                     print(f"  - Worker Class: {self.role_worker_mapping[Role.MonitorRef]}")
                     print(f"  - RayClassWithInitArgs: {type(monitor_ref_policy_cls).__name__}")
                     print(f"  - Resource Pool: {id(resource_pool)}")
-        
+
         if self.use_judge:
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.Judge)
             judge_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.Judge], config=self.config.judge_model)
@@ -1277,13 +1277,13 @@ class RayPPOTrainer:
                 print(f"  - Created colocated worker class: {worker_dict_cls}")
                 print(f"  - Worker dict cls type: {type(worker_dict_cls).__name__}")
                 print(f"  - Has fused_worker_used: {getattr(worker_dict_cls, 'fused_worker_used', False)}")
-                
+
             wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls, device_name=self.device_name, **wg_kwargs)
             if verbose:
                 print(f"  - Created WorkerGroup: {type(wg_dict).__name__}")
                 print(f"  - WorkerGroup class: {self.ray_worker_group_cls}")
                 print(f"  - World size: {wg_dict.world_size}")
-                
+
             spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
             if verbose:
                 print(f"  - Spawned worker groups: {list(spawn_wg.keys())}")
@@ -1321,7 +1321,7 @@ class RayPPOTrainer:
                 print(f"  - Worker names: {self.rm_wg.worker_names[:3]}..." if len(self.rm_wg.worker_names) > 3 else f"  - Worker names: {self.rm_wg.worker_names}")
             self.rm_wg.init_model()
             # ISSUE: Some weights of LlamaForTokenClassification were not initialized from the model checkpoint at OpenRLHF/Llama-3-8b-rm-700k and are newly initialized: ['score.bias', 'score.weight']
-        
+
         if self.use_monitor:
             if self.use_monitor_ref_policy and not self.ref_in_monitor:
                 self.monitor_ref_policy_wg = all_wg["monitor_ref"]
@@ -1352,7 +1352,7 @@ class RayPPOTrainer:
             self.judge_wg.init_model()
         else:
             self.judge_wg = None
-            
+
         # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
         self.actor_rollout_wg = all_wg["actor_rollout"]
         if verbose:
@@ -1951,4 +1951,4 @@ class RayPPOTrainer:
                     progress_bar.close()
                     logger.close()  # TODO: test whether wandb can safely finish
                     return
-        
+

@@ -20,7 +20,7 @@ import numpy as np
 class ActorMonitorRewardManager:
     """
     Reward manager for agent training with monitor penalties
-    
+
     Agent reward = episode_reward - trust_penalty
     Note that the monitor is not trained, only induces trust_penalty to penalize deception of the actor 
     """
