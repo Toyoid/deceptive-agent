@@ -21,7 +21,7 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import json
 import os
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -572,8 +572,39 @@ class RayPPOTrainer:
         else:
             raise NotImplementedError
 
+        self.use_lag = self.config.algorithm.lagrangian.enable and self.enable_train_monitor  # lagrangian optimization is bounded with actor-monitor maximin training
+        if self.use_lag:
+            self.lag_device = self._resolve_lag_device()
+            self.log_lambda = torch.nn.Parameter(
+                torch.tensor(
+                    np.log(self.config.algorithm.lagrangian.lambda_init),
+                    device=self.lag_device, dtype=torch.float32,
+                ),
+                requires_grad=True,
+            )
+            self.log_lambda_max = np.log(self.config.algorithm.lagrangian.lambda_max) if self.config.algorithm.lagrangian.lambda_max else None
+            self.log_lambda_optimizer = torch.optim.SGD([self.log_lambda], lr=self.config.algorithm.lagrangian.lambda_lr)
+            self.lambda_update_delay_steps = self.config.algorithm.lagrangian.lambda_update_delay_steps
+            self.episode_costs = deque(maxlen=self.config.algorithm.lagrangian.episode_cost_window_size)
+            self.lag_threshold = self.config.algorithm.lagrangian.threshold
+
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
+
+    def _resolve_lag_device(self) -> torch.device:
+        configured_device = str(self.device_name).lower() if self.device_name is not None else "cpu"
+
+        if configured_device.startswith("cuda"):
+            if torch.cuda.is_available():
+                return torch.device("cuda:0")
+            else:
+                raise ValueError("CUDA device specified but not available.")
+
+        if configured_device.startswith("npu"):
+            if hasattr(torch, "npu") and torch.npu.is_available():
+                return torch.device("npu:0")
+
+        return torch.device("cpu")
 
     def _validate_config(self):  # TODO-monitor: add monitor config validation
         config = self.config
@@ -682,6 +713,14 @@ class RayPPOTrainer:
             assert config.actor_rollout_ref.rollout.multi_turn.tool_config_path is not None, "tool_config_path must be set when enabling multi_turn with tool, due to no role-playing support"
             assert config.algorithm.adv_estimator in [AdvantageEstimator.GRPO], "only GRPO is tested for multi-turn with tool"
 
+        # check rollout n and val_kwargs.n
+        assert config.actor_rollout_ref.rollout.n == 1, "In verl, actor_rollout_ref.rollout.n > 1 is for GRPO. In verl + env, we keep n=1, and achieve GRPO by env.rollout.n"
+        assert config.actor_rollout_ref.rollout.val_kwargs.n == 1, "In verl, actor_rollout_ref.rollout.val_kwargs.n > 1 controls multiple responses per question. In verl + env, we keep val_kwargs.n=1, and achieve multi-rollout by env.rollout.val_n"
+
+        # check monitor config
+        if config.monitor_rollout_ref.enable_train_monitor:
+            assert config.monitor_rollout_ref.enable, "monitor_rollout_ref.enable must be True when enabling monitor rollout for training"
+        
         print("[validate_config] All configuration checks passed successfully!")
 
     def _create_dataloader(self, train_dataset, val_dataset, collate_fn, train_sampler):
@@ -1544,6 +1583,15 @@ class RayPPOTrainer:
                         )
                         batch.batch['step_rewards'] = step_rewards_tensor
                     
+                    # collect lagrangian costs before batch preprocessing
+                    if self.use_lag:
+                        # compute cost-deque entries from one value per trajectory (e.g., unique traj_uid) before extending, rather than one value per step
+                        costs = batch.non_tensor_batch["trust_penalties"]  # use trust_penalties from the actor batch, do not use monitor batch.
+                        traj_uids = batch.non_tensor_batch["traj_uid"]
+                        _, unique_idx = np.unique(traj_uids, return_index=True)
+                        unique_idx = np.sort(unique_idx)
+                        self.episode_costs.extend(costs[unique_idx].tolist())
+
                     # ==================================================
                     #                Batch Preprocessing
                     # ==================================================
@@ -1604,15 +1652,14 @@ class RayPPOTrainer:
                         if self.config.reward_model.launch_reward_fn_async:
                             future_reward = compute_reward_async.remote(batch, self.config, self.tokenizer)
                             if self.use_monitor:
-                                # TODO: Not supported for ActorMonitorRewardManager yet, only a placeholder for now
+                                # TODO: Not supported for ActorMonitorRewardManager yet, only a placeholder for future implementation
                                 future_monitor_reward = compute_reward_async.remote(monitor_batch, self.config, self.monitor_tokenizer)
                         else:
                             reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
                             if self.use_monitor:
                                 monitor_reward_tensor, monitor_reward_extra_infos = compute_reward(monitor_batch, self.monitor_reward_fn)
                                 # For inference-only monitors (use_monitor=True, enable_train_monitor=False),
-                                # set token_level_scores here so logging can work. For training monitors,
-                                # this will be overwritten in the monitor_adv block.
+                                # set token_level_scores here so logging can work. For training monitors, this will be overwritten in the monitor_adv block.
                                 if not self.enable_train_monitor:
                                     monitor_batch.batch["token_level_scores"] = monitor_reward_tensor
                     
@@ -1743,10 +1790,48 @@ class RayPPOTrainer:
                                 multi_turn=self.config.monitor_rollout_ref.rollout.multi_turn.enable,
                             )
 
+                        # ==================================================
+                        #           Update Lagrangian Multipliers
+                        # ==================================================
+                        if self.use_lag:
+                            with _timer("lagrangian_update", timing_raw):
+                                episode_cost = torch.tensor(self.episode_costs, device=self.lag_device, dtype=self.log_lambda.dtype).mean()
+                                if self.global_steps >= self.lambda_update_delay_steps:
+                                    lambda_loss = - (episode_cost - self.lag_threshold) * self.log_lambda.exp()
+                                    self.log_lambda_optimizer.zero_grad()
+                                    lambda_loss.backward()
+                                    self.log_lambda_optimizer.step()
+                                    if self.log_lambda_max is not None:
+                                        with torch.no_grad():
+                                            self.log_lambda.clamp_(max=self.log_lambda_max)
+
+                                metrics.update({
+                                    "lagrangian/lambda": self.log_lambda.exp().item(),
+                                    "lagrangian/episode_cost": episode_cost.item(),
+                                    "lagrangian/loss": lambda_loss.item() if self.global_steps >= self.lambda_update_delay_steps else 0.0,
+                                })
+
+                            multiplier = self.log_lambda.exp().item()
+                            reward_advantages = batch.batch["advantages"]
+                            cost_advantages = torch.tensor(
+                                batch.non_tensor_batch["trust_penalties"], 
+                                device=reward_advantages.device, dtype=reward_advantages.dtype
+                            ) # directly use trust_penalties as cost advantages for now
+                            lag_advantages = (reward_advantages - multiplier * cost_advantages) / (1.0 + multiplier)
+                            batch.batch["reward_advantages"] = reward_advantages
+                            batch.batch["advantages"] = lag_advantages
+                            # NOTE: 
+                            # 1. Biggest conceptual risk: 
+                            # actor and monitor advantages can become misaligned sample-wise after independent adjust/rebalance calls, then you combine them directly. 
+                            # Actor batch is adjusted/balanced separately from monitor batch in ray_trainer.py:1570-1596, but combined in ray_trainer.py:1789-1794.
+                            # 2. Second risk: 
+                            # dual cost window uses post-adjust monitor batch (which may contain duplicated samples from copy-mode), 
+                            # biasing episode_cost in ray_trainer.py:1770-1772 with duplication introduced by utils.py:137-145.
+
+                    # ==================================================
+                    #                   Update Monitor
+                    # ==================================================
                     if self.enable_train_monitor:
-                        # ==================================================
-                        #                   Update Monitor
-                        # ==================================================
                         # TODO: maybe I need to interleavely update the monitor and actor
                         with _timer("update_monitor", timing_raw):
                             # NOTE: currently we do not consider multi-turn for monitor training

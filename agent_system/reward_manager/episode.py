@@ -1,5 +1,6 @@
 # Copyright 2025 Nanyang Technological University (NTU), Singapore
 # and the verl-agent (GiGPO) team.
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +19,9 @@ import torch
 import numpy as np
 
 class EpisodeRewardManager:
-    """The reward manager.
+    """
+    The reward manager for agent's episode reward.
+    It combines the RM score with episode rewards from the environment.
     """
 
     def __init__(self, tokenizer, num_examine, normalize_by_length=False) -> None:
@@ -27,38 +30,23 @@ class EpisodeRewardManager:
         self.normalize_by_length = normalize_by_length
 
     def __call__(self, data: DataProto, return_dict=False):
-        """We will expand this function gradually based on the available datasets"""
-
-        # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
+        # If there is rm score, we add it with env computed reward
         if "rm_scores" in data.batch.keys():
-            if return_dict:
-                return {"reward_tensor": data.batch["rm_scores"]}
-            else:
-                return data.batch["rm_scores"]
-
-        reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
+            # Use the same dtype as rm_scores for consistency
+            rm_dtype = data.batch["rm_scores"].dtype
+            reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)  # NOTE: only test trust penalty
+            # reward_tensor = data.batch["rm_scores"].clone().to(data.batch["responses"].device)
+        else:
+            rm_dtype = torch.float32
+            reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)
 
         already_print_data_sources = {}
 
         for i in range(len(data)):
             data_item = data[i]  # DataProtoItem
-
             prompt_ids = data_item.batch['prompts']
-
             prompt_length = prompt_ids.shape[-1]
-
-            valid_prompt_length = data_item.batch['attention_mask'][:prompt_length].sum()
-            valid_prompt_ids = prompt_ids[-valid_prompt_length:]
-
-            response_ids = data_item.batch['responses']
             valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()
-            valid_response_ids = response_ids[:valid_response_length]
-
-            # decode
-            prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False)
-            response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
-
-            # ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
 
             data_source = data_item.non_tensor_batch['data_source']
 
@@ -68,24 +56,31 @@ class EpisodeRewardManager:
                 pixel_values = multi_modal_inputs['pixel_values']
                 image_grid_thw = multi_modal_inputs['image_grid_thw']
 
-
-            episode_rewards = data_item.non_tensor_batch['episode_rewards']
-            episode_lengths = data_item.non_tensor_batch['episode_lengths']
-
-            if self.normalize_by_length:
-                score = episode_rewards / episode_lengths
-            else:
-                score = episode_rewards
-            reward_tensor[i, valid_response_length - 1] = torch.tensor(score, dtype=torch.float32, device=prompt_ids.device)
-
+            episode_reward = data_item.non_tensor_batch['episode_rewards']
+            episode_length = data_item.non_tensor_batch['episode_lengths']
+            score = (episode_reward / episode_length) if self.normalize_by_length else episode_reward
+               
+            reward_tensor[i, valid_response_length - 1] += torch.tensor(score, dtype=rm_dtype, device=prompt_ids.device)
+            
             if data_source not in already_print_data_sources:
                 already_print_data_sources[data_source] = 0
 
             if already_print_data_sources[data_source] < self.num_examine and np.random.random() < 0.1:
                 already_print_data_sources[data_source] += 1
+ 
+                valid_prompt_length = data_item.batch['attention_mask'][:prompt_length].sum()
+                valid_prompt_ids = prompt_ids[-valid_prompt_length:]
+
+                response_ids = data_item.batch['responses']
+                valid_response_ids = response_ids[:valid_response_length]
+
+                # decode
+                prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False)
+                response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
+
                 print(f"[{data_source}][prompt]", prompt_str)
                 print(f"[{data_source}][response]", response_str)
-                print(f"[{data_source}][score]", score)
+                print(f"[{data_source}][final_score]", score)
 
         if return_dict:
             return {

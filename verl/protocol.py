@@ -736,6 +736,8 @@ class DataProto:
         Args:
             repeat_times (int): Number of times to repeat the data.
             interleave (bool): Whether to interleave the repeated data.
+                               interleave=True: [a, b, c] → [a, a, b, b, c, c]
+                               interleave=False: [a, b, c] → [a, b, c, a, b, c]
 
         Returns:
             DataProto: A new DataProto with repeated data, which is independent of the original.

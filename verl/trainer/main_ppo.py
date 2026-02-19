@@ -231,29 +231,33 @@ class TaskRunner:
         reward_manager_name = config.reward_model.get("reward_manager", "episode")
         if reward_manager_name == 'episode':
             if config.monitor_rollout_ref.enable:
-                from agent_system.reward_manager import ActorMonitorRewardManager
-                reward_fn = ActorMonitorRewardManager(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
-                # Note that we always use function-based RM for validation
-                val_reward_fn = ActorMonitorRewardManager(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
+                if config.monitor_rollout_ref.enable_train_monitor:
+                    from agent_system.reward_manager import EpisodeRewardManager
+                    from agent_system.reward_manager import MonitorRewardManager
+    
+                    reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
+                    val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
 
-                monitor_reward_fn = ActorMonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
-                monitor_val_reward_fn = ActorMonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, role='monitor', normalize_by_length=False)
+                    monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
+                    monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, normalize_by_length=False)
+                else:
+                    from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
+                    reward_manager_cls = ActorMonitorRewardManager
+                    reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
+                    val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
+
+                    monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
+                    monitor_val_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=1, role='monitor', normalize_by_length=False)
             else:
                 from agent_system.reward_manager import EpisodeRewardManager
-                reward_manager_cls = EpisodeRewardManager
-                
-                reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
-                # Note that we always use function-based RM for validation
-                val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
+                reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
+                val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
                 monitor_reward_fn = None
                 monitor_val_reward_fn = None
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"Reward manager {reward_manager_name} not supported yet")
 
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
-
-        assert config.actor_rollout_ref.rollout.n == 1, "In verl, actor_rollout_ref.rollout.n>1 is for GRPO. In verl+env, we keep n=1, and achieve GRPO by env.rollout.n"
-        assert config.actor_rollout_ref.rollout.val_kwargs.n == 1, "In verl, actor_rollout_ref.rollout.val_kwargs.n>1 controls multiple responses per question. In verl+env, we keep val_kwargs.n=1, and achieve multi-rollout by env.rollout.val_n"
 
         from agent_system.multi_turn_rollout import TrajectoryCollector
         traj_collector = TrajectoryCollector(

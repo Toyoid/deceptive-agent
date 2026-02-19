@@ -458,6 +458,14 @@ algorithm:
   filter_groups: # DAPO from https://arxiv.org/abs/2503.14476
     enable: False
     max_num_gen_batches: 10
+  lagrangian:
+    enable: False
+    lambda_init: 10.0
+    lambda_max: 100.0
+    lambda_lr: 0.1
+    lambda_update_delay_steps: 0
+    episode_cost_window_size: 1500
+    threshold: 1e-2
 
 trainer:
   balance_batch: True

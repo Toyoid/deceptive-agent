@@ -81,7 +81,8 @@ class TrajectoryCollector:
             np.ndarray: Array of UIDs with shape (batch_size,).
         """
         assert batch_size % max(1, n_rollouts) == 0, f"batch_size {batch_size} must be divisible by n_rollouts {n_rollouts}"
-
+        
+        # TODO: only support interleaved grouping for now, can add non-interleaved grouping if needed
         if n_rollouts > 0: 
             uid_batch = []
             for i in range(batch_size): 
@@ -406,6 +407,7 @@ class TrajectoryCollector:
         # ]
 
         batch_size = len(total_batch_list)
+        assert len(trust_penalties) == batch_size if trust_penalties is not None else True, "trust_penalties length should match batch_size if provided"
 
         success_rate = {}
         for key, value in success.items():
@@ -590,6 +592,7 @@ class TrajectoryCollector:
         # 4. Return done=True again
         # So filtering out data with active_masks=False is necessary
         # TODO: What will the obs be when loop finished and some envs are already done in earlier steps?
+        # TODO: This agent loop is to be optimized to asynchronously process envs with varied episode lengths
 
         # monitor rollout on the episode data of actor
         if self.config.monitor_rollout_ref.enable and monitor_wg is not None:
@@ -661,7 +664,7 @@ class TrajectoryCollector:
         # create monitor uid and traj_uid
         uid_batch = self._create_uid_batch(
             batch_size,
-            self.config.monitor_rollout_ref.rollout.n
+            repeat_n
         )
         traj_uid = np.array(
             [str(uuid.uuid4()) for _ in range(batch_size)], dtype=object
@@ -738,10 +741,10 @@ class TrajectoryCollector:
                 judge_wg=judge_wg,
             )
         elif self.config.judge_model.enable and judge_wg is None:
-            print("WARN: Judge worker group set as None, skipping judge scoring...")
+            raise RuntimeError("judge worker group is None but judge_model.enable is True, cannot compute judge scores for trust penalties")
         else:
-            # TODO: Delete later - Fallback: set trust_penalty to 1 for all samples (placeholder)
-            trust_penalties = np.ones(batch_size, dtype=np.float32)
+            print("[WARNING] Judge model not enabled, skipping judge scoring and setting `trust_penalties` to 0...")
+            trust_penalties = np.zeros(batch_size, dtype=np.float32)
 
         print(f"  Computed trust_penalties: {trust_penalties}")
         batch.non_tensor_batch['trust_penalties'] = trust_penalties
@@ -1000,6 +1003,21 @@ class TrajectoryCollector:
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['episode_lengths'])
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['traj_uid'])
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['tool_callings'])
+
+        # construct trust_penalties for actor batch, will be used for actor model training
+        monitor_trust_penalties = None
+        if monitor_wg is not None and monitor_batch_output is not None:
+            monitor_trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
+            actor_batch_size = len(actor_batch_dict['total_batch_list'])
+            if len(monitor_trust_penalties) != actor_batch_size:
+                repeat_n = self.config.monitor_rollout_ref.rollout.n if self.config.monitor_rollout_ref.enable_train_monitor else 1
+                expected_size = actor_batch_size * repeat_n
+                assert len(monitor_trust_penalties) == expected_size, (
+                    f"trust_penalties size mismatch: got {len(monitor_trust_penalties)}, "
+                    f"expected {actor_batch_size} (actor batch) or {expected_size} (actor batch * repeat_n={repeat_n})"
+                )
+                # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed   
+                monitor_trust_penalties = monitor_trust_penalties.reshape(actor_batch_size, repeat_n).mean(axis=1)
         
         # Create trajectory data for actor model
         gen_batch_output: DataProto = self.gather_rollout_data(
@@ -1009,7 +1027,7 @@ class TrajectoryCollector:
             success=actor_batch_dict['success'],
             traj_uid=actor_batch_dict['traj_uid'],
             tool_callings=actor_batch_dict['tool_callings'],
-            trust_penalties=monitor_batch_output.non_tensor_batch['trust_penalties'] if monitor_wg is not None else None,
+            trust_penalties=monitor_trust_penalties,
         )
 
         if self.config.monitor_rollout_ref.enable:
@@ -1039,17 +1057,17 @@ class TrajectoryCollector:
     # }
     # meta_info: []
 
-    # Final monitor dataproto
+    # Final monitor dataproto (assuming monitor rollout n is 2)
     # tensor batch: 
     # {'prompts': , 'rollout_log_probs': , 'attention_mask': , 'input_ids': , 'position_ids': , 'responses': }
     # non_tensor batch: {
-    #     'data_source': 'ndarray(shape=(4,), dtype=object)', 
-    #     'uid': 'ndarray(shape=(4,), dtype=object)', 
-    #     'traj_uid': 'ndarray(shape=(4,), dtype=object)', 
-    #     'raw_prompt': 'ndarray(shape=(4, 2), dtype=object)', 
-    #     ?'rewards': 'ndarray(shape=(4,), dtype=object)', 
-    #     'episode_rewards': 'ndarray(shape=(4,), dtype=object)', 
-    #     'trust_penalty': 'ndarray(shape=(4,), dtype=object)'
+    #     'data_source': 'ndarray(shape=(8,), dtype=object)', 
+    #     'uid': 'ndarray(shape=(8,), dtype=object)', 
+    #     'traj_uid': 'ndarray(shape=(8,), dtype=object)', 
+    #     'raw_prompt': 'ndarray(shape=(8, 2), dtype=object)', 
+    #     ?'rewards': 'ndarray(shape=(8,), dtype=object)', 
+    #     'episode_rewards': 'ndarray(shape=(8,), dtype=object)', 
+    #     'trust_penalty': 'ndarray(shape=(8,), dtype=object)'
     # }
     # meta_info: []
 
