@@ -466,6 +466,7 @@ algorithm:
     lambda_update_delay_steps: 0
     episode_cost_window_size: 1500
     threshold: 1e-2
+    adv_estimator: reinforce_plus_plus
 
 trainer:
   balance_batch: True

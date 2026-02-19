@@ -33,6 +33,7 @@ import math
 import numpy as np
 import ray
 import torch
+from tensordict import TensorDict
 from codetiming import Timer
 from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset, Sampler
@@ -1571,7 +1572,7 @@ class RayPPOTrainer:
                         )
                         batch.batch['step_rewards'] = step_rewards_tensor
                     
-                    # collect lagrangian costs before batch preprocessing
+                    # collect lagrangian costs before batch preprocessing/adjustments
                     if self.use_lag:
                         # compute cost-deque entries from one value per trajectory (e.g., unique traj_uid) before extending, rather than one value per step
                         costs = np.asarray(batch.non_tensor_batch["trust_penalties"], dtype=np.float32) # use trust_penalties from the actor batch, do not use monitor batch.
@@ -1801,13 +1802,63 @@ class RayPPOTrainer:
 
                             multiplier = self.log_lambda.exp().item()
                             reward_advantages = batch.batch["advantages"]
-                            cost_advantages = torch.tensor(
-                                np.asarray(batch.non_tensor_batch["trust_penalties"], dtype=np.float32),  # convert np.object_ to float32
-                                device=reward_advantages.device, dtype=reward_advantages.dtype
-                            ) # directly use trust_penalties as cost advantages for now
+                            # Compute token-level cost scores from trust_penalties (MonitorRewardManager
+                            # is pure CPU computation, so this is safe in both sync and async reward paths).
+                            cost_reward_tensor, _ = compute_reward(batch, self.monitor_reward_fn)
+                            # TODO: cost_batch only supports REINFORCE++ for now; can be extended after
+                            # verifying each estimator's compatibility with the Lagrangian formulation
+                            # (see docs/algo/lagrangian_cost_advantage.md).
+                            # If GRPO with multi_turn is added, "loss_mask" must also be included here.
+                            cost_batch = DataProto(
+                                batch=TensorDict(
+                                    source={
+                                        "token_level_rewards": cost_reward_tensor,
+                                        "response_mask": batch.batch["response_mask"],  # shared ref, read-only
+                                    },
+                                    batch_size=batch.batch.batch_size,
+                                ),
+                                non_tensor_batch={
+                                    "uid": batch.non_tensor_batch["uid"],      # shared ref, read-only
+                                    "traj_uid": batch.non_tensor_batch["traj_uid"],  # shared ref, read-only
+                                },
+                            )
+                            # TODO:
+                            # Issue 2 — use_pf_ppo not passed: safe by default, but fragile
+                            # compute_advantage for cost_batch doesn't pass use_pf_ppo. This defaults to False via kwargs.get("use_pf_ppo", False) — correct, since cost_batch has no token_level_scores. However, if someone later passes use_pf_ppo=True globally without realising it would also apply here through a shared kwargs dict, it would silently fail. Not a current bug, but worth a guard comment.
+                            # Issue 3 — multi_turn=True + GRPO cost estimator would KeyError on loss_mask
+                            # When compute_advantage runs for GRPO with multi_turn=True (ray_trainer.py:365-368), it reads data.batch["loss_mask"]. cost_batch has no loss_mask. The current note restricts cost to REINFORCE++ only, which sidesteps this. But if that restriction is ever relaxed, adding loss_mask to cost_batch must accompany GRPO support.
+                            # Issue 4 — norm_adv_by_std_in_grpo is the reward estimator's flag, reused for cost
+                            # Line 1828 passes norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo, which was read from self.config.algorithm.get("norm_adv_by_std_in_grpo", True). This is the reward estimator's setting. For cost advantages the recommendation from the doc is to NOT use GRPO, so for REINFORCE++ (the current default) this flag is unused — compute_reinforce_plus_plus_outcome_advantage doesn't take norm_adv_by_std_in_grpo at all. Safe for now, but worth using a dedicated cost config key when/if other estimators are added.
+                            cost_batch = compute_advantage(
+                                cost_batch,
+                                adv_estimator=self.config.algorithm.lagrangian.adv_estimator,
+                                gamma=self.config.algorithm.gamma,
+                                lam=self.config.algorithm.lam,
+                                num_repeat=self.config.actor_rollout_ref.rollout.n,  # num_repeat is not used
+                                norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+                                multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enable,
+                            )
+                            cost_advantages = cost_batch.batch["advantages"]
                             lag_advantages = (reward_advantages - multiplier * cost_advantages) / (1.0 + multiplier)
                             batch.batch["reward_advantages"] = reward_advantages
                             batch.batch["advantages"] = lag_advantages
+
+                            # Log component advantage statistics.
+                            # lag_advantages will be logged by compute_data_metrics (as "critic/advantages/*")
+                            # since batch.batch["advantages"] is now overwritten with lag_advantages above.
+                            response_mask_bool = batch.batch["response_mask"].bool()
+                            valid_reward_adv = torch.masked_select(reward_advantages, response_mask_bool)
+                            valid_cost_adv = torch.masked_select(cost_advantages, response_mask_bool)
+                            metrics.update({
+                                "lagrangian/reward_advantages/mean": valid_reward_adv.mean().item(),
+                                "lagrangian/reward_advantages/max":  valid_reward_adv.max().item(),
+                                "lagrangian/reward_advantages/min":  valid_reward_adv.min().item(),
+                                "lagrangian/reward_advantages/std":  valid_reward_adv.std().item(),
+                                "lagrangian/cost_advantages/mean":   valid_cost_adv.mean().item(),
+                                "lagrangian/cost_advantages/max":    valid_cost_adv.max().item(),
+                                "lagrangian/cost_advantages/min":    valid_cost_adv.min().item(),
+                                "lagrangian/cost_advantages/std":    valid_cost_adv.std().item(),
+                            })
                             
                     # ==================================================
                     #                   Update Monitor
