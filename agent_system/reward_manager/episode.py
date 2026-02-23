@@ -34,8 +34,8 @@ class EpisodeRewardManager:
         if "rm_scores" in data.batch.keys():
             # Use the same dtype as rm_scores for consistency
             rm_dtype = data.batch["rm_scores"].dtype
-            reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)  # NOTE: only test trust penalty
-            # reward_tensor = data.batch["rm_scores"].clone().to(data.batch["responses"].device)
+            #reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)  # NOTE: only test trust penalty
+            reward_tensor = data.batch["rm_scores"].clone().to(data.batch["responses"].device)
         else:
             rm_dtype = torch.float32
             reward_tensor = torch.zeros_like(data.batch['responses'], dtype=rm_dtype)
