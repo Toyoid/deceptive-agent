@@ -573,7 +573,7 @@ class RayPPOTrainer:
         else:
             raise NotImplementedError
 
-        self.use_lag = self.config.algorithm.lagrangian.enable and self.enable_train_monitor  # lagrangian optimization is bounded with actor-monitor maximin training
+        self.use_lag = self.config.algorithm.lagrangian.enable and self.use_monitor
         if self.use_lag:
             self.lag_device = torch.device("cpu")
             self.log_lambda = torch.nn.Parameter(

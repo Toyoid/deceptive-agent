@@ -256,6 +256,33 @@ class TaskRunner:
                 monitor_val_reward_fn = None
         else:
             raise NotImplementedError(f"Reward manager {reward_manager_name} not supported yet")
+        
+        if reward_manager_name == 'episode':
+            from agent_system.reward_manager import EpisodeRewardManager
+
+            reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
+            val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
+
+            if config.monitor_rollout_ref.enable:
+                assert config.algorithm.lagrangian.enable, "Constrained RL is required with 'episode' as reward manager when monitor_rollout_ref is enabled, please set algorithm.lagrangian.enable as True in the config"
+                from agent_system.reward_manager import MonitorRewardManager
+
+                monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
+                monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, normalize_by_length=False)
+            else:
+                monitor_reward_fn = None
+                monitor_val_reward_fn = None
+        elif reward_manager_name == 'actor_monitor':
+            assert config.monitor_rollout_ref.enable, "actor_monitor reward manager requires monitor_rollout_ref to be enabled"
+            from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
+            reward_manager_cls = ActorMonitorRewardManager
+            reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
+            val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
+
+            monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
+            monitor_val_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=1, role='monitor', normalize_by_length=False)
+        else:
+            raise NotImplementedError(f"Reward manager {reward_manager_name} not supported yet")
 
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 

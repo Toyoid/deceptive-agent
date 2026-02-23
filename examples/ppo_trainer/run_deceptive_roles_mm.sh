@@ -14,7 +14,6 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 # Example usage:
 #
 python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles
-# python3 examples/data_preprocess/deceptive_roles.py --neutral_suffix
 
 train_files=$DATA_ROOT/deceptive_roles/train.parquet
 test_files=$DATA_ROOT/deceptive_roles/test.parquet
@@ -50,14 +49,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
-    critic.optim.lr=1e-5 \
-    critic.model.use_remove_padding=True \
-    critic.optim.lr_warmup_steps_ratio=0.05 \
-    critic.model.path=Qwen/Qwen2.5-7B-Instruct \
-    critic.model.enable_gradient_checkpointing=True \
-    critic.ppo_micro_batch_size_per_gpu=1 \
-    critic.model.fsdp_config.param_offload=False \
-    critic.model.fsdp_config.optimizer_offload=False \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
     monitor_rollout_ref.model.path=Qwen/Qwen2.5-7B-Instruct \
@@ -86,6 +77,7 @@ python3 -m verl.trainer.main_ppo \
     reward_model.model.use_remove_padding=True \
     reward_model.model.fsdp_config.param_offload=True \
     reward_model.micro_batch_size_per_gpu=32 \
+    reward_model.reward_manager=episode \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \

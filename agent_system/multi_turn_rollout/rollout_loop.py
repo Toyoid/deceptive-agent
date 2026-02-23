@@ -1016,7 +1016,7 @@ class TrajectoryCollector:
                     f"trust_penalties size mismatch: got {len(monitor_trust_penalties)}, "
                     f"expected {actor_batch_size} (actor batch) or {expected_size} (actor batch * repeat_n={repeat_n})"
                 )
-                # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed   
+                # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed
                 monitor_trust_penalties = monitor_trust_penalties.reshape(actor_batch_size, repeat_n).mean(axis=1)
         
         # Create trajectory data for actor model
