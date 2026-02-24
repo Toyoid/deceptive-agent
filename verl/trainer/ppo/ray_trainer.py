@@ -935,7 +935,7 @@ class RayPPOTrainer:
 
         print(f"Dumped {n} generations to {filename}")
 
-    def _log_val_generations_if_available(self, inputs, outputs, scores):
+    def _log_val_generations_if_available(self, inputs, outputs, scores, trust_penalties=None):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
         generations_to_log = self.config.trainer.log_val_generations
@@ -945,8 +945,11 @@ class RayPPOTrainer:
 
         import numpy as np
 
-        # Create tuples of (input, output, score) and sort by input text
-        samples = list(zip(inputs, outputs, scores))
+        # Create tuples of (input, output, score[, trust_penalty]) and sort by input text
+        if trust_penalties is not None:
+            samples = list(zip(inputs, outputs, scores, trust_penalties))
+        else:
+            samples = list(zip(inputs, outputs, scores))
         samples.sort(key=lambda x: x[0])  # Sort by input text
 
         # Use fixed random seed for deterministic shuffling
@@ -964,12 +967,14 @@ class RayPPOTrainer:
         data_source_lst = []
         tool_calling_list = []
         traj_uid_list = []
+        trust_penalties_lst = []
         success_rate_dict = {}
 
         # Lists to collect samples for the table
         sample_inputs = []
         sample_outputs = []
         sample_scores = []
+        sample_trust_penalties = []
 
         # Lists to collect normalized RM scores for distribution verification
         normed_rm_scores_lst = []
@@ -1044,11 +1049,19 @@ class RayPPOTrainer:
             reward_tensor, _ = compute_reward(test_batch, self.val_reward_fn)
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
+            if 'trust_penalties' in test_output_gen_batch.non_tensor_batch:
+                sample_trust_penalties.extend(
+                    np.asarray(test_output_gen_batch.non_tensor_batch['trust_penalties'], dtype=np.float32).tolist()
+                )
 
             reward_tensor_lst.append(reward_tensor)
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
             tool_calling_list.append(test_output_gen_batch.non_tensor_batch['tool_callings'])
             traj_uid_list.append(test_output_gen_batch.non_tensor_batch['traj_uid'])
+            if 'trust_penalties' in test_output_gen_batch.non_tensor_batch:
+                trust_penalties_lst.append(
+                    np.asarray(test_output_gen_batch.non_tensor_batch['trust_penalties'], dtype=np.float32)
+                )
             # success rate
             for k in test_batch.non_tensor_batch.keys():
                 if 'success_rate' in k:
@@ -1059,7 +1072,12 @@ class RayPPOTrainer:
                     for i in range(1, len(test_batch.non_tensor_batch[k])):
                         assert test_batch.non_tensor_batch[k][0] == test_batch.non_tensor_batch[k][i], f'not all success_rate are the same, 0: {test_batch.non_tensor_batch[k][0]}, {i}: {test_batch.non_tensor_batch[k][i]}'
 
-        self._log_val_generations_if_available(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
+        self._log_val_generations_if_available(
+            inputs=sample_inputs,
+            outputs=sample_outputs,
+            scores=sample_scores,
+            trust_penalties=sample_trust_penalties if len(sample_trust_penalties) > 0 else None,
+        )
 
         reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)
         data_sources = np.concatenate(data_source_lst, axis=0)
@@ -1100,6 +1118,20 @@ class RayPPOTrainer:
             metric_dict[f'val/{data_source}/tool_call_count/mean'] = np.mean(tool_calls)
             metric_dict[f'val/{data_source}/tool_call_count/max'] = np.max(tool_calls)
             metric_dict[f'val/{data_source}/tool_call_count/min'] = np.min(tool_calls)
+
+        if len(trust_penalties_lst) > 0:
+            trust_penalties = np.concatenate(trust_penalties_lst, axis=0)
+            unique_trust_penalties = trust_penalties[unique_idx]
+            data_source_trust_penalty = {}
+            for i in range(unique_trust_penalties.shape[0]):
+                data_source = unique_data_sources[i]
+                if data_source not in data_source_trust_penalty:
+                    data_source_trust_penalty[data_source] = []
+                data_source_trust_penalty[data_source].append(unique_trust_penalties[i].item())
+            for data_source, penalties in data_source_trust_penalty.items():
+                metric_dict[f'val/{data_source}/trust_penalty/mean'] = np.mean(penalties)
+                metric_dict[f'val/{data_source}/trust_penalty/max'] = np.max(penalties)
+                metric_dict[f'val/{data_source}/trust_penalty/min'] = np.min(penalties)
 
         for k, v in success_rate.items():
             metric_dict[f'val/{k}'] = v

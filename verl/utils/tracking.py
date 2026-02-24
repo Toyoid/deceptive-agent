@@ -298,8 +298,16 @@ class ValidationGenerationsLogger:
         """Log samples to wandb as a table"""
         import wandb
 
+        # Detect whether samples include trust_penalty (4-element) or not (3-element)
+        has_trust_penalty = len(samples) > 0 and len(samples[0]) == 4
+
         # Create column names for all samples
-        columns = ["step"] + sum([[f"input_{i + 1}", f"output_{i + 1}", f"score_{i + 1}"] for i in range(len(samples))], [])
+        columns = ["step"] + sum([
+            ([f"input_{i + 1}", f"output_{i + 1}", f"score_{i + 1}", f"trust_penalty_{i + 1}"]
+             if has_trust_penalty else
+             [f"input_{i + 1}", f"output_{i + 1}", f"score_{i + 1}"])
+            for i in range(len(samples))
+        ], [])
 
         if not hasattr(self, "validation_table"):
             # Initialize the table on first call
@@ -327,16 +335,17 @@ class ValidationGenerationsLogger:
 
         swanlab_text_list = []
         for i, sample in enumerate(samples):
+            trust_penalty_line = f"\n            ---\n            \n            trust_penalty: {sample[3]}" if len(sample) == 4 else ""
             row_text = f"""
             input: {sample[0]}
-            
+
             ---
-            
+
             output: {sample[1]}
-            
+
             ---
-            
-            score: {sample[2]}
+
+            score: {sample[2]}{trust_penalty_line}
             """
             swanlab_text_list.append(swanlab.Text(row_text, caption=f"sample {i + 1}"))
 
@@ -358,6 +367,8 @@ class ValidationGenerationsLogger:
                 row_data = []
                 for sample in samples:
                     data = {"input": sample[0], "output": sample[1], "score": sample[2]}
+                    if len(sample) == 4:
+                        data["trust_penalty"] = sample[3]
                     row_data.append(data)
                 with open(validation_gen_step_file, "w") as file:
                     json.dump(row_data, file)
@@ -381,6 +392,7 @@ class ValidationGenerationsLogger:
                 "input": sample[0],
                 "output": sample[1],
                 "score": sample[2],
+                **({"trust_penalty": sample[3]} if len(sample) == 4 else {}),
             }
             for sample in samples
         ]
