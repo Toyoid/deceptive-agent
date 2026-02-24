@@ -3,7 +3,7 @@ set -x
 num_cpus_per_env_worker=0.1 # The CPU resource allocated for each environment worker. If you want to use less CPU resources, you can decrease this value.
 
 export HF_ENDPOINT="https://hf-mirror.com"
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
@@ -96,6 +96,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_monitor=1 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=1000 \
-    trainer.test_freq=20 \
-    trainer.total_epochs=100 \
+    trainer.test_freq=5 \
+    trainer.total_epochs=20 \
     trainer.val_before_train=True $@
