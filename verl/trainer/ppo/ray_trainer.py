@@ -935,7 +935,7 @@ class RayPPOTrainer:
 
         print(f"Dumped {n} generations to {filename}")
 
-    def _log_val_generations_if_available(self, inputs, outputs, scores, trust_penalties=None):
+    def _log_val_generations_if_available(self, inputs, outputs, scores, trust_penalties=None, monitor_outputs=None):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
         generations_to_log = self.config.trainer.log_val_generations
@@ -945,11 +945,16 @@ class RayPPOTrainer:
 
         import numpy as np
 
-        # Create tuples of (input, output, score[, trust_penalty]) and sort by input text
+        # Build sample tuples: (input, output, score[, trust_penalty[, monitor_output]])
+        base_lists = [inputs, outputs, scores]
         if trust_penalties is not None:
-            samples = list(zip(inputs, outputs, scores, trust_penalties))
-        else:
-            samples = list(zip(inputs, outputs, scores))
+            base_lists.append(trust_penalties)
+        if monitor_outputs is not None:
+            if trust_penalties is None:
+                # Ensure trust_penalties placeholder so tuple indexing stays consistent
+                base_lists.append([None] * len(inputs))
+            base_lists.append(monitor_outputs)
+        samples = list(zip(*base_lists))
         samples.sort(key=lambda x: x[0])  # Sort by input text
 
         # Use fixed random seed for deterministic shuffling
@@ -975,6 +980,7 @@ class RayPPOTrainer:
         sample_outputs = []
         sample_scores = []
         sample_trust_penalties = []
+        sample_monitor_outputs = []
 
         # Lists to collect normalized RM scores for distribution verification
         normed_rm_scores_lst = []
@@ -1030,6 +1036,29 @@ class RayPPOTrainer:
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
             sample_outputs.extend(output_texts)
 
+            # Collect monitor critique outputs, mapped to actor rows via traj_uid
+            # Monitor produces one critique per actor trajectory (repeat_n is always 1
+            # during validation, enforced in rollout_loop.py). The i-th monitor entry
+            # corresponds to the i-th unique actor trajectory (by order of first appearance).
+            if self.use_monitor and 'monitor' in test_output:
+                monitor_test_batch = test_output['monitor']
+                monitor_response_ids = monitor_test_batch.batch['responses']
+                monitor_texts = [self.monitor_tokenizer.decode(ids, skip_special_tokens=True) for ids in monitor_response_ids]
+
+                # Map each monitor text to the corresponding actor trajectory by positional order
+                actor_traj_uids = test_output_gen_batch.non_tensor_batch['traj_uid']
+                _, first_idx = np.unique(actor_traj_uids, return_index=True)
+                ordered_unique_uids = actor_traj_uids[np.sort(first_idx)]
+
+                assert len(monitor_texts) == len(ordered_unique_uids), (
+                    f"Monitor batch size ({len(monitor_texts)}) != number of unique actor trajectories "
+                    f"({len(ordered_unique_uids)}). repeat_n should be 1 during validation."
+                )
+                uid_to_monitor = dict(zip(ordered_unique_uids, monitor_texts))
+                # Replicate each critique to every actor row sharing the same traj_uid
+                per_row_monitor = [uid_to_monitor[uid] for uid in actor_traj_uids]
+                sample_monitor_outputs.extend(per_row_monitor)
+
             # evaluate using reward_function
             if self.use_rm:
                 # compute reward model score
@@ -1077,6 +1106,7 @@ class RayPPOTrainer:
             outputs=sample_outputs,
             scores=sample_scores,
             trust_penalties=sample_trust_penalties if len(sample_trust_penalties) > 0 else None,
+            monitor_outputs=sample_monitor_outputs if len(sample_monitor_outputs) > 0 else None,
         )
 
         reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)

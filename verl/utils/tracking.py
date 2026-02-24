@@ -298,16 +298,19 @@ class ValidationGenerationsLogger:
         """Log samples to wandb as a table"""
         import wandb
 
-        # Detect whether samples include trust_penalty (4-element) or not (3-element)
-        has_trust_penalty = len(samples) > 0 and len(samples[0]) == 4
+        # Detect optional fields based on sample tuple length
+        sample_len = len(samples[0]) if len(samples) > 0 else 3
 
         # Create column names for all samples
-        columns = ["step"] + sum([
-            ([f"input_{i + 1}", f"output_{i + 1}", f"score_{i + 1}", f"trust_penalty_{i + 1}"]
-             if has_trust_penalty else
-             [f"input_{i + 1}", f"output_{i + 1}", f"score_{i + 1}"])
-            for i in range(len(samples))
-        ], [])
+        def _per_sample_cols(idx):
+            cols = [f"input_{idx}", f"output_{idx}", f"score_{idx}"]
+            if sample_len >= 4:
+                cols.append(f"trust_penalty_{idx}")
+            if sample_len >= 5:
+                cols.append(f"monitor_output_{idx}")
+            return cols
+
+        columns = ["step"] + sum([_per_sample_cols(i + 1) for i in range(len(samples))], [])
 
         if not hasattr(self, "validation_table"):
             # Initialize the table on first call
@@ -335,7 +338,11 @@ class ValidationGenerationsLogger:
 
         swanlab_text_list = []
         for i, sample in enumerate(samples):
-            trust_penalty_line = f"\n            ---\n            \n            trust_penalty: {sample[3]}" if len(sample) == 4 else ""
+            extra_lines = ""
+            if len(sample) >= 4 and sample[3] is not None:
+                extra_lines += f"\n            ---\n\n            trust_penalty: {sample[3]}"
+            if len(sample) >= 5:
+                extra_lines += f"\n            ---\n\n            monitor_output: {sample[4]}"
             row_text = f"""
             input: {sample[0]}
 
@@ -345,7 +352,7 @@ class ValidationGenerationsLogger:
 
             ---
 
-            score: {sample[2]}{trust_penalty_line}
+            score: {sample[2]}{extra_lines}
             """
             swanlab_text_list.append(swanlab.Text(row_text, caption=f"sample {i + 1}"))
 
@@ -367,8 +374,10 @@ class ValidationGenerationsLogger:
                 row_data = []
                 for sample in samples:
                     data = {"input": sample[0], "output": sample[1], "score": sample[2]}
-                    if len(sample) == 4:
+                    if len(sample) >= 4 and sample[3] is not None:
                         data["trust_penalty"] = sample[3]
+                    if len(sample) >= 5:
+                        data["monitor_output"] = sample[4]
                     row_data.append(data)
                 with open(validation_gen_step_file, "w") as file:
                     json.dump(row_data, file)
@@ -392,7 +401,8 @@ class ValidationGenerationsLogger:
                 "input": sample[0],
                 "output": sample[1],
                 "score": sample[2],
-                **({"trust_penalty": sample[3]} if len(sample) == 4 else {}),
+                **({"trust_penalty": sample[3]} if len(sample) >= 4 and sample[3] is not None else {}),
+                **({"monitor_output": sample[4]} if len(sample) >= 5 else {}),
             }
             for sample in samples
         ]

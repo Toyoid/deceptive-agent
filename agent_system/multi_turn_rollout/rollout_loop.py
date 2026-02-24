@@ -442,12 +442,13 @@ class TrajectoryCollector:
 
     def vanilla_multi_turn_loop(
         self,
-        gen_batch: DataProto, 
-        actor_rollout_wg, 
+        gen_batch: DataProto,
+        actor_rollout_wg,
         monitor_wg,
         judge_wg,
         envs: EnvironmentManagerBase,
         rollout_n: int,
+        monitor_rollout_n: int,
     ) -> Tuple[Dict, DataProto | None]:
         """
         Collects trajectories through parallel agent-environment agent_loop.
@@ -621,6 +622,7 @@ class TrajectoryCollector:
                 monitor_wg=monitor_wg,
                 infos=infos,
                 judge_wg=judge_wg,
+                monitor_rollout_n=monitor_rollout_n,
             )
         elif self.config.monitor_rollout_ref.enable and monitor_wg is None:
             print("WARN: Monitor worker group set as None, skipping monitor rollout...")
@@ -648,23 +650,23 @@ class TrajectoryCollector:
     
     def monitor_rollout(
         self,
-        actor_batch: DataProto, 
+        actor_batch: DataProto,
         monitor_wg,
         infos: List[Dict],
         judge_wg,
+        monitor_rollout_n: int,
     ) -> DataProto:
         assert monitor_wg is not None, "monitor worker group should not be None for monitor rollout"
         assert self.config.monitor_rollout_ref.rollout.n > 0, "monitor rollout n should be greater than 0"
 
-        repeat_n = self.config.monitor_rollout_ref.rollout.n if self.config.monitor_rollout_ref.enable_train_monitor else 1
-        monitor_gen_batch = actor_batch.repeat(repeat_times=repeat_n, interleave=True)  # repeat returns a new independent DataProto    
+        monitor_gen_batch = actor_batch.repeat(repeat_times=monitor_rollout_n, interleave=True)  # repeat returns a new independent DataProto    
         batch_size = len(monitor_gen_batch.batch)
         # NOTE: len(infos) will be different with batch_size if monitor_rollout_ref.rollout.n > 1
 
         # create monitor uid and traj_uid
         uid_batch = self._create_uid_batch(
             batch_size,
-            repeat_n
+            monitor_rollout_n
         )
         traj_uid = np.array(
             [str(uuid.uuid4()) for _ in range(batch_size)], dtype=object
@@ -975,6 +977,8 @@ class TrajectoryCollector:
             DataProto: Final collected trajectory data with metadata.
         """
         rollout_n = self.config.env.rollout.n if is_train else self.config.env.rollout.val_n
+        monitor_rollout_n = self.config.monitor_rollout_ref.rollout.n if (self.config.monitor_rollout_ref.enable_train_monitor and is_train) else 1
+        
         gen_batch = gen_batch.repeat(repeat_times=rollout_n, interleave=True)
 
         # Initial observations from the environment
@@ -988,6 +992,7 @@ class TrajectoryCollector:
                 judge_wg=judge_wg,
                 envs=envs,
                 rollout_n=rollout_n,
+                monitor_rollout_n=monitor_rollout_n,
             )
         else:
             # Vanilla Sampling   
@@ -998,6 +1003,7 @@ class TrajectoryCollector:
                 judge_wg=judge_wg,
                 envs=envs,
                 rollout_n=rollout_n,
+                monitor_rollout_n=monitor_rollout_n,
             )
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['episode_rewards'])
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['episode_lengths'])
@@ -1010,14 +1016,13 @@ class TrajectoryCollector:
             monitor_trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
             actor_batch_size = len(actor_batch_dict['total_batch_list'])
             if len(monitor_trust_penalties) != actor_batch_size:
-                repeat_n = self.config.monitor_rollout_ref.rollout.n if self.config.monitor_rollout_ref.enable_train_monitor else 1
-                expected_size = actor_batch_size * repeat_n
+                expected_size = actor_batch_size * monitor_rollout_n
                 assert len(monitor_trust_penalties) == expected_size, (
                     f"trust_penalties size mismatch: got {len(monitor_trust_penalties)}, "
-                    f"expected {actor_batch_size} (actor batch) or {expected_size} (actor batch * repeat_n={repeat_n})"
+                    f"expected {actor_batch_size} (actor batch) or {expected_size} (actor batch * repeat_n={monitor_rollout_n})"
                 )
                 # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed
-                monitor_trust_penalties = monitor_trust_penalties.reshape(actor_batch_size, repeat_n).mean(axis=1)
+                monitor_trust_penalties = monitor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
         
         # Create trajectory data for actor model
         gen_batch_output: DataProto = self.gather_rollout_data(
