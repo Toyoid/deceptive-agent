@@ -230,34 +230,6 @@ class TaskRunner:
 
         reward_manager_name = config.reward_model.get("reward_manager", "episode")
         if reward_manager_name == 'episode':
-            if config.monitor_rollout_ref.enable:
-                if config.monitor_rollout_ref.enable_train_monitor:
-                    from agent_system.reward_manager import EpisodeRewardManager
-                    from agent_system.reward_manager import MonitorRewardManager
-    
-                    reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
-                    val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
-
-                    monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
-                    monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, normalize_by_length=False)
-                else:
-                    from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
-                    reward_manager_cls = ActorMonitorRewardManager
-                    reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
-                    val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
-
-                    monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
-                    monitor_val_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=1, role='monitor', normalize_by_length=False)
-            else:
-                from agent_system.reward_manager import EpisodeRewardManager
-                reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
-                val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
-                monitor_reward_fn = None
-                monitor_val_reward_fn = None
-        else:
-            raise NotImplementedError(f"Reward manager {reward_manager_name} not supported yet")
-        
-        if reward_manager_name == 'episode':
             from agent_system.reward_manager import EpisodeRewardManager
 
             reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
