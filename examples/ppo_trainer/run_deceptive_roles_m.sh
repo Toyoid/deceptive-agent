@@ -51,7 +51,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=30 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=False \
-    monitor_rollout_ref.model.path=Qwen/Qwen2.5-7B-Instruct \
+    monitor_rollout_ref.model.path=checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_eta100/global_step_200/monitor/huggingface \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=False \
