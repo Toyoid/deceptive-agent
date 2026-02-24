@@ -712,19 +712,19 @@ class TrajectoryCollector:
         batch = batch.union(batch_output)
 
         # print for debugging
-        monitor_output_texts = self.monitor_tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
-        for sample_idx in range(min(4, len(batch.non_tensor_batch['raw_prompt']))):
-            preview_prompt = self.monitor_tokenizer.apply_chat_template(
-                batch.non_tensor_batch['raw_prompt'][sample_idx],
-                add_generation_prompt=True,
-                tokenize=False
-            )
-            preview_action = monitor_output_texts[sample_idx]
-            print("=" * 80)
-            print(f"[monitor_rollout] sample {sample_idx} raw_prompt:\n{preview_prompt}")
-            print("~~~~~~~~~")
-            print(f"[monitor_rollout] sample {sample_idx} text action: {preview_action}")
-            print("=" * 80)
+        # monitor_output_texts = self.monitor_tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
+        # for sample_idx in range(min(4, len(batch.non_tensor_batch['raw_prompt']))):
+        #     preview_prompt = self.monitor_tokenizer.apply_chat_template(
+        #         batch.non_tensor_batch['raw_prompt'][sample_idx],
+        #         add_generation_prompt=True,
+        #         tokenize=False
+        #     )
+        #     preview_action = monitor_output_texts[sample_idx]
+        #     print("=" * 80)
+        #     print(f"[monitor_rollout] sample {sample_idx} raw_prompt:\n{preview_prompt}")
+        #     print("~~~~~~~~~")
+        #     print(f"[monitor_rollout] sample {sample_idx} text action: {preview_action}")
+        #     print("=" * 80)
         
         # Compute trust penalties using judge model if enabled
         if self.config.judge_model.enable and judge_wg is not None:

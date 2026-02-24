@@ -61,7 +61,10 @@ class MonitorRewardManager:
 
             if already_print_data_sources[data_source] < self.num_examine and np.random.random() < 0.1:
                 already_print_data_sources[data_source] += 1
- 
+
+                sample_num = already_print_data_sources[data_source]
+                total_samples = self.num_examine
+
                 valid_prompt_length = data_item.batch['attention_mask'][:prompt_length].sum()
                 valid_prompt_ids = prompt_ids[-valid_prompt_length:]
 
@@ -72,9 +75,14 @@ class MonitorRewardManager:
                 prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False)
                 response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
 
-                print(f"[{data_source}][prompt]", prompt_str)
-                print(f"[{data_source}][response]", response_str)
-                print(f"[{data_source}][final_score]", final_score)
+                print("\n" + "="*40)
+                print(f"Sample {sample_num}/{total_samples} from [{data_source}]")
+                print("- [Prompt]:")
+                print(prompt_str)
+                print("- [Response]:")
+                print(response_str)
+                print(f"- [Final Score]: {final_score}")
+                print("="*40 + "\n")
 
         if return_dict:
             return {
