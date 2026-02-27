@@ -484,7 +484,7 @@ def extract_trajectory_distributions(batch: DataProto, use_lag: bool = False) ->
 
     # reward_score: per-sequence sum of token_level_scores (combined RM + episode_rewards)
     if "token_level_scores" in batch.batch.keys():
-        reward_scores = batch.batch["token_level_scores"].sum(-1).detach().cpu().numpy()
+        reward_scores = batch.batch["token_level_scores"].sum(-1).detach().float().cpu().numpy()
         distributions["reward_score"] = reward_scores
 
     # trust_penalties: per-trajectory scalar (deduped by traj_uid), from actor batch
@@ -503,7 +503,7 @@ def extract_trajectory_distributions(batch: DataProto, use_lag: bool = False) ->
 
     # advantages: per-sequence mean (this is lag_advantages when use_lag, else reward advantages)
     if "advantages" in batch.batch.keys():
-        adv = batch.batch["advantages"].detach().clone()
+        adv = batch.batch["advantages"].detach().float().clone()
         adv[~response_mask] = 0.0
         per_seq_adv = adv.sum(-1) / response_lengths
         distributions["advantages"] = per_seq_adv.cpu().numpy()
@@ -511,13 +511,13 @@ def extract_trajectory_distributions(batch: DataProto, use_lag: bool = False) ->
     # reward_advantages and cost_advantages (only when use_lag is True)
     if use_lag:
         if "reward_advantages" in batch.batch.keys():
-            r_adv = batch.batch["reward_advantages"].detach().clone()
+            r_adv = batch.batch["reward_advantages"].detach().float().clone()
             r_adv[~response_mask] = 0.0
             per_seq_r_adv = r_adv.sum(-1) / response_lengths
             distributions["reward_advantages"] = per_seq_r_adv.cpu().numpy()
 
         if "cost_advantages" in batch.batch.keys():
-            c_adv = batch.batch["cost_advantages"].detach().clone()
+            c_adv = batch.batch["cost_advantages"].detach().float().clone()
             c_adv[~response_mask] = 0.0
             per_seq_c_adv = c_adv.sum(-1) / response_lengths
             distributions["cost_advantages"] = per_seq_c_adv.cpu().numpy()
