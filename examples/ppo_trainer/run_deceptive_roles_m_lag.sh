@@ -97,6 +97,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.logger='["console","wandb"]' \
     trainer.log_val_generations=6 \
     trainer.rollout_data_dir=auto \
+    trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
     trainer.experiment_name='grpo_qwen7b_monitor_lag_load' \
     trainer.n_gpus_per_node=6 \
@@ -104,6 +105,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_monitor=2 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=1000 \
-    trainer.test_freq=20 \
-    trainer.total_epochs=120 \
-    trainer.val_before_train=True $@
+    trainer.test_freq=1 \
+    trainer.total_epochs=4 \
+    trainer.val_before_train=False $@
