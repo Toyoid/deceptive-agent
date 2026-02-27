@@ -90,12 +90,12 @@ python3 -m verl.trainer.main_ppo \
     judge_model.top_k=2 \
     algorithm.use_kl_in_reward=False \
     algorithm.lagrangian.enable=True \
-    algorithm.lagrangian.lambda_init=5.0 \
-    algorithm.lagrangian.lambda_max=100.0 \
-    algorithm.lagrangian.lambda_lr=0.02 \
-    algorithm.lagrangian.lambda_update_delay_steps=0 \
+    algorithm.lagrangian.lambda_init=1.0 \
+    algorithm.lagrangian.lambda_max=10.0 \
+    algorithm.lagrangian.lambda_lr=0.1 \
+    algorithm.lagrangian.lambda_update_delay_steps=50 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
-    algorithm.lagrangian.threshold=0.25 \
+    algorithm.lagrangian.threshold=0.15 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     env.env_name=ReasonChat \
     env.seed=0 \

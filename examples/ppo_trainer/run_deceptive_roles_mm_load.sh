@@ -14,7 +14,6 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 # Example usage:
 #
 python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles
-# python3 examples/data_preprocess/deceptive_roles.py --neutral_suffix
 
 train_files=$DATA_ROOT/deceptive_roles/train.parquet
 test_files=$DATA_ROOT/deceptive_roles/test.parquet
@@ -50,18 +49,11 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
-    critic.optim.lr=1e-5 \
-    critic.model.use_remove_padding=True \
-    critic.optim.lr_warmup_steps_ratio=0.05 \
-    critic.model.path=Qwen/Qwen2.5-7B-Instruct \
-    critic.model.enable_gradient_checkpointing=True \
-    critic.ppo_micro_batch_size_per_gpu=1 \
-    critic.model.fsdp_config.param_offload=False \
-    critic.model.fsdp_config.optimizer_offload=False \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
-    monitor_rollout_ref.model.path="checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_eta100/global_step_200/monitor/huggingface" \
+    monitor_rollout_ref.model.path=checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_eta100/global_step_200/monitor/huggingface \
     monitor_rollout_ref.model.use_remove_padding=True \
+    monitor_rollout_ref.monitor.checkpoint.contents='["model","optimizer","extra"]' \
     monitor_rollout_ref.monitor.optim.lr=1e-6 \
     monitor_rollout_ref.monitor.optim.lr_warmup_steps_ratio=0.1 \
     monitor_rollout_ref.monitor.use_kl_loss=True \
@@ -85,6 +77,7 @@ python3 -m verl.trainer.main_ppo \
     reward_model.model.use_remove_padding=True \
     reward_model.model.fsdp_config.param_offload=True \
     reward_model.micro_batch_size_per_gpu=32 \
+    reward_model.reward_manager=episode \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
@@ -96,6 +89,14 @@ python3 -m verl.trainer.main_ppo \
     judge_model.token_weights='[0.0,0.33,0.66,1.0]' \
     judge_model.top_k=2 \
     algorithm.use_kl_in_reward=False \
+    algorithm.lagrangian.enable=True \
+    algorithm.lagrangian.lambda_init=1.0 \
+    algorithm.lagrangian.lambda_max=10.0 \
+    algorithm.lagrangian.lambda_lr=0.1 \
+    algorithm.lagrangian.lambda_update_delay_steps=50 \
+    algorithm.lagrangian.episode_cost_window_size=1500 \
+    algorithm.lagrangian.threshold=0.15 \
+    algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
@@ -108,12 +109,12 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=4 \
     trainer.rollout_data_dir=auto \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen7b_maximin_no_rm' \
+    trainer.experiment_name='grpo_qwen7b_maximin_lag_load' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=4 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=500 \
     trainer.test_freq=20 \
-    trainer.total_epochs=200 \
+    trainer.total_epochs=120 \
     trainer.val_before_train=True $@
