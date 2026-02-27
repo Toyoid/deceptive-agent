@@ -95,7 +95,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.resume_mode=disable \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
-    trainer.log_val_generations=6 \
+    trainer.log_val_generations=4 \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
@@ -105,6 +105,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_monitor=2 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=1000 \
-    trainer.test_freq=1 \
-    trainer.total_epochs=4 \
+    trainer.test_freq=2 \
+    trainer.total_epochs=10 \
     trainer.val_before_train=False $@

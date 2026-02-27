@@ -108,6 +108,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.logger='["console","wandb"]' \
     trainer.log_val_generations=4 \
     trainer.rollout_data_dir=auto \
+    trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
     trainer.experiment_name='grpo_qwen7b_maximin_lag' \
     trainer.n_gpus_per_node=4 \
@@ -116,5 +117,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=500 \
     trainer.test_freq=20 \
-    trainer.total_epochs=120 \
+    trainer.total_epochs=100 \
     trainer.val_before_train=True $@
