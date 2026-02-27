@@ -1,4 +1,5 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +18,7 @@ Metrics related to the PPO trainer.
 
 from collections import defaultdict
 from functools import partial
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -462,3 +463,235 @@ def process_validation_metrics(data_sources: list[str], sample_inputs: list[str]
                 data_src2var2metric2val[data_source][var_name][metric_name] = np.mean(prompt_vals)
 
     return data_src2var2metric2val
+
+
+# ==============================================================================
+#              Distribution Logging (optional, wandb only)
+# ==============================================================================
+
+def extract_trajectory_distributions(batch: DataProto, use_lag: bool = False) -> Dict[str, np.ndarray]:
+    """Extract per-trajectory/per-sequence distribution values from a training batch.
+
+    Args:
+        batch: Training batch after advantage computation (and Lagrangian update if applicable).
+        use_lag: Whether Lagrangian RL is enabled. When True, also extracts
+                 reward_advantages and cost_advantages.
+
+    Returns:
+        Dict mapping metric names to 1-D numpy arrays of per-trajectory/per-sequence values.
+    """
+    distributions: Dict[str, np.ndarray] = {}
+
+    # reward_score: per-sequence sum of token_level_scores (combined RM + episode_rewards)
+    if "token_level_scores" in batch.batch.keys():
+        reward_scores = batch.batch["token_level_scores"].sum(-1).detach().cpu().numpy()
+        distributions["reward_score"] = reward_scores
+
+    # trust_penalties: per-trajectory scalar (deduped by traj_uid), from actor batch
+    if "trust_penalties" in batch.non_tensor_batch:
+        _, unique_idx = np.unique(batch.non_tensor_batch["traj_uid"], return_index=True)
+        unique_idx = np.sort(unique_idx)
+        distributions["trust_penalties"] = np.asarray(
+            batch.non_tensor_batch["trust_penalties"][unique_idx], dtype=np.float32
+        )
+
+    # Compute response_mask for masking token-level tensors
+    max_response_length = batch.batch["responses"].shape[-1]
+    response_mask = batch.batch["attention_mask"][:, -max_response_length:].bool()
+    # Per-sequence response lengths for mean computation
+    response_lengths = response_mask.sum(-1).float().clamp(min=1)  # (batch_size,)
+
+    # advantages: per-sequence mean (this is lag_advantages when use_lag, else reward advantages)
+    if "advantages" in batch.batch.keys():
+        adv = batch.batch["advantages"].detach().clone()
+        adv[~response_mask] = 0.0
+        per_seq_adv = adv.sum(-1) / response_lengths
+        distributions["advantages"] = per_seq_adv.cpu().numpy()
+
+    # reward_advantages and cost_advantages (only when use_lag is True)
+    if use_lag:
+        if "reward_advantages" in batch.batch.keys():
+            r_adv = batch.batch["reward_advantages"].detach().clone()
+            r_adv[~response_mask] = 0.0
+            per_seq_r_adv = r_adv.sum(-1) / response_lengths
+            distributions["reward_advantages"] = per_seq_r_adv.cpu().numpy()
+
+        if "cost_advantages" in batch.batch.keys():
+            c_adv = batch.batch["cost_advantages"].detach().clone()
+            c_adv[~response_mask] = 0.0
+            per_seq_c_adv = c_adv.sum(-1) / response_lengths
+            distributions["cost_advantages"] = per_seq_c_adv.cpu().numpy()
+
+    return distributions
+
+
+def plot_distribution(
+    current_values: np.ndarray,
+    metric_name: str,
+    current_step: int,
+    initial_values: Optional[np.ndarray] = None,
+    initial_step: Optional[int] = None,
+    bins: int = 40,
+) -> Any:
+    """Generate a publication-quality histogram distribution plot.
+
+    Style is modelled after ``plot_distribution_comparison`` in
+    ``retroactive_eval/analysis/plotter.py``.  When *initial_values* is
+    provided the plot overlays two distributions (initial vs current); otherwise
+    a single histogram is drawn.
+
+    Args:
+        current_values: 1-D array of values for the current step.
+        metric_name: Human-readable metric name (used in title/axis labels).
+        current_step: Training step number for the current distribution.
+        initial_values: Optional 1-D array for the initial (reference) step.
+        initial_step: Step number of the initial distribution.
+        bins: Number of histogram bins.
+
+    Returns:
+        A matplotlib Figure object.  Caller is responsible for closing it
+        (``plt.close(fig)``) after use to avoid memory leaks.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    INITIAL_COLOR = "#4878D0"  # muted blue
+    CURRENT_COLOR = "#EE6677"  # coral red
+
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+    ax.set_facecolor("#F5F5F5")
+    fig.patch.set_facecolor("white")
+
+    # Compute common bin edges
+    if initial_values is not None:
+        all_values = np.concatenate([initial_values, current_values])
+    else:
+        all_values = current_values
+    bin_edges = np.linspace(all_values.min(), all_values.max(), bins + 1)
+
+    # Plot initial distribution if available
+    if initial_values is not None:
+        ax.hist(
+            initial_values,
+            bins=bin_edges,
+            color=INITIAL_COLOR,
+            alpha=0.65,
+            label=f"Step {initial_step} (n={len(initial_values)})",
+            edgecolor="none",
+            rwidth=0.85,
+        )
+
+    # Plot current distribution
+    ax.hist(
+        current_values,
+        bins=bin_edges,
+        color=CURRENT_COLOR,
+        alpha=0.65,
+        label=f"Step {current_step} (n={len(current_values)})",
+        edgecolor="none",
+        rwidth=0.85,
+    )
+
+    # Vertical mean lines + annotations
+    y_max = ax.get_ylim()[1]
+
+    if initial_values is not None:
+        init_mean = float(np.mean(initial_values))
+        ax.axvline(init_mean, color=INITIAL_COLOR, linestyle="--", linewidth=2, alpha=0.9)
+        ax.annotate(
+            f"\u03bc={init_mean:.2f}",
+            xy=(init_mean, y_max * 0.92),
+            fontsize=9, color=INITIAL_COLOR, fontweight="bold", ha="center",
+        )
+
+    cur_mean = float(np.mean(current_values))
+    ax.axvline(cur_mean, color=CURRENT_COLOR, linestyle="--", linewidth=2, alpha=0.9)
+    y_annot = y_max * 0.82 if initial_values is not None else y_max * 0.92
+    ax.annotate(
+        f"\u03bc={cur_mean:.2f}",
+        xy=(cur_mean, y_annot),
+        fontsize=9, color=CURRENT_COLOR, fontweight="bold", ha="center",
+    )
+
+    # Styling
+    if initial_values is not None:
+        title = f"{metric_name}: Step {initial_step} vs Step {current_step}"
+    else:
+        title = f"{metric_name}: Step {current_step}"
+    ax.set_xlabel(f"{metric_name}", fontsize=11, fontweight="medium")
+    ax.set_ylabel("Frequency", fontsize=11, fontweight="medium")
+    ax.set_title(title, fontsize=12, fontweight="bold", pad=12)
+
+    legend = ax.legend(
+        loc="upper right", fontsize=9, frameon=True, fancybox=False,
+        edgecolor="#CCCCCC", framealpha=0.95,
+    )
+    legend.get_frame().set_linewidth(0.5)
+
+    ax.grid(True, linestyle="-", alpha=0.5, color="white", linewidth=0.8)
+    ax.set_axisbelow(True)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    for spine in ["bottom", "left"]:
+        ax.spines[spine].set_color("#888888")
+        ax.spines[spine].set_linewidth(0.6)
+    ax.tick_params(axis="both", which="major", labelsize=9, colors="#444444")
+    ax.tick_params(axis="x", direction="out", length=4, width=0.6)
+    ax.tick_params(axis="y", direction="out", length=4, width=0.6)
+
+    plt.tight_layout()
+    return fig
+
+
+def compute_distribution_log_data(
+    batch: DataProto,
+    use_lag: bool,
+    current_step: int,
+    initial_distributions: Optional[Dict[str, np.ndarray]] = None,
+    initial_step: Optional[int] = None,
+) -> Tuple[Dict[str, Any], Dict[str, np.ndarray]]:
+    """Build wandb-compatible log dict with Histogram and Image entries.
+
+    Args:
+        batch: Training batch (after advantage / Lagrangian computation).
+        use_lag: Whether Lagrangian RL is enabled.
+        current_step: Current global training step.
+        initial_distributions: Distributions from the first logged step
+            (``None`` on the very first call).
+        initial_step: Step number of *initial_distributions*.
+
+    Returns:
+        A tuple ``(log_dict, current_distributions)`` where *log_dict*
+        maps wandb-compatible keys (``distributions/...``) to
+        ``wandb.Histogram`` / ``wandb.Image`` objects, and
+        *current_distributions* is the raw dict returned by
+        :func:`extract_trajectory_distributions` (to be stored as the
+        initial reference on first call).
+    """
+    import wandb
+    import matplotlib.pyplot as plt
+
+    current_dists = extract_trajectory_distributions(batch, use_lag=use_lag)
+    log_data: Dict[str, Any] = {}
+
+    for metric_name, values in current_dists.items():
+        if len(values) == 0:
+            continue
+
+        # Native wandb histogram
+        log_data[f"distributions/{metric_name}"] = wandb.Histogram(values.tolist())
+
+        # Matplotlib comparison plot
+        init_vals = initial_distributions.get(metric_name) if initial_distributions else None
+        fig = plot_distribution(
+            current_values=values,
+            metric_name=metric_name,
+            current_step=current_step,
+            initial_values=init_vals,
+            initial_step=initial_step,
+        )
+        log_data[f"distributions/{metric_name}_plot"] = wandb.Image(fig)
+        plt.close(fig)
+
+    return log_data, current_dists

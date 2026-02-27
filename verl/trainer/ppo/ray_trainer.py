@@ -49,6 +49,7 @@ from verl.trainer.ppo import core_algos
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
+    compute_distribution_log_data,
     compute_throughout_metrics,
     compute_timing_metrics,
     process_validation_metrics,
@@ -588,6 +589,11 @@ class RayPPOTrainer:
             self.lambda_update_delay_steps = self.config.algorithm.lagrangian.lambda_update_delay_steps
             self.episode_costs = deque(maxlen=self.config.algorithm.lagrangian.episode_cost_window_size)
             self.lag_threshold = self.config.algorithm.lagrangian.threshold
+
+        # Distribution logging (optional, wandb only)
+        self.log_distributions = self.config.trainer.get("log_distributions", False)
+        self._initial_distributions = None
+        self._initial_distributions_step = None
 
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
@@ -1903,6 +1909,7 @@ class RayPPOTrainer:
                         cost_advantages = cost_batch.batch["advantages"]
                         lag_advantages = (reward_advantages - multiplier * cost_advantages) / (1.0 + multiplier)
                         batch.batch["reward_advantages"] = reward_advantages
+                        batch.batch["cost_advantages"] = cost_advantages
                         batch.batch["advantages"] = lag_advantages
 
                         # Log component advantage statistics.
@@ -2031,9 +2038,26 @@ class RayPPOTrainer:
                 if self.use_monitor and "global_token_num" in monitor_batch.meta_info:
                     total_num_tokens += sum(monitor_batch.meta_info["global_token_num"])
                 metrics.update(compute_throughout_metrics(total_num_tokens=total_num_tokens, timing_raw=timing_raw, n_gpus=n_gpus))
-                
+
                 # TODO: make a canonical logger that supports various backend
                 logger.log(data=metrics, step=self.global_steps)
+
+                # Log trajectory distributions at validation steps (wandb only)
+                if self.log_distributions and self.config.trainer.test_freq > 0 and (
+                    is_last_step or self.global_steps % self.config.trainer.test_freq == 0
+                ):
+                    dist_log_data, current_dists = compute_distribution_log_data(
+                        batch=batch,
+                        use_lag=self.use_lag,
+                        current_step=self.global_steps,
+                        initial_distributions=self._initial_distributions,
+                        initial_step=self._initial_distributions_step,
+                    )
+                    if self._initial_distributions is None:
+                        self._initial_distributions = current_dists
+                        self._initial_distributions_step = self.global_steps
+                    # Log only to wandb (other backends can't handle Image/Histogram)
+                    logger.log(data=dist_log_data, step=self.global_steps, backend=["wandb"])
 
                 progress_bar.update(1)
                 self.global_steps += 1

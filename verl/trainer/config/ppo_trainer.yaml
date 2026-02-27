@@ -489,6 +489,7 @@ trainer:
   val_before_train: True
   val_only: False
   test_freq: -1
+  log_distributions: False # Log trajectory-level distribution plots at test_freq steps (wandb only)
   critic_warmup: 0
   default_hdfs_dir: null
   del_local_ckpt_after_load: False
