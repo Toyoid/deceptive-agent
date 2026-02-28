@@ -2033,6 +2033,12 @@ class RayPPOTrainer:
                     # Monitor doesn't use critic, so use_critic=False
                     metrics.update(compute_data_metrics(batch=monitor_batch, use_critic=False, metric_prefix="monitor"))
 
+                # log monitor format correctness statistics
+                if self.use_monitor and 'is_format_correct' in monitor_batch.non_tensor_batch:
+                    fmt_flags = monitor_batch.non_tensor_batch['is_format_correct'].astype(np.float32)
+                    n_total = len(fmt_flags)
+                    metrics['monitor/format_correct_ratio'] = float(fmt_flags.mean()) if n_total > 0 else 0.0
+
                 n_gpus = self.resource_pool_manager.get_n_gpus()
                 total_num_tokens = sum(batch.meta_info["global_token_num"])
                 if self.use_monitor and "global_token_num" in monitor_batch.meta_info:

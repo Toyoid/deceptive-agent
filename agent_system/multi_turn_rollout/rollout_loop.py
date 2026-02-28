@@ -737,19 +737,23 @@ class TrajectoryCollector:
                 'evidence': monitor_gen_batch.non_tensor_batch['system_infos'],
                 'agent_response': monitor_gen_batch.non_tensor_batch['agent_response'],
             }
-            trust_penalties = self._compute_judge_scores(
+            trust_penalties, monitor_format_correct = self._compute_judge_scores(
                 monitor_batch=batch,
                 obs=judge_obs,
                 judge_wg=judge_wg,
             )
         elif self.config.judge_model.enable and judge_wg is None:
-            raise RuntimeError("judge worker group is None but judge_model.enable is True, cannot compute judge scores for trust penalties")
+            raise RuntimeError("Judge worker group is None but judge_model.enable is True, cannot compute judge scores for trust penalties")
         else:
-            print("[WARNING] Judge model not enabled, skipping judge scoring and setting `trust_penalties` to 0...")
-            trust_penalties = np.zeros(batch_size, dtype=np.float32)
+            raise RuntimeError("Judge model is not enabled, cannot compute trust_penalties. Please set `judge_model.enable` as True when using monitor rollout")
 
+        n_correct = int(monitor_format_correct.sum())
+        n_total = len(monitor_format_correct)
+        print(f"  Monitor format check: {n_correct}/{n_total} correct "
+              f"({100.0 * n_correct / max(n_total, 1):.1f}%)")
         print(f"  Computed trust_penalties: {trust_penalties}")
         batch.non_tensor_batch['trust_penalties'] = trust_penalties
+        batch.non_tensor_batch['is_format_correct'] = monitor_format_correct
 
         return batch
     
@@ -758,34 +762,39 @@ class TrajectoryCollector:
         monitor_batch: DataProto,
         obs: Dict,
         judge_wg,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Compute trust penalties using the judge model.
-        
+        Compute trust penalties using the judge model, with monitor format gating.
+
+        If a monitor output does not contain valid <tag>...</tag> tags,
+        its judge score is set to 0 without calling the judge model for that sample.
+
         This method:
-        1. Extracts atomic critiques from each monitor output
-        2. Builds judge prompts for each critique
-        3. Batches all critiques and runs judge inference
-        4. Aggregates per-critique scores back to per-sample via mean
-        
+        1. Extracts <critique> tags from each monitor output (same regex as extract_critiques,
+           but without the fallback that treats the entire output as a single critique)
+        2. Samples with no valid tags are marked format-incorrect and get score 0
+        3. Builds judge prompts for each valid critique
+        4. Batches all valid critiques and runs judge inference
+        5. Aggregates per-critique scores back to per-sample via mean
+
         Args:
             monitor_batch: DataProto containing monitor outputs
             obs: Observation dict containing evidence (monitor_text, etc.)
-            infos: List of info dicts containing task metadata
             judge_wg: Judge worker group for inference
-        
+
         Returns:
-            np.ndarray of trust penalties, shape (batch_size,)
+            Tuple of:
+                - np.ndarray of trust penalties, shape (batch_size,)
+                - np.ndarray of format correctness flags (bool), shape (batch_size,)
         """
         assert judge_wg is not None, "judge worker group should not be None for judge scoring"
         from agent_system.environments.prompts.judge_prompt import (
-            extract_critiques, 
-            build_judge_prompt, 
+            extract_critiques,
+            build_judge_prompt,
         )
-        
+
         batch_size = len(monitor_batch.batch)
-        # monitor batch size 
-        
+
         # Extract evidence and task types from obs/infos
         task_types = [obs['task_type']] * batch_size  # NOTE: assume all in the batch are from the same task_type
         user_inputs = obs['user_inputs']
@@ -796,26 +805,35 @@ class TrajectoryCollector:
         assert len(evidences) == batch_size, "Mismatch in evidences and monitor batch size"
         assert len(agent_resps) == batch_size, "Mismatch in agent_resps and monitor batch size"
 
-        # Extract critiques and build judge inputs
-        all_judge_prompts = []
-        sample_critique_counts = []
-        judge_images = obs.get('judge_image', None)
-        all_judge_imgs = []
-        # TODO: the multi-modal processing for judge has not been tested yet
-        
         monitor_output_texts = self.monitor_tokenizer.batch_decode(
             monitor_batch.batch['responses'], skip_special_tokens=True
         )
+
+        per_sample_scores = np.zeros(batch_size, dtype=np.float32)
+        format_correct = np.zeros(batch_size, dtype=bool)
+
+        all_judge_prompts = []
+        all_judge_imgs = []
+        valid_sample_indices = []   # original sample index for each group of judge inputs
+        valid_critique_counts = []  # number of critiques per valid sample
+        # TODO: The multi-modal processing has not been tested yet
+        judge_images = obs.get('judge_image', None)
+
         for item, (monitor_out, user_input, evidence, resp, task_type) in enumerate(zip(
             monitor_output_texts, user_inputs, evidences, agent_resps, task_types
         )):
+            # Extract <critique> tags — no fallback, empty list means bad format
             critiques = extract_critiques(monitor_out)
             count = len(critiques)
-            if count <= 0:  # No critiques found
-                raise Warning(f"No critiques extracted from monitor output:\n========\n"
-                              f"{evidence}\n{user_input}\n{resp}\nMONITOR OUTPUT: {monitor_out}\n========")
-            sample_critique_counts.append(count)
-            
+            if count <= 0:
+                print(f"[FORMAT CHECK] Sample {item}: monitor output has invalid format, "
+                      f"judge score forced to 0. Output snippet: {monitor_out[:120]!r}")
+                continue  # format_correct[item] stays False, per_sample_scores[item] stays 0
+
+            format_correct[item] = True
+            valid_sample_indices.append(item)
+            valid_critique_counts.append(count)
+
             for critique in critiques:
                 judge_chat = build_judge_prompt(
                     task_type=task_type,
@@ -827,52 +845,47 @@ class TrajectoryCollector:
                 all_judge_prompts.append(judge_chat)
                 all_judge_imgs.append(judge_images[item] if judge_images is not None else None)
 
-                # # print for debugging
-                # print("=" * 60)
-                # print(f"[judge prompt] sample {item} prompt:\n{self.judge_tokenizer.apply_chat_template(judge_chat, add_generation_prompt=True, tokenize=False)}")
-                # print("=" * 60)
-        
-        assert len(all_judge_prompts) == sum(sample_critique_counts), "Mismatch in total number of critiques"
-        assert len(all_judge_imgs) == len(all_judge_prompts), "Mismatch in judge images and inputs"
+        # --- Judge inference (only for format-valid samples) ---
+        if len(all_judge_prompts) > 0:
+            assert len(all_judge_prompts) == sum(valid_critique_counts), "Mismatch in total number of critiques"
+            assert len(all_judge_imgs) == len(all_judge_prompts), "Mismatch in judge images and inputs"
 
-        # prepare DataProto for judge model inputs
-        processed_judge_samples = []
-        for judge_chat, judge_img in zip(all_judge_prompts, all_judge_imgs):
-            processed = self._process_chat_to_model_inputs(
-                chat=judge_chat,
-                obs_image=judge_img,
-                tokenizer=self.judge_tokenizer,
-                processor=self.judge_processor,
-                max_prompt_length=self.config.judge_model.max_prompt_length,
-                truncation=self.config.judge_model.truncation,
+            # prepare DataProto for judge model inputs
+            processed_judge_samples = []
+            for judge_chat, judge_img in zip(all_judge_prompts, all_judge_imgs):
+                processed = self._process_chat_to_model_inputs(
+                    chat=judge_chat,
+                    obs_image=judge_img,
+                    tokenizer=self.judge_tokenizer,
+                    processor=self.judge_processor,
+                    max_prompt_length=self.config.judge_model.max_prompt_length,
+                    truncation=self.config.judge_model.truncation,
+                )
+                processed_judge_samples.append(processed)
+
+            judge_batch = DataProto.from_single_dict(
+                data=collate_fn(processed_judge_samples),
             )
-            processed_judge_samples.append(processed)
-        
-        judge_batch = DataProto.from_single_dict(
-            data=collate_fn(processed_judge_samples),
-        )
-        
-        # Run judge inference
-        # By default, we set `auto_padding` of DataProto to False for better control, 
-        # so here we need to pad & unpad manually to ensure the batch size is divisible by world_size
-        judge_input_padded, pad_size = pad_dataproto_to_divisor(judge_batch, judge_wg.world_size)
-        judge_output_padded = judge_wg.compute_judge_score(judge_input_padded)
-        judge_output = unpad_dataproto(judge_output_padded, pad_size=pad_size)
 
-        # _print_tensor_info("judge_scores", judge_output.batch["judge_scores"])
-        # print(f"  {judge_output.batch['judge_scores']}")
-        # _print_tensor_info("judge_token_probs", judge_output.batch["judge_token_probs"], show_values=False)
-        # print(f"  {judge_output.batch['judge_token_probs']}")
-        
-        # Aggregate per-critique scores back to per-sample scores via mean
-        flat_scores = judge_output.batch["judge_scores"].numpy()
-        critique_counts = np.asarray(sample_critique_counts, dtype=np.int64)
-        assert critique_counts.sum() == len(flat_scores), "Mismatch in total critiques and judge scores"
-        splits = np.cumsum(critique_counts)[:-1]
-        assert len(splits) == batch_size - 1, f"Mismatch in splits ({len(splits) + 1}) and batch_size ({batch_size}) for judge scores aggregation. "
-        per_sample_scores = [chunk.mean() for chunk in np.split(flat_scores, splits)]
+            # Run judge inference
+            judge_input_padded, pad_size = pad_dataproto_to_divisor(judge_batch, judge_wg.world_size)
+            judge_output_padded = judge_wg.compute_judge_score(judge_input_padded)
+            judge_output = unpad_dataproto(judge_output_padded, pad_size=pad_size)
 
-        return np.array(per_sample_scores, dtype=np.float32)
+            # Aggregate per-critique scores back to per-sample scores via mean
+            flat_scores = judge_output.batch["judge_scores"].numpy()
+            critique_counts_arr = np.asarray(valid_critique_counts, dtype=np.int64)
+            assert critique_counts_arr.sum() == len(flat_scores), "Mismatch in total critiques and judge scores"
+            splits = np.cumsum(critique_counts_arr)[:-1]
+            assert len(splits) == len(valid_sample_indices) - 1, f"Mismatch in splits {len(splits) + 1} and valid samples {len(valid_sample_indices)} for judge score aggregation"
+            valid_per_sample = [chunk.mean() for chunk in np.split(flat_scores, splits)]
+
+            for sample_idx, score in zip(valid_sample_indices, valid_per_sample):
+                per_sample_scores[sample_idx] = float(score)
+        else:
+            print("[FORMAT CHECK] All monitor outputs had invalid format; no judge inference performed.")
+
+        return per_sample_scores, format_correct
 
     # TODO-monitor: Integrate this rollout func with monitor
     def dynamic_multi_turn_loop(
