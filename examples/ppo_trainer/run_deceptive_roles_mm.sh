@@ -91,7 +91,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     algorithm.lagrangian.enable=True \
     algorithm.lagrangian.lambda_init=1.0 \
-    algorithm.lagrangian.lambda_max=10.0 \
+    algorithm.lagrangian.lambda_max=5.0 \
     algorithm.lagrangian.lambda_lr=0.1 \
     algorithm.lagrangian.lambda_update_delay_steps=50 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
@@ -116,6 +116,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_monitor=4 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=500 \
-    trainer.test_freq=20 \
-    trainer.total_epochs=100 \
+    trainer.test_freq=2 \
+    trainer.total_epochs=10 \
     trainer.val_before_train=True $@
