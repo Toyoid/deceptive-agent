@@ -6,7 +6,8 @@ from typing import List, Optional, Tuple
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from nano_runs.prompts_3check import get_prompt_set
+from nano_run.prompts_3check import get_prompt_set
+from nano_run.device_utils import get_device_map, initialize_distributed_if_needed
 
 MODEL_DEFAULT = "Qwen/Qwen2.5-7B-Instruct"
 
@@ -339,12 +340,16 @@ def main():
 	judge_model_name = args.judge_model or args.monitor_model
 	top_k = None if args.top_k < 0 else args.top_k
 
+	# Initialize distributed if running in multi-process context
+	initialize_distributed_if_needed()
+
 	print(f"Loading monitor tokenizer/model: {args.monitor_model}")
 	monitor_tokenizer = AutoTokenizer.from_pretrained(args.monitor_model, trust_remote_code=True)
+	device_map = get_device_map(args.device)
 	monitor_model = AutoModelForCausalLM.from_pretrained(
 		args.monitor_model,
 		torch_dtype=torch.bfloat16,
-		device_map=args.device,
+		device_map=device_map,
 		trust_remote_code=True,
 	)
 	monitor_model.eval()
@@ -358,7 +363,7 @@ def main():
 		judge_model = AutoModelForCausalLM.from_pretrained(
 			judge_model_name,
 			torch_dtype=torch.bfloat16,
-			device_map=args.device,
+			device_map=device_map,
 			trust_remote_code=True,
 		)
 		judge_model.eval()

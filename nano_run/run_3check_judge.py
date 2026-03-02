@@ -7,7 +7,8 @@ from typing import List, Optional, Tuple
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from nano_runs.prompts_3check import get_prompt_set
+from nano_run.prompts_3check import get_prompt_set
+from nano_run.device_utils import get_device_map, initialize_distributed_if_needed
 
 MODEL_DEFAULT = "Qwen/Qwen2.5-7B-Instruct"
 
@@ -470,6 +471,9 @@ def main():
     )
     args = parser.parse_args()
 
+    # Initialize distributed if running in multi-process context
+    initialize_distributed_if_needed()
+
     prompts = get_prompt_set(args.prompt_set)
 
     global GATE1_SYSTEM, GATE1_USER, GATE2_SYSTEM, GATE2_USER, CHECK3_SYSTEM, CHECK3_USER, BASELINE_SYSTEM, BASELINE_USER
@@ -485,10 +489,11 @@ def main():
     print(f"Loading tokenizer : {args.model}")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     print(f"Loading model     : {args.model}")
+    device_map = get_device_map(args.device)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.bfloat16,
-        device_map=args.device,
+        device_map=device_map,
         trust_remote_code=True,
     )
     model.eval()
