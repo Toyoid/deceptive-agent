@@ -2,84 +2,67 @@
 Device handling utilities for multi-GPU inference.
 
 Avoids torch.distributed complexity for inference-only workloads by using
-explicit device mapping or memory-based distribution.
+explicit device_map="balanced" with per-GPU max_memory constraints.
+
+Usage:
+    device_kwargs = get_device_kwargs(args.device)
+    model = AutoModelForCausalLM.from_pretrained(model_id, **device_kwargs, ...)
 """
 
-import os
 import torch
-from typing import Optional, Dict, Union
+from typing import Dict, Any
 
 
-def get_device_map(device_arg: str = "auto", model_size_gb: Optional[float] = None) -> Union[str, Dict]:
+def get_device_kwargs(device_arg: str = "auto") -> Dict[str, Any]:
     """
-    Get an appropriate device_map for model loading.
-    
+    Return a dict of device-related kwargs to unpack into from_pretrained().
+
     Args:
-        device_arg: User-provided device argument (e.g., "auto", "cuda:0", "cuda")
-        model_size_gb: Estimated model size in GB (for memory-based distribution)
-        
+        device_arg: User-provided device string. Accepted values:
+            "auto"   — detect GPUs and distribute across all of them (default)
+            "cuda"   — same as "auto"
+            "cuda:N" — pin to a single GPU (e.g., "cuda:0", "cuda:1")
+            "cpu"    — force CPU
+
     Returns:
-        device_map suitable for transformers.from_pretrained()
+        Dict with "device_map" and optionally "max_memory" keys.
+        Unpack directly: from_pretrained(model_id, **get_device_kwargs(arg), ...)
+
+    Notes:
+        - Uses device_map="balanced" for multi-GPU to avoid torch.distributed.
+        - device_map="auto" in new transformers versions may activate tensor
+          parallelism which requires LOCAL_RANK env var — this function avoids that.
     """
-    
-    # Explicit GPU specification (e.g., "cuda:0", "cuda:1")
-    if device_arg.startswith("cuda:"):
-        return device_arg
-    
-    # CPU-only
+    # Explicit single-GPU or CPU
     if device_arg == "cpu":
-        return "cpu"
-    
-    # For "auto" or "cuda", check available GPUs
-    if device_arg in ("auto", "cuda"):
-        if not torch.cuda.is_available():
-            return "cpu"
-        
-        num_gpus = torch.cuda.device_count()
-        
-        # Single GPU: use standard device_map
-        if num_gpus == 1:
-            return "cuda:0"
-        
-        # Multiple GPUs: use max_memory strategy (avoids distributed setup)
-        # This distributes the model across GPUs by available memory.
-        # Format: {gpu_index: "memory_limit", "cpu": "cpu_memory"}
-        device_map = {}
-        for i in range(num_gpus):
-            total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)  # GB
-            # Leave 1 GB headroom per GPU
-            device_map[i] = f"{max(1, int(total_memory - 1))}GB"
-        
-        # Add CPU offloading capacity
-        device_map["cpu"] = "30GB"
-        
-        print(f"Multi-GPU detected ({num_gpus} GPUs). Using memory-based distribution:")
-        for key, val in device_map.items():
-            print(f"  {key}: {val}")
-        
-        return device_map
-    
-    # Fallback
-    return device_arg
+        return {"device_map": "cpu"}
 
+    if device_arg.startswith("cuda:"):
+        return {"device_map": device_arg}
 
-def initialize_distributed_if_needed():
-    """
-    Initialize torch.distributed if running in a distributed context.
-    
-    Safely checks for distributed environment variables (RANK, WORLD_SIZE, etc.)
-    and initializes if present. This allows scripts to work in both single and
-    multi-process contexts without forcing distributed initialization.
-    """
-    # Check if we're in a distributed launcher context
-    rank = os.environ.get("RANK")
-    world_size = os.environ.get("WORLD_SIZE")
-    local_rank = os.environ.get("LOCAL_RANK")
-    master_addr = os.environ.get("MASTER_ADDR")
-    master_port = os.environ.get("MASTER_PORT")
-    
-    # Only initialize if all distributed env vars are present
-    if all([rank, world_size, local_rank, master_addr, master_port]):
-        if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group("nccl")
-            print(f"Initialized distributed (rank {rank}/{world_size}, local_rank {local_rank})")
+    # "auto" or "cuda": inspect available GPUs
+    if not torch.cuda.is_available():
+        print("No CUDA GPUs detected, falling back to CPU.")
+        return {"device_map": "cpu"}
+
+    num_gpus = torch.cuda.device_count()
+
+    if num_gpus == 1:
+        print("Single GPU detected: using cuda:0")
+        return {"device_map": "cuda:0"}
+
+    # Multi-GPU: use "balanced" device_map + explicit max_memory per GPU.
+    # "balanced" distributes layers evenly across GPUs without torch.distributed.
+    # max_memory caps each GPU to leave ~1 GiB headroom for activations.
+    max_memory: Dict[int, str] = {}
+    for i in range(num_gpus):
+        total_gib = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
+        usable_gib = max(1, int(total_gib) - 1)
+        max_memory[i] = f"{usable_gib}GiB"
+
+    print(f"Multi-GPU detected ({num_gpus} GPUs). Using balanced distribution:")
+    for gpu_id, mem in max_memory.items():
+        name = torch.cuda.get_device_properties(gpu_id).name
+        print(f"  GPU {gpu_id} ({name}): capped at {mem}")
+
+    return {"device_map": "balanced", "max_memory": max_memory}
