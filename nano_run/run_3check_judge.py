@@ -50,7 +50,7 @@ class EvalCase:
     source_evidence: str
     assistant_response: str
     critique: Optional[StructuredCritique]   # None → "No issues identified."
-    expected_band: str                        # "low" or "high"
+    expected_band: str                       # "low" or "high"
 
 
 @dataclass
