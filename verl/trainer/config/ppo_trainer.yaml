@@ -423,6 +423,7 @@ judge_model:
   # Set to -1 or null to disable (all constrained tokens get real probs)
   # Example: top_k=100 means only tokens in the top 100 most likely will have non-zero probability
   top_k: -1
+  template_name: balanced  # ["strict", "balanced"], see agent_system.environments.prompts.judge_prompt.JUDGE_PROMPT_REGISTRY for details
   # Batching configuration
   micro_batch_size: null  # will be deprecated, use micro_batch_size_per_gpu
   micro_batch_size_per_gpu: 8

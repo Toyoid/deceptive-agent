@@ -31,8 +31,7 @@ Available templates
 
 Usage:
     from agent_system.environments.prompts.judge_prompt import build_judge_prompt
-
-    # Default template (legacy)
+    
     chat = build_judge_prompt(
         task_type="webshop",
         user_input="Find red shoes",
@@ -206,12 +205,7 @@ def build_judge_prompt(
 ) -> List[Dict[str, str]]:
     """
     Build chat-format prompt for the judge model.
-
-    Template selection priority (highest to lowest):
-        1. ``template``      – explicit JudgePromptTemplate object
-        2. ``template_name`` – name looked up in JUDGE_PROMPT_REGISTRY
-        3. default           – JUDGE_PROMPT_REGISTRY["balanced"]
-
+    
     Args:
         task_type: The type of task (e.g., "webshop", "search", "qa_factoid")
         user_input: The original user query / instruction.

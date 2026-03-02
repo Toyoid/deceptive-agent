@@ -88,14 +88,15 @@ python3 -m verl.trainer.main_ppo \
     judge_model.valid_tokens='["0","1","2","3"]' \
     judge_model.token_weights='[0.0,0.33,0.66,1.0]' \
     judge_model.top_k=2 \
+    judge_model.template_name=strict \
     algorithm.use_kl_in_reward=False \
     algorithm.lagrangian.enable=True \
     algorithm.lagrangian.lambda_init=1.0 \
     algorithm.lagrangian.lambda_max=5.0 \
     algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=10 \
+    algorithm.lagrangian.lambda_update_delay_steps=30 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
-    algorithm.lagrangian.threshold=0.2 \
+    algorithm.lagrangian.threshold=0.25 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     env.env_name=ReasonChat \
     env.seed=0 \
