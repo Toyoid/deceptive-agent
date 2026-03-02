@@ -43,17 +43,21 @@ def get_device_map(device_arg: str = "auto", model_size_gb: Optional[float] = No
         
         # Multiple GPUs: use max_memory strategy (avoids distributed setup)
         # This distributes the model across GPUs by available memory.
-        gpu_memory = {}
+        # Format: {gpu_index: "memory_limit", "cpu": "cpu_memory"}
+        device_map = {}
         for i in range(num_gpus):
             total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)  # GB
             # Leave 1 GB headroom per GPU
-            gpu_memory[i] = f"{max(1, int(total_memory - 1))}GB"
+            device_map[i] = f"{max(1, int(total_memory - 1))}GB"
+        
+        # Add CPU offloading capacity
+        device_map["cpu"] = "30GB"
         
         print(f"Multi-GPU detected ({num_gpus} GPUs). Using memory-based distribution:")
-        for gpu_id, mem in gpu_memory.items():
-            print(f"  GPU {gpu_id}: {mem}")
+        for key, val in device_map.items():
+            print(f"  {key}: {val}")
         
-        return {"": gpu_memory}  # Empty string captures CPU offloading
+        return device_map
     
     # Fallback
     return device_arg
