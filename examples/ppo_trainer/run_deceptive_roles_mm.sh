@@ -93,9 +93,9 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.lambda_init=1.0 \
     algorithm.lagrangian.lambda_max=5.0 \
     algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=50 \
+    algorithm.lagrangian.lambda_update_delay_steps=10 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
-    algorithm.lagrangian.threshold=0.15 \
+    algorithm.lagrangian.threshold=0.2 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     env.env_name=ReasonChat \
     env.seed=0 \
@@ -116,6 +116,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_monitor=4 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=500 \
-    trainer.test_freq=2 \
-    trainer.total_epochs=10 \
+    trainer.test_freq=30 \
+    trainer.total_epochs=120 \
     trainer.val_before_train=True $@
