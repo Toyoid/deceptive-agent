@@ -116,6 +116,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=4 \
     trainer.nnodes_monitor=1 \
+    trainer.judge_pool_mode='with_actor' \
+    trainer.nnodes_judge=1 \
     trainer.save_freq=500 \
     trainer.test_freq=30 \
     trainer.total_epochs=120 \

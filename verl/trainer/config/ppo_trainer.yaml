@@ -483,6 +483,9 @@ trainer:
   n_gpus_per_node: 4
   nnodes_monitor: 1
   n_gpus_per_node_monitor: 4
+  judge_pool_mode: with_monitor # [with_monitor, with_actor, separate]
+  nnodes_judge: null # required when trainer.judge_pool_mode=separate
+  n_gpus_per_node_judge: null # required when trainer.judge_pool_mode=separate
   save_freq: -1
   # auto: find the last ckpt to resume. If can't find, start from scratch
   resume_mode: auto # or disable or resume_path if resume_from_path is set

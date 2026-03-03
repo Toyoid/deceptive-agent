@@ -131,6 +131,12 @@ class TaskRunner:
             actor_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
         }
 
+        judge_pool_mode = config.trainer.get("judge_pool_mode", "with_monitor")
+        assert judge_pool_mode in ["with_monitor", "with_actor", "separate"], (
+            f"Unsupported trainer.judge_pool_mode={judge_pool_mode}. "
+            "Please use one of [with_monitor, with_actor, separate]."
+        )
+
         monitor_pool_id = None
         if config.monitor_rollout_ref.enable:
             assert config.trainer.nnodes_monitor is not None and config.trainer.nnodes_monitor > 0, "Please set trainer.nnodes_monitor > 0 when enabling monitor_rollout_ref."
@@ -141,18 +147,35 @@ class TaskRunner:
             monitor_pool_id = "monitor_pool"
             resource_pool_spec[monitor_pool_id] = [config.trainer.n_gpus_per_node_monitor] * config.trainer.nnodes_monitor
 
-            # make sure total requested devices do not exceed the Ray cluster capacity.
-            device_resource_name = "NPU" if config.trainer.device == "npu" else "GPU"
-            cluster_resource = ray.cluster_resources().get(device_resource_name)
-            if cluster_resource is not None:
-                # Ray reports floats; convert to int to avoid floating comparison issues.
-                available_devices = int(cluster_resource)
-                actor_devices = config.trainer.nnodes * config.trainer.n_gpus_per_node
+        judge_pool_id = None
+        if config.judge_model.enable and judge_pool_mode == "separate":
+            assert config.trainer.nnodes_judge is not None and config.trainer.nnodes_judge > 0, "Please set trainer.nnodes_judge > 0 when trainer.judge_pool_mode=separate."
+            assert (
+                config.trainer.n_gpus_per_node_judge is not None and config.trainer.n_gpus_per_node_judge > 0
+            ), "Please set trainer.n_gpus_per_node_judge > 0 when trainer.judge_pool_mode=separate."
+            judge_pool_id = "judge_pool"
+            resource_pool_spec[judge_pool_id] = [config.trainer.n_gpus_per_node_judge] * config.trainer.nnodes_judge
+
+        # make sure total requested devices do not exceed the Ray cluster capacity.
+        device_resource_name = "NPU" if config.trainer.device == "npu" else "GPU"
+        cluster_resource = ray.cluster_resources().get(device_resource_name)
+        if cluster_resource is not None:
+            # Ray reports floats; convert to int to avoid floating comparison issues.
+            available_devices = int(cluster_resource)
+            actor_devices = config.trainer.nnodes * config.trainer.n_gpus_per_node
+            monitor_devices = 0
+            if monitor_pool_id is not None:
                 monitor_devices = config.trainer.nnodes_monitor * config.trainer.n_gpus_per_node_monitor
-                requested_devices = actor_devices + monitor_devices
-                assert (
-                    requested_devices <= available_devices
-                ), f"Requested {requested_devices} {device_resource_name}s (actor+monitor) but only {available_devices} are available on the Ray cluster."
+            judge_devices = 0
+            if judge_pool_id is not None:
+                judge_devices = config.trainer.nnodes_judge * config.trainer.n_gpus_per_node_judge
+            requested_devices = actor_devices + monitor_devices + judge_devices
+            assert (
+                requested_devices <= available_devices
+            ), (
+                f"Requested {requested_devices} {device_resource_name}s but only {available_devices} are available on the Ray cluster. "
+                f"Breakdown: actor={actor_devices}, monitor={monitor_devices}, judge={judge_devices}."
+            )
 
         print(f"resource_pool_spec: {resource_pool_spec}")
 
@@ -176,7 +199,8 @@ class TaskRunner:
                 raise NotImplementedError
             role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
             # mapping[Role.RewardModel] = monitor_pool_id if config.monitor_rollout_ref.enable else actor_pool_id
-            mapping[Role.RewardModel] = actor_pool_id
+            mapping[Role.RewardModel] = monitor_pool_id
+            # mapping[Role.RewardModel] = actor_pool_id
 
         # use reference model
         if config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss:
@@ -190,6 +214,7 @@ class TaskRunner:
         # 3. Please use FSDP as `configmonitor_rollout_ref.monitor.strategy`, we do not support `megatron` currently
         # 4. Monitor is placed in a SEPARATE resource pool to avoid vLLM parallel state conflicts
         if config.monitor_rollout_ref.enable:
+            assert monitor_pool_id is not None, "monitor_pool_id should be initialized when monitor rollout is enabled"
             monitor_local_path = copy_to_local(config.monitor_rollout_ref.model.path, use_shm=config.monitor_rollout_ref.model.get("use_shm", False))
             monitor_tokenizer = hf_tokenizer(monitor_local_path, trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False))
             monitor_processor = hf_processor(monitor_local_path, trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False), use_fast=True)  # used for multimodal LLM, could be none
@@ -212,13 +237,27 @@ class TaskRunner:
         
         # use judge model for constrained-token scoring on monitor critique validity
         if config.judge_model.enable:
+            assert config.monitor_rollout_ref.enable, "Judge model requires monitor rollout to be enabled as judge scores monitor outputs."
             if config.judge_model.strategy in ["fsdp", "fsdp2"]:
                 from verl.workers.fsdp_workers import JudgeModelWorker
             else:
                 raise NotImplementedError(f"Judge model strategy {config.judge_model.strategy} not supported")
             role_worker_mapping[Role.Judge] = ray.remote(JudgeModelWorker)
-            # Put judge model in monitor pool (shares resources with monitor)
-            mapping[Role.Judge] = monitor_pool_id if config.monitor_rollout_ref.enable else actor_pool_id
+            # Judge pool placement is configurable:
+            # - separate: dedicated judge pool
+            # - with_monitor: colocate with monitor pool (fallback to actor pool if monitor disabled)
+            # - with_actor: colocate with actor pool
+            if judge_pool_mode == "separate":
+                assert judge_pool_id is not None, "judge_pool_id should be initialized when trainer.judge_pool_mode=separate"
+                mapping[Role.Judge] = judge_pool_id
+            elif judge_pool_mode == "with_monitor":
+                mapping[Role.Judge] = monitor_pool_id
+            else:  # with_actor
+                mapping[Role.Judge] = actor_pool_id
+
+            print(
+                f"judge_pool_mode={judge_pool_mode}, judge mapped to pool={mapping[Role.Judge]}"
+            )
             
             # Load judge tokenizer for critique preprocessing in TrajectoryCollector
             judge_local_path = copy_to_local(config.judge_model.model.path, use_shm=config.judge_model.model.get("use_shm", False))
