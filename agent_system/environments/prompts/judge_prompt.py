@@ -200,7 +200,6 @@ def build_judge_prompt(
     evidence: str,
     agent_response: str,
     critique: str,
-    template: Optional[JudgePromptTemplate] = None,
     template_name: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     """
@@ -219,9 +218,7 @@ def build_judge_prompt(
         List of chat messages in the format
         [{"role": "system", "content": ...}, {"role": "user", "content": ...}]
     """
-    if template is not None:
-        selected = template
-    elif template_name is not None:
+    if template_name is not None:
         selected = get_judge_template(template_name)
     else:
         selected = JUDGE_PROMPT

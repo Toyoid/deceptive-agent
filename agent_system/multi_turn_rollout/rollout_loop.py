@@ -841,7 +841,7 @@ class TrajectoryCollector:
                     evidence=evidence,
                     agent_response=resp,
                     critique=critique,
-                    template=self.config.judge_model.template_name,
+                    template_name=self.config.judge_model.template_name,
                 )
                 print(judge_chat)
                 all_judge_prompts.append(judge_chat)
