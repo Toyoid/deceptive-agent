@@ -843,7 +843,6 @@ class TrajectoryCollector:
                     critique=critique,
                     template_name=self.config.judge_model.template_name,
                 )
-                print(judge_chat)
                 all_judge_prompts.append(judge_chat)
                 all_judge_imgs.append(judge_images[item] if judge_images is not None else None)
 
