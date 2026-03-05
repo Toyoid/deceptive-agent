@@ -81,14 +81,14 @@ python3 -m verl.trainer.main_ppo \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
-    judge_model.model.path=Qwen/Qwen2.5-7B-Instruct \
+    judge_model.model.path=checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_eta100/global_step_200/monitor/huggingface \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
     judge_model.micro_batch_size_per_gpu=2 \
     judge_model.valid_tokens='["0","1","2","3"]' \
     judge_model.token_weights='[0.0,0.33,0.66,1.0]' \
     judge_model.top_k=2 \
-    judge_model.template_name=strict \
+    judge_model.template_name=balanced \
     algorithm.use_kl_in_reward=False \
     algorithm.lagrangian.enable=True \
     algorithm.lagrangian.lambda_init=1.0 \
@@ -116,7 +116,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.resume_mode=disable \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
-    trainer.log_val_generations=4 \
+    trainer.log_val_generations=1 \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
