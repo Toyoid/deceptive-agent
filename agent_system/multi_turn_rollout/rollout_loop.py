@@ -17,6 +17,7 @@
 import copy
 import torch
 import numpy as np
+from collections import deque
 from verl import DataProto
 from verl.utils.dataset.rl_dataset import collate_fn
 from verl.utils.model import compute_position_id_with_mask
@@ -63,6 +64,8 @@ class TrajectoryCollector:
             assert judge_tokenizer is not None, "judge tokenizer should be provided when judge is enabled"
             self.judge_tokenizer = judge_tokenizer
             self.judge_processor = judge_processor
+        # Rolling mean buffer for reflection trigger (stores per-step batch mean trust penalties).
+        self._reflection_penalty_buffer: deque = deque(maxlen=50)
     
     @staticmethod
     def _create_uid_batch(
@@ -246,11 +249,30 @@ class TrajectoryCollector:
             obs_content += obs_text
         else:
             print(f"Warning: No text observation found!")
-    
-        chat = [{
-            "content": obs_content,
-            "role": "user",
-        }]
+
+        # Check for reflection system prompt injected for critique-guided exploration
+        # NOTE: This may need to be compatible with deceptive_roles
+        reflection_sys = gen_batch.non_tensor_batch.get('reflection_system_prompt', None)
+        reflection_sys_item = reflection_sys[item] if reflection_sys is not None else None
+
+        if reflection_sys_item is not None:
+            # Build augmented chat with reflection guidance for generation
+            chat = [
+                {"content": reflection_sys_item, "role": "system"},
+                {"content": obs_content, "role": "user"},
+            ]
+            # Also build original chat (no reflection) for re-pairing after rollout
+            original_chat = [{"content": obs_content, "role": "user"}]
+            original_row_dict = self._process_chat_to_model_inputs(
+                chat=original_chat,
+                obs_image=obs_image,
+                tokenizer=self.tokenizer,
+                processor=self.processor,
+                max_prompt_length=self.config.data.max_prompt_length,
+                truncation=self.config.data.truncation,
+            )
+        else:
+            chat = [{"content": obs_content, "role": "user"}]
         
         # Process chat to model inputs using shared helper
         row_dict = self._process_chat_to_model_inputs(
@@ -268,6 +290,12 @@ class TrajectoryCollector:
             'index': item,  # TODO: check if this is needed
             'data_source': data_source
         })
+
+        # Store original prompt tensors as numpy for re-pairing after reflection rollout.
+        # These are popped and applied in _run_reflection_and_replace before gather_rollout_data.
+        if reflection_sys_item is not None:
+            row_dict['orig_input_ids'] = original_row_dict['input_ids'].numpy()
+            row_dict['orig_attention_mask'] = original_row_dict['attention_mask'].numpy()
 
         if self.config.data.get('return_raw_chat', False):
             row_dict['raw_prompt'] = copy.deepcopy(chat)
@@ -343,9 +371,16 @@ class TrajectoryCollector:
             DataProto: Contains processed batch data with preserved metadata
         """
         # if the env is vanilla chat task and is the start of the episode, simply add anchor_obs and return
-        if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0:
+        # Exception: skip this shortcut when reflection_system_prompt is injected, so that
+        # preprocess_single_sample can build the augmented chat and save orig_input_ids for re-pairing.
+        has_reflection = (
+            'reflection_system_prompt' in gen_batch.non_tensor_batch
+            and gen_batch.non_tensor_batch['reflection_system_prompt'] is not None
+            and any(p is not None for p in gen_batch.non_tensor_batch['reflection_system_prompt'])
+        )
+        if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0 and not has_reflection:
             print("Vanilla chat task at the start of the episode, skipping preprocessing...")
-            
+
             return gen_batch.clone()
 
         batch_size = len(gen_batch.batch['input_ids'])
@@ -888,6 +923,447 @@ class TrajectoryCollector:
 
         return per_sample_scores, format_correct
 
+    # -------------------------------------------------------------------------
+    # Reflection helpers
+    # -------------------------------------------------------------------------
+
+    def _select_reflection_candidates(
+        self,
+        monitor_trust_penalties: np.ndarray,
+        rollout_n: int,
+        reflection_cfg,
+        verbose: bool = False,
+    ) -> List[int]:
+        """
+        Select actor trajectory indices for reflection based on trust-penalty ranking within GRPO groups.
+
+        Within each group of size `rollout_n`, up to k = max(1, round(ratio*rollout_n)) trajectories
+        that satisfy trust_penalty >= min_trust_penalty are selected (top-K by penalty).
+        An optional `max_selected_per_group` cap is applied afterwards.
+
+        Returns:
+            Sorted list of selected actor trajectory indices.
+        """
+        ratio = reflection_cfg.ratio
+        min_penalty = reflection_cfg.min_trust_penalty
+        max_per_group = reflection_cfg.get('max_selected_per_group', None)
+
+        k_per_group = max(1, round(ratio * rollout_n)) if ratio > 0 else 0
+        if k_per_group == 0:
+            if verbose:
+                print("[Reflection|Step1] k_per_group=0 (ratio=0), returning no candidates.")
+            return []
+
+        actor_batch_size = len(monitor_trust_penalties)
+        n_groups = actor_batch_size // rollout_n
+
+        if verbose:
+            print(f"[Reflection|Step1] Config: batch_size={actor_batch_size}, n_groups={n_groups}, "
+                  f"rollout_n={rollout_n}, k_per_group={k_per_group}, "
+                  f"ratio={ratio}, min_penalty={min_penalty}, max_per_group={max_per_group}")
+            print(f"[Reflection|Step1] All trust penalties: "
+                  f"{[f'{p:.3f}' for p in monitor_trust_penalties]}")
+
+        selected = []
+        for g in range(n_groups):
+            start = g * rollout_n
+            end = start + rollout_n
+            group_penalties = monitor_trust_penalties[start:end]
+            # Candidates: only those meeting min_trust_penalty
+            candidate_local = [
+                j for j in range(rollout_n)
+                if group_penalties[j] >= min_penalty
+            ]
+            if not candidate_local:
+                if verbose:
+                    print(f"  Group {g:>3}: penalties={[f'{p:.3f}' for p in group_penalties]}  "
+                          f"eligible=0  (all below min_penalty={min_penalty})  selected=[]")
+                continue
+            # Sort by penalty descending, then take top-k
+            candidate_local.sort(key=lambda j: group_penalties[j], reverse=True)
+            k = min(k_per_group, len(candidate_local))
+            if max_per_group is not None:
+                k = min(k, max_per_group)
+            chosen_local = candidate_local[:k]
+            chosen_global = [start + j for j in chosen_local]
+            selected.extend(chosen_global)
+
+            if verbose:
+                print(f"  Group {g:>3}: penalties={[f'{p:.3f}' for p in group_penalties]}  "
+                      f"eligible={len(candidate_local)}  "
+                      f"selected_local={chosen_local}  "
+                      f"selected_global={chosen_global}  "
+                      f"selected_penalties={[f'{group_penalties[j]:.3f}' for j in chosen_local]}")
+
+        result = sorted(selected)
+        if verbose:
+            print(f"[Reflection|Step1] Final selected indices: {result}  (total={len(result)})")
+        return result
+
+    def _pick_demo_critique_per_actor_traj(
+        self,
+        monitor_batch_output: 'DataProto',
+        actor_batch_size: int,
+        monitor_rollout_n: int,
+    ) -> Tuple[List[Optional[str]], np.ndarray, np.ndarray]:
+        """
+        For each actor trajectory, pick the highest-judge-score, format-correct critique text.
+
+        Among the `monitor_rollout_n` monitor rollouts for each actor trajectory (interleaved
+        indexing), choose the one whose trust_penalty (judge score) is highest while
+        is_format_correct is True.
+
+        Returns:
+            best_critique_text: list[Optional[str]] of length actor_batch_size; None if no valid.
+            best_critique_score: float32 ndarray (actor_batch_size,); 0.0 if no valid.
+            has_valid_critique: bool ndarray (actor_batch_size,).
+        """
+        from agent_system.environments.prompts.judge_prompt import extract_critiques
+
+        decoded = self.monitor_tokenizer.batch_decode(
+            monitor_batch_output.batch['responses'], skip_special_tokens=True
+        )
+        trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
+        is_format_correct = monitor_batch_output.non_tensor_batch['is_format_correct']
+
+        best_text: List[Optional[str]] = [None] * actor_batch_size
+        best_score = np.zeros(actor_batch_size, dtype=np.float32)
+        has_valid = np.zeros(actor_batch_size, dtype=bool)
+
+        for i in range(actor_batch_size):
+            for r in range(monitor_rollout_n):
+                monitor_idx = i * monitor_rollout_n + r
+                if not is_format_correct[monitor_idx]:
+                    continue
+                score = float(trust_penalties[monitor_idx])
+                if not has_valid[i] or score > best_score[i]:
+                    text = decoded[monitor_idx].strip()
+                    critiques = extract_critiques(text)
+                    summary = ' '.join(critiques) if critiques else text
+                    best_text[i] = summary
+                    best_score[i] = score
+                    has_valid[i] = True
+
+        return best_text, best_score, has_valid
+
+    @staticmethod
+    def _build_reflection_system_prompt(demo_response: str, demo_critique: str) -> str:
+        """
+        Build the system-role reflection prompt injected into the augmented generation context.
+
+        Designed so the actor:
+          1. Understands the honesty issue to avoid.
+          2. Produces a clean, task-focused response without referencing the review context.
+
+        Args:
+            demo_response: Prior response text (contextual hint, not shown in the template directly).
+            demo_critique: Critique text summarising the honesty issue.
+
+        Returns:
+            System prompt string (used as {"role": "system"} in the augmented chat).
+        """
+        return (
+            "INTERNAL NOTE — do not reference this note in your response: "
+            "A previous response to a similar task was flagged for the following issue: "
+            f"{demo_critique}. "
+            "Ensure your response does not exhibit this problem. "
+            "Answer the user's task directly and accurately without mentioning prior attempts, "
+            "reviews, or this note."
+        )
+
+    def _select_demo_source_index(
+        self,
+        target_i: int,
+        mode: str,
+        monitor_trust_penalties: np.ndarray,
+        selected_indices: List[int],
+        rollout_n: int,
+    ) -> int:
+        """
+        Choose the source trajectory whose (response, critique) populates the demo slot.
+
+        same_traj: use target_i itself.
+        cross_traj: prefer highest-penalty selected index in the same GRPO group (≠ target_i);
+                    fallback to global selected pool (≠ target_i); final fallback to target_i.
+        """
+        if mode == "same_traj":
+            return target_i
+
+        # cross_traj: same GRPO group first
+        group_start = (target_i // rollout_n) * rollout_n
+        group_end = group_start + rollout_n
+        group_cands = [
+            idx for idx in selected_indices
+            if group_start <= idx < group_end and idx != target_i
+        ]
+        if group_cands:
+            return max(group_cands, key=lambda idx: monitor_trust_penalties[idx])
+
+        # fallback: global pool
+        global_cands = [idx for idx in selected_indices if idx != target_i]
+        if global_cands:
+            return max(global_cands, key=lambda idx: monitor_trust_penalties[idx])
+
+        return target_i  # final fallback
+
+    def _run_reflection_and_replace(
+        self,
+        actor_batch_dict: dict,
+        monitor_batch_output: 'DataProto',
+        monitor_trust_penalties: np.ndarray,
+        gen_batch: 'DataProto',
+        env_kwargs_backup,
+        actor_rollout_wg,
+        monitor_wg,
+        judge_wg,
+        envs,
+        rollout_n: int,  # Is rollout_n needed?
+        train_step: int,
+    ) -> Tuple[dict, np.ndarray, dict]:
+        """
+        Critique-Guided Trajectory Reflection — full pipeline:
+
+          1. Precondition checks (enable, warmup, trigger threshold).
+          2. Select high trust-penalty trajectories per GRPO group.
+          3. Extract best format-correct critique from monitor batch per selected trajectory.
+          4. Build augmented reflection prompts and reflected gen_batch.
+          5. Run vanilla_multi_turn_loop on reflected sub-batch (rollout_n=1).
+          6. Re-pair reflected step dicts: replace augmented prompt with original prompt tensors
+             so training sees  original_prompt → reflected_response.
+          7. Replace selected slots in actor_batch_dict in-place (preserving uid/traj_uid).
+          8. Update monitor_trust_penalties for replaced slots.
+
+        Returns:
+            (updated_actor_batch_dict, updated_monitor_trust_penalties, reflection_metrics)
+        """
+        ref_cfg = self.config.algorithm.reflection
+        actor_batch_size = len(actor_batch_dict['total_batch_list'])
+        monitor_rollout_n_main = (
+            len(monitor_batch_output.non_tensor_batch['trust_penalties']) // actor_batch_size
+            if monitor_batch_output is not None else 1
+        )
+
+        # ---- Preconditions ------------------------------------------------
+        if not ref_cfg.enable:
+            return actor_batch_dict, monitor_trust_penalties, {}
+        if monitor_batch_output is None:
+            print("[Reflection] Skipping: no monitor batch output available.")
+            return actor_batch_dict, monitor_trust_penalties, {}
+        if train_step < ref_cfg.delay_steps:
+            print(f"[Reflection] Warmup: step {train_step} < delay_steps {ref_cfg.delay_steps}.")
+            return actor_batch_dict, monitor_trust_penalties, {}
+
+        # ---- Trigger threshold ------------------------------------------------
+        batch_mean_penalty = float(np.mean(monitor_trust_penalties))
+        if ref_cfg.trigger_use_rolling_mean:
+            self._reflection_penalty_buffer.append(batch_mean_penalty)
+            trigger_metric = float(np.mean(self._reflection_penalty_buffer))
+        else:
+            trigger_metric = batch_mean_penalty
+
+        if trigger_metric < ref_cfg.trigger_threshold:
+            print(f"[Reflection] Trigger metric {trigger_metric:.4f} < "
+                  f"threshold {ref_cfg.trigger_threshold} — skipping.")
+            return actor_batch_dict, monitor_trust_penalties, {'trigger_metric': trigger_metric}
+
+        # ---- Step 1: Select candidates ----------------------------------------
+        debug_mode = ref_cfg.get('debug_stop_after', None) is not None
+        selected_indices = self._select_reflection_candidates(
+            monitor_trust_penalties=monitor_trust_penalties,
+            rollout_n=rollout_n,
+            reflection_cfg=ref_cfg,
+            verbose=debug_mode,
+        )
+        if not selected_indices:
+            print("[Reflection] No candidates selected (all below min_trust_penalty).")
+            return actor_batch_dict, monitor_trust_penalties, {
+                'enabled': 1, 'selected_count': 0,
+                'selected_ratio_actual': 0.0, 'trigger_metric': trigger_metric,
+            }
+
+        n_selected = len(selected_indices)
+        mean_penalty_before = float(np.mean(monitor_trust_penalties[np.array(selected_indices)]))
+        print(f"[Reflection] Selected {n_selected}/{actor_batch_size} trajectories "
+              f"(selected mean penalty before={mean_penalty_before:.4f}, trigger={trigger_metric:.4f})")
+
+        if ref_cfg.get('debug_stop_after', None) == 'candidate_selection':
+            print("[Reflection|debug] Early exit after Step 1 (debug_stop_after='candidate_selection'). "
+                  "Training continues with original (un-reflected) batch.")
+            return actor_batch_dict, monitor_trust_penalties, {
+                'debug_stop': 'candidate_selection',
+                'trigger_metric': trigger_metric,
+                'enabled': 1,
+                'selected_count': n_selected,
+                'selected_ratio_actual': n_selected / max(actor_batch_size, 1),
+                'mean_penalty_selected': mean_penalty_before,
+            }
+
+        # ---- Step 2: Extract critiques ----------------------------------------
+        best_critique_text, best_critique_score, has_valid_critique = \
+            self._pick_demo_critique_per_actor_traj(
+                monitor_batch_output=monitor_batch_output,
+                actor_batch_size=actor_batch_size,
+                monitor_rollout_n=monitor_rollout_n_main,
+            )
+
+        valid_selected = [i for i in selected_indices if has_valid_critique[i]]
+        valid_critique_ratio = len(valid_selected) / max(n_selected, 1)
+        print(f"[Reflection] Valid critique ratio among selected: "
+              f"{len(valid_selected)}/{n_selected} ({valid_critique_ratio:.3f})")
+
+        if not valid_selected:
+            print("[Reflection] No valid critiques for selected trajectories — skipping.")
+            return actor_batch_dict, monitor_trust_penalties, {
+                'enabled': 1, 'selected_count': n_selected,
+                'selected_ratio_actual': n_selected / actor_batch_size,
+                'mean_penalty_before_selected': mean_penalty_before,
+                'valid_critique_ratio_selected': 0.0,
+                'trigger_metric': trigger_metric,
+            }
+
+        # ---- Step 3: Build reflection prompts --------------------------------
+        reflection_prompts = []
+        for i in valid_selected:
+            demo_src = self._select_demo_source_index(
+                target_i=i,
+                mode=ref_cfg.mode,
+                monitor_trust_penalties=monitor_trust_penalties,
+                selected_indices=valid_selected,
+                rollout_n=rollout_n,
+            )
+            # Decode demo response from last active step of demo trajectory
+            demo_response_text = ""
+            for step_data in reversed(actor_batch_dict['total_batch_list'][demo_src]):
+                if step_data.get('active_masks', True):
+                    if 'responses' in step_data and isinstance(step_data['responses'], torch.Tensor):
+                        demo_response_text = self.tokenizer.decode(
+                            step_data['responses'], skip_special_tokens=True
+                        )
+                    break
+            demo_critique = best_critique_text[demo_src] or best_critique_text[i] or ""
+            reflection_prompts.append(
+                self._build_reflection_system_prompt(  # NOTE: should it include the task description when cross_traj
+                    demo_response=demo_response_text,
+                    demo_critique=demo_critique,
+                )
+            )
+
+        # ---- Step 4: Build reflected gen_batch --------------------------------
+        n_valid = len(valid_selected)
+        valid_idx_arr = np.array(valid_selected)
+
+        # Slice tensors from the pending gen_batch (already repeat()-expanded, env_kwargs popped)
+        tensor_data = {k: v[valid_idx_arr] for k, v in gen_batch.batch.items()}
+        reflected_gen_batch = DataProto.from_single_dict(data=tensor_data)
+
+        # Slice non-tensor fields
+        for k, v in gen_batch.non_tensor_batch.items():
+            if k == 'env_kwargs':
+                continue  # handled separately
+            if isinstance(v, np.ndarray) and len(v) == actor_batch_size:
+                reflected_gen_batch.non_tensor_batch[k] = v[valid_idx_arr]
+
+        # Restore env_kwargs for the selected sub-batch
+        if env_kwargs_backup is not None:
+            reflected_gen_batch.non_tensor_batch['env_kwargs'] = env_kwargs_backup[valid_idx_arr]
+
+        # Inject reflection system prompts
+        reflected_gen_batch.non_tensor_batch['reflection_system_prompt'] = np.array(
+            reflection_prompts, dtype=object
+        )
+        reflected_gen_batch.meta_info = gen_batch.meta_info
+
+        # ---- Step 5: Run reflected rollout ------------------------------------
+        print(f"[Reflection] Running reflected rollout for {n_valid} trajectory slots...")
+        reflected_actor_batch_dict, reflected_monitor_batch = self.vanilla_multi_turn_loop(
+            gen_batch=reflected_gen_batch,
+            actor_rollout_wg=actor_rollout_wg,
+            monitor_wg=monitor_wg,
+            judge_wg=judge_wg,
+            envs=envs,
+            rollout_n=1,  # reflected sub-batch is not GRPO-grouped
+            monitor_rollout_n=ref_cfg.monitor_rollout_n,
+        )
+
+        # ---- Step 6: Aggregate reflected trust penalties ----------------------
+        if reflected_monitor_batch is not None:
+            refl_raw = reflected_monitor_batch.non_tensor_batch['trust_penalties']
+            if len(refl_raw) == n_valid:
+                refl_penalties = refl_raw
+            else:
+                refl_n = ref_cfg.monitor_rollout_n
+                assert len(refl_raw) == n_valid * refl_n, (
+                    f"Unexpected reflected trust_penalty size: got {len(refl_raw)}, "
+                    f"expected {n_valid} or {n_valid * refl_n}"
+                )
+                refl_penalties = refl_raw.reshape(n_valid, refl_n).mean(axis=1)
+        else:
+            refl_penalties = np.zeros(n_valid, dtype=np.float32)
+
+        mean_penalty_after = float(np.mean(refl_penalties))
+        print(f"[Reflection] Trust penalty: before={mean_penalty_before:.4f}, "
+              f"after={mean_penalty_after:.4f}")
+
+        # ---- Step 7: Re-pair step dicts and replace in actor_batch_dict ------
+        pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        monitor_trust_penalties = monitor_trust_penalties.copy()
+
+        for ref_local, orig_idx in enumerate(valid_selected):
+            # Preserve original GRPO group uid and trajectory traj_uid (N10 in design doc)
+            orig_uid = actor_batch_dict['total_batch_list'][orig_idx][0]['uid']
+            orig_traj_uid = actor_batch_dict['traj_uid'][orig_idx]
+
+            reflected_steps = reflected_actor_batch_dict['total_batch_list'][ref_local]
+
+            for step_dict in reflected_steps:
+                # Re-pair: swap augmented prompt for original prompt tensors
+                if 'orig_input_ids' in step_dict:
+                    orig_ids = torch.from_numpy(step_dict.pop('orig_input_ids').copy())
+                    orig_att = torch.from_numpy(step_dict.pop('orig_attention_mask').copy())
+                    responses = step_dict['responses']  # 1-D tensor (max_resp_len,)
+                    # Reconstruct full sequence with original prompt prefix
+                    new_input_ids = torch.cat([orig_ids, responses])
+                    resp_att = (responses != pad_id).long()
+                    new_att = torch.cat([orig_att, resp_att])
+                    new_pos = compute_position_id_with_mask(new_att.unsqueeze(0))[0]
+                    step_dict['input_ids'] = new_input_ids
+                    step_dict['prompts'] = orig_ids
+                    step_dict['attention_mask'] = new_att
+                    step_dict['position_ids'] = new_pos
+
+                # Restore original uid/traj_uid to preserve GRPO group identity (N10 in design doc)
+                step_dict['uid'] = orig_uid
+                step_dict['traj_uid'] = orig_traj_uid
+
+            # Replace trajectory in actor_batch_dict in-place
+            actor_batch_dict['total_batch_list'][orig_idx] = reflected_steps
+            actor_batch_dict['episode_rewards'][orig_idx] = \
+                reflected_actor_batch_dict['episode_rewards'][ref_local]
+            actor_batch_dict['episode_lengths'][orig_idx] = \
+                reflected_actor_batch_dict['episode_lengths'][ref_local]
+            actor_batch_dict['tool_callings'][orig_idx] = \
+                reflected_actor_batch_dict['tool_callings'][ref_local]
+            # Preserve original traj_uid slot identity (chosen default — design doc N1)
+            actor_batch_dict['traj_uid'][orig_idx] = orig_traj_uid
+            # Update trust penalty for this slot with reflected score
+            monitor_trust_penalties[orig_idx] = float(refl_penalties[ref_local])
+
+        # Note: reflected monitor batch is NOT merged into monitor training batch (Phase-1).
+        # TODO: Future option to include reflected monitor data in monitor training.
+
+        # ---- Step 8: Build metrics dict --------------------------------------
+        metrics = {
+            'enabled': 1,
+            'selected_count': n_valid,
+            'selected_ratio_actual': n_valid / actor_batch_size,
+            'mean_penalty_before_selected': mean_penalty_before,
+            'mean_penalty_after_selected': mean_penalty_after,
+            'valid_critique_ratio_selected': valid_critique_ratio,
+            'trigger_metric': trigger_metric,
+            'mode': 0 if ref_cfg.mode == 'same_traj' else 1,
+        }
+        return actor_batch_dict, monitor_trust_penalties, metrics
+
     # TODO-monitor: Integrate this rollout func with monitor
     def dynamic_multi_turn_loop(
         self,
@@ -969,12 +1445,13 @@ class TrajectoryCollector:
     
     def multi_turn_loop(
         self,
-        gen_batch: DataProto, 
-        actor_rollout_wg, 
+        gen_batch: DataProto,
+        actor_rollout_wg,
         monitor_wg,
         judge_wg,
         envs: EnvironmentManagerBase,
         is_train: bool = True,
+        train_step: int = 0,
     ) -> DataProto:
         """
         Select and run the appropriate rollout loop (dynamic or vanilla).
@@ -986,14 +1463,19 @@ class TrajectoryCollector:
             envs (EnvironmentManagerBase): Environment manager for interaction.
             is_train (bool): Whether in training mode (affects dynamic sampling).
             judge_wg: Judge model workers for critique scoring.
+            train_step (int): Current global training step (for reflection delay/trigger logic).
 
         Returns:
             DataProto: Final collected trajectory data with metadata.
         """
         rollout_n = self.config.env.rollout.n if is_train else self.config.env.rollout.val_n
         monitor_rollout_n = self.config.monitor_rollout_ref.rollout.n if (self.config.monitor_rollout_ref.enable_train_monitor and is_train) else 1
-        
+
         gen_batch = gen_batch.repeat(repeat_times=rollout_n, interleave=True)
+
+        # Save env_kwargs before vanilla_multi_turn_loop pops them, so the reflection sub-rollout
+        # can reset the correct environments for selected trajectories.
+        env_kwargs_backup = gen_batch.non_tensor_batch.get('env_kwargs', None)
 
         # Initial observations from the environment
         if self.config.algorithm.filter_groups.enable and is_train:
@@ -1008,8 +1490,19 @@ class TrajectoryCollector:
                 rollout_n=rollout_n,
                 monitor_rollout_n=monitor_rollout_n,
             )
+            # Pack dynamic-loop outputs into actor_batch_dict for uniform downstream access.
+            # The dynamic loop does not yet support monitor (TODO-monitor above).
+            actor_batch_dict = {
+                'total_batch_list': total_batch_list,
+                'episode_rewards': total_episode_rewards,
+                'episode_lengths': total_episode_lengths,
+                'success': total_success,
+                'traj_uid': total_traj_uid,
+                'tool_callings': total_tool_callings,
+            }
+            monitor_batch_output = None
         else:
-            # Vanilla Sampling   
+            # Vanilla Sampling
             actor_batch_dict, monitor_batch_output = self.vanilla_multi_turn_loop(
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
@@ -1037,7 +1530,32 @@ class TrajectoryCollector:
                 )
                 # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed
                 monitor_trust_penalties = monitor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
-        
+
+        # Critique-Guided Trajectory Reflection
+        reflection_metrics = {}
+        ref_cfg = self.config.algorithm.get('reflection', None)
+        if (
+            ref_cfg is not None
+            and ref_cfg.enable
+            and is_train
+            and not self.config.algorithm.filter_groups.enable  # reflection not yet supported for dynamic loop
+            and monitor_trust_penalties is not None
+        ):
+            actor_batch_dict, monitor_trust_penalties, reflection_metrics = \
+                self._run_reflection_and_replace(
+                    actor_batch_dict=actor_batch_dict,
+                    monitor_batch_output=monitor_batch_output,
+                    monitor_trust_penalties=monitor_trust_penalties,
+                    gen_batch=gen_batch,
+                    env_kwargs_backup=env_kwargs_backup,
+                    actor_rollout_wg=actor_rollout_wg,
+                    monitor_wg=monitor_wg,
+                    judge_wg=judge_wg,
+                    envs=envs,
+                    rollout_n=rollout_n,
+                    train_step=train_step,
+                )
+
         # Create trajectory data for actor model
         gen_batch_output: DataProto = self.gather_rollout_data(
             total_batch_list=actor_batch_dict['total_batch_list'],
@@ -1052,7 +1570,8 @@ class TrajectoryCollector:
         if self.config.monitor_rollout_ref.enable:
             return {
                 "actor": gen_batch_output,
-                "monitor": monitor_batch_output
+                "monitor": monitor_batch_output,
+                **( {"reflection_metrics": reflection_metrics} if reflection_metrics else {} ),
             }
         else:
             return {"actor": gen_batch_output}

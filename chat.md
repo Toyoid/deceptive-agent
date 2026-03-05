@@ -700,3 +700,8 @@ These two ambiguities are resolved as:
 
 Want me to move to implementation planning now?
 
+ I am implementing a new feature "reflection". First thoroughly read #file:reflection_design.md and #file:reflection_implementation_plan.md to get a comprehensive understanding of this feature. After the in-depth understanding, implement the plan very carefully step by step.
+
+Important note: I develop on this local machine and run experiments on a remote server. So it's unable to run tests or python scripts with heavy dependencies. Also do not install pkgs on my local machine. you can only run light python scripts like pycompile or pytest when necessary. Most of the time you may need to do code review instead. And I will run the tests on remote server by myself when you finished.
+
+Now implement the plan.

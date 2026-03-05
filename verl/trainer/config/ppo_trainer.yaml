@@ -468,6 +468,18 @@ algorithm:
     episode_cost_window_size: 1500
     threshold: 1e-2
     adv_estimator: reinforce_plus_plus
+  reflection:
+    enable: false
+    delay_steps: 0           # warmup steps before reflection is allowed
+    trigger_threshold: 0.8   # reflect only when trigger metric exceeds this value
+    trigger_use_rolling_mean: false  # true -> use rolling mean, false -> current batch mean
+    ratio: 0.3               # fraction of trajectories per group to reflect
+    mode: same_traj          # same_traj | cross_traj
+    monitor_rollout_n: 1     # monitor rollouts for reflected trajectories (usually 1)
+    min_trust_penalty: 0.3   # only reflect trajectories with trust_penalty >= this
+    max_selected_per_group: null  # optional cap per GRPO group; null means no cap
+    debug_stop_after: null   # debug: stop after named step and return early (no raise, no crash)
+                             # valid values: 'candidate_selection' | null
 
 trainer:
   balance_batch: True

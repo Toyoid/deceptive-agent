@@ -716,6 +716,29 @@ class RayPPOTrainer:
         if config.algorithm.lagrangian.enable and not config.monitor_rollout_ref.enable:
             raise ValueError("Lagrangian RL requires monitor to be enabled.")
 
+        # Validate reflection config
+        ref_cfg = config.algorithm.get('reflection', None)
+        if ref_cfg is not None and ref_cfg.enable:
+            if not config.monitor_rollout_ref.enable:
+                raise ValueError("Reflection requires monitor_rollout_ref.enable=True.")
+            if not config.judge_model.enable:
+                raise ValueError("Reflection requires judge_model.enable=True.")
+            assert 0.0 <= ref_cfg.ratio <= 1.0, \
+                f"reflection.ratio must be in [0.0, 1.0], got {ref_cfg.ratio}"
+            assert ref_cfg.mode in {"same_traj", "cross_traj"}, \
+                f"reflection.mode must be 'same_traj' or 'cross_traj', got {ref_cfg.mode}"
+            assert ref_cfg.monitor_rollout_n >= 1, \
+                f"reflection.monitor_rollout_n must be >= 1, got {ref_cfg.monitor_rollout_n}"
+            assert 0.0 <= ref_cfg.min_trust_penalty <= 1.0, \
+                f"reflection.min_trust_penalty must be in [0.0, 1.0], got {ref_cfg.min_trust_penalty}"
+            assert ref_cfg.delay_steps >= 0, \
+                f"reflection.delay_steps must be >= 0, got {ref_cfg.delay_steps}"
+            assert 0.0 <= ref_cfg.trigger_threshold <= 1.0, \
+                f"reflection.trigger_threshold must be in [0.0, 1.0], got {ref_cfg.trigger_threshold}"
+            if ref_cfg.get('max_selected_per_group', None) is not None:
+                assert ref_cfg.max_selected_per_group >= 1, \
+                    f"reflection.max_selected_per_group must be >= 1 if set, got {ref_cfg.max_selected_per_group}"
+
         print("[validate_config] All configuration checks passed successfully!")
 
     def _create_dataloader(self, train_dataset, val_dataset, collate_fn, train_sampler):
@@ -1608,11 +1631,16 @@ class RayPPOTrainer:
                             envs=self.envs,
                             is_train=True,
                             judge_wg=self.judge_wg if self.use_judge else None,
+                            train_step=self.global_steps,
                         )
 
                         gen_batch_output = output_batch_dict["actor"]
                         if self.use_monitor:
                             monitor_batch = output_batch_dict["monitor"]
+                        # Collect reflection diagnostics metrics if present
+                        if "reflection_metrics" in output_batch_dict:
+                            for k, v in output_batch_dict["reflection_metrics"].items():
+                                metrics[f"reflection/{k}"] = v
 
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):
