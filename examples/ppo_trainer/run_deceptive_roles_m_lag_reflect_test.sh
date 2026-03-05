@@ -94,7 +94,6 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.mode=same_traj \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
-    algorithm.reflection.max_selected_per_group=4 \
     algorithm.reflection.debug_stop_after='candidate_selection' \
     env.env_name=ReasonChat \
     env.seed=0 \
@@ -115,6 +114,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_monitor=4 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=1000 \
-    trainer.test_freq=2 \
+    trainer.test_freq=1000 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False $@

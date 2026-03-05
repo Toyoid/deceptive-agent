@@ -48,7 +48,6 @@ algorithm:
     mode: same_traj          # same_traj | cross_traj
     monitor_rollout_n: 1
     min_trust_penalty: 0.3
-    max_selected_per_group: null  # optional cap; null means no cap
 ```
 
 ### 1.2 Add assertions/validation
@@ -108,7 +107,6 @@ Selection algorithm:
 2. Build candidate set where penalty >= `min_trust_penalty`
 3. For each GRPO group (size `rollout_n`), select top-K within group by penalty
    - `k = round(ratio * rollout_n)` with floor to int; if ratio>0 and k==0, use k=1
-   - apply optional `max_selected_per_group`
 4. Return flat selected indices
 
 ### 3.2 `_pick_demo_critique_per_actor_traj(...)`

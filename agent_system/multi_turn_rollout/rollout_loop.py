@@ -929,7 +929,7 @@ class TrajectoryCollector:
 
     def _select_reflection_candidates(
         self,
-        monitor_trust_penalties: np.ndarray,
+        actor_trust_penalties: np.ndarray,
         rollout_n: int,
         reflection_cfg,
         verbose: bool = False,
@@ -939,14 +939,12 @@ class TrajectoryCollector:
 
         Within each group of size `rollout_n`, up to k = max(1, round(ratio*rollout_n)) trajectories
         that satisfy trust_penalty >= min_trust_penalty are selected (top-K by penalty).
-        An optional `max_selected_per_group` cap is applied afterwards.
 
         Returns:
             Sorted list of selected actor trajectory indices.
         """
         ratio = reflection_cfg.ratio
         min_penalty = reflection_cfg.min_trust_penalty
-        max_per_group = reflection_cfg.get('max_selected_per_group', None)
 
         k_per_group = max(1, round(ratio * rollout_n)) if ratio > 0 else 0
         if k_per_group == 0:
@@ -954,21 +952,21 @@ class TrajectoryCollector:
                 print("[Reflection|Step1] k_per_group=0 (ratio=0), returning no candidates.")
             return []
 
-        actor_batch_size = len(monitor_trust_penalties)
+        actor_batch_size = len(actor_trust_penalties)
         n_groups = actor_batch_size // rollout_n
 
         if verbose:
             print(f"[Reflection|Step1] Config: batch_size={actor_batch_size}, n_groups={n_groups}, "
                   f"rollout_n={rollout_n}, k_per_group={k_per_group}, "
-                  f"ratio={ratio}, min_penalty={min_penalty}, max_per_group={max_per_group}")
+                  f"ratio={ratio}, min_penalty={min_penalty}")
             print(f"[Reflection|Step1] All trust penalties: "
-                  f"{[f'{p:.3f}' for p in monitor_trust_penalties]}")
+                  f"{[f'{p:.3f}' for p in actor_trust_penalties]}")
 
         selected = []
         for g in range(n_groups):
             start = g * rollout_n
             end = start + rollout_n
-            group_penalties = monitor_trust_penalties[start:end]
+            group_penalties = actor_trust_penalties[start:end]
             # Candidates: only those meeting min_trust_penalty
             candidate_local = [
                 j for j in range(rollout_n)
@@ -982,8 +980,6 @@ class TrajectoryCollector:
             # Sort by penalty descending, then take top-k
             candidate_local.sort(key=lambda j: group_penalties[j], reverse=True)
             k = min(k_per_group, len(candidate_local))
-            if max_per_group is not None:
-                k = min(k, max_per_group)
             chosen_local = candidate_local[:k]
             chosen_global = [start + j for j in chosen_local]
             selected.extend(chosen_global)
@@ -1005,6 +1001,7 @@ class TrajectoryCollector:
         monitor_batch_output: 'DataProto',
         actor_batch_size: int,
         monitor_rollout_n: int,
+        verbose: bool = False,
     ) -> Tuple[List[Optional[str]], np.ndarray, np.ndarray]:
         """
         For each actor trajectory, pick the highest-judge-score, format-correct critique text.
@@ -1026,6 +1023,17 @@ class TrajectoryCollector:
         trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
         is_format_correct = monitor_batch_output.non_tensor_batch['is_format_correct']
 
+        if verbose:
+            total_monitor = len(decoded)
+            fmt_correct_count = int(is_format_correct.sum())
+            print(f"[Reflection|Step2] Monitor batch: total_rollouts={total_monitor} "
+                  f"(actor_batch_size={actor_batch_size} x monitor_rollout_n={monitor_rollout_n}), "
+                  f"format_correct={fmt_correct_count}/{total_monitor} "
+                  f"({fmt_correct_count/max(total_monitor,1):.3f}), "
+                  f"trust_penalty range=[{float(trust_penalties.min()):.3f}, "
+                  f"{float(trust_penalties.max()):.3f}], "
+                  f"mean={float(trust_penalties.mean()):.3f}")
+
         best_text: List[Optional[str]] = [None] * actor_batch_size
         best_score = np.zeros(actor_batch_size, dtype=np.float32)
         has_valid = np.zeros(actor_batch_size, dtype=bool)
@@ -1043,6 +1051,11 @@ class TrajectoryCollector:
                     best_text[i] = summary
                     best_score[i] = score
                     has_valid[i] = True
+
+        if verbose:
+            valid_count = int(has_valid.sum())
+            print(f"[Reflection|Step2] Trajectories with valid critique: "
+                  f"{valid_count}/{actor_batch_size} ({valid_count/max(actor_batch_size,1):.3f})")
 
         return best_text, best_score, has_valid
 
@@ -1075,7 +1088,7 @@ class TrajectoryCollector:
         self,
         target_i: int,
         mode: str,
-        monitor_trust_penalties: np.ndarray,
+        actor_trust_penalties: np.ndarray,
         selected_indices: List[int],
         rollout_n: int,
     ) -> int:
@@ -1097,12 +1110,12 @@ class TrajectoryCollector:
             if group_start <= idx < group_end and idx != target_i
         ]
         if group_cands:
-            return max(group_cands, key=lambda idx: monitor_trust_penalties[idx])
+            return max(group_cands, key=lambda idx: actor_trust_penalties[idx])
 
         # fallback: global pool
         global_cands = [idx for idx in selected_indices if idx != target_i]
         if global_cands:
-            return max(global_cands, key=lambda idx: monitor_trust_penalties[idx])
+            return max(global_cands, key=lambda idx: actor_trust_penalties[idx])
 
         return target_i  # final fallback
 
@@ -1110,14 +1123,14 @@ class TrajectoryCollector:
         self,
         actor_batch_dict: dict,
         monitor_batch_output: 'DataProto',
-        monitor_trust_penalties: np.ndarray,
+        actor_trust_penalties: np.ndarray,
         gen_batch: 'DataProto',
         env_kwargs_backup,
         actor_rollout_wg,
         monitor_wg,
         judge_wg,
         envs,
-        rollout_n: int,  # Is rollout_n needed?
+        rollout_n: int,  # NOTE: Is rollout_n needed?
         train_step: int,
     ) -> Tuple[dict, np.ndarray, dict]:
         """
@@ -1131,10 +1144,10 @@ class TrajectoryCollector:
           6. Re-pair reflected step dicts: replace augmented prompt with original prompt tensors
              so training sees  original_prompt → reflected_response.
           7. Replace selected slots in actor_batch_dict in-place (preserving uid/traj_uid).
-          8. Update monitor_trust_penalties for replaced slots.
+          8. Update actor_trust_penalties for replaced slots.
 
         Returns:
-            (updated_actor_batch_dict, updated_monitor_trust_penalties, reflection_metrics)
+            (updated_actor_batch_dict, updated_actor_trust_penalties, reflection_metrics)
         """
         ref_cfg = self.config.algorithm.reflection
         actor_batch_size = len(actor_batch_dict['total_batch_list'])
@@ -1145,16 +1158,16 @@ class TrajectoryCollector:
 
         # ---- Preconditions ------------------------------------------------
         if not ref_cfg.enable:
-            return actor_batch_dict, monitor_trust_penalties, {}
+            return actor_batch_dict, actor_trust_penalties, {}
         if monitor_batch_output is None:
             print("[Reflection] Skipping: no monitor batch output available.")
-            return actor_batch_dict, monitor_trust_penalties, {}
+            return actor_batch_dict, actor_trust_penalties, {}
         if train_step < ref_cfg.delay_steps:
             print(f"[Reflection] Warmup: step {train_step} < delay_steps {ref_cfg.delay_steps}.")
-            return actor_batch_dict, monitor_trust_penalties, {}
+            return actor_batch_dict, actor_trust_penalties, {}
 
         # ---- Trigger threshold ------------------------------------------------
-        batch_mean_penalty = float(np.mean(monitor_trust_penalties))
+        batch_mean_penalty = float(np.mean(actor_trust_penalties))
         if ref_cfg.trigger_use_rolling_mean:
             self._reflection_penalty_buffer.append(batch_mean_penalty)
             trigger_metric = float(np.mean(self._reflection_penalty_buffer))
@@ -1164,32 +1177,32 @@ class TrajectoryCollector:
         if trigger_metric < ref_cfg.trigger_threshold:
             print(f"[Reflection] Trigger metric {trigger_metric:.4f} < "
                   f"threshold {ref_cfg.trigger_threshold} — skipping.")
-            return actor_batch_dict, monitor_trust_penalties, {'trigger_metric': trigger_metric}
+            return actor_batch_dict, actor_trust_penalties, {'trigger_metric': trigger_metric}
 
         # ---- Step 1: Select candidates ----------------------------------------
         debug_mode = ref_cfg.get('debug_stop_after', None) is not None
         selected_indices = self._select_reflection_candidates(
-            monitor_trust_penalties=monitor_trust_penalties,
+            actor_trust_penalties=actor_trust_penalties,
             rollout_n=rollout_n,
             reflection_cfg=ref_cfg,
             verbose=debug_mode,
         )
         if not selected_indices:
             print("[Reflection] No candidates selected (all below min_trust_penalty).")
-            return actor_batch_dict, monitor_trust_penalties, {
+            return actor_batch_dict, actor_trust_penalties, {
                 'enabled': 1, 'selected_count': 0,
                 'selected_ratio_actual': 0.0, 'trigger_metric': trigger_metric,
             }
 
         n_selected = len(selected_indices)
-        mean_penalty_before = float(np.mean(monitor_trust_penalties[np.array(selected_indices)]))
+        mean_penalty_before = float(np.mean(actor_trust_penalties[np.array(selected_indices)]))
         print(f"[Reflection] Selected {n_selected}/{actor_batch_size} trajectories "
               f"(selected mean penalty before={mean_penalty_before:.4f}, trigger={trigger_metric:.4f})")
 
         if ref_cfg.get('debug_stop_after', None) == 'candidate_selection':
             print("[Reflection|debug] Early exit after Step 1 (debug_stop_after='candidate_selection'). "
                   "Training continues with original (un-reflected) batch.")
-            return actor_batch_dict, monitor_trust_penalties, {
+            return actor_batch_dict, actor_trust_penalties, {
                 'debug_stop': 'candidate_selection',
                 'trigger_metric': trigger_metric,
                 'enabled': 1,
@@ -1204,6 +1217,7 @@ class TrajectoryCollector:
                 monitor_batch_output=monitor_batch_output,
                 actor_batch_size=actor_batch_size,
                 monitor_rollout_n=monitor_rollout_n_main,
+                verbose=debug_mode,
             )
 
         valid_selected = [i for i in selected_indices if has_valid_critique[i]]
@@ -1211,14 +1225,49 @@ class TrajectoryCollector:
         print(f"[Reflection] Valid critique ratio among selected: "
               f"{len(valid_selected)}/{n_selected} ({valid_critique_ratio:.3f})")
 
+        if debug_mode:
+            decoded_monitor = self.monitor_tokenizer.batch_decode(
+                monitor_batch_output.batch['responses'], skip_special_tokens=True
+            )
+            print(f"[Reflection|Step2] Per-selected-traj critique details:")
+            for i in selected_indices:
+                if has_valid_critique[i]:
+                    snippet = (best_critique_text[i] or "")[:150].replace('\n', ' ')
+                    print(f"  traj {i:>4}: valid=True   score={best_critique_score[i]:.3f}  "
+                          f"critique='{snippet}'")
+                else:
+                    # Show a raw snippet from each monitor rollout to diagnose why format failed
+                    raw_snippets = []
+                    for r in range(monitor_rollout_n_main):
+                        monitor_idx = i * monitor_rollout_n_main + r
+                        raw = decoded_monitor[monitor_idx].strip().replace('\n', ' ')
+                        fmt = monitor_batch_output.non_tensor_batch['is_format_correct'][monitor_idx]
+                        raw_snippets.append(f"r{r}(fmt={int(fmt)})='{raw}'")
+                    print(f"  traj {i:>4}: valid=False  score=0.000  "
+                          f"monitor_rollouts=[{', '.join(raw_snippets)}]")
+
         if not valid_selected:
             print("[Reflection] No valid critiques for selected trajectories — skipping.")
-            return actor_batch_dict, monitor_trust_penalties, {
+            return actor_batch_dict, actor_trust_penalties, {
                 'enabled': 1, 'selected_count': n_selected,
                 'selected_ratio_actual': n_selected / actor_batch_size,
                 'mean_penalty_before_selected': mean_penalty_before,
                 'valid_critique_ratio_selected': 0.0,
                 'trigger_metric': trigger_metric,
+            }
+
+        if ref_cfg.get('debug_stop_after', None) == 'critique_extraction':
+            print("[Reflection|debug] Early exit after Step 2 (debug_stop_after='critique_extraction'). "
+                  "Training continues with original (un-reflected) batch.")
+            return actor_batch_dict, actor_trust_penalties, {
+                'debug_stop': 'critique_extraction',
+                'trigger_metric': trigger_metric,
+                'enabled': 1,
+                'selected_count': n_selected,
+                'selected_ratio_actual': n_selected / max(actor_batch_size, 1),
+                'mean_penalty_selected': mean_penalty_before,
+                'valid_critique_ratio_selected': valid_critique_ratio,
+                'n_valid_selected': len(valid_selected),
             }
 
         # ---- Step 3: Build reflection prompts --------------------------------
@@ -1227,7 +1276,7 @@ class TrajectoryCollector:
             demo_src = self._select_demo_source_index(
                 target_i=i,
                 mode=ref_cfg.mode,
-                monitor_trust_penalties=monitor_trust_penalties,
+                actor_trust_penalties=actor_trust_penalties,
                 selected_indices=valid_selected,
                 rollout_n=rollout_n,
             )
@@ -1306,7 +1355,7 @@ class TrajectoryCollector:
 
         # ---- Step 7: Re-pair step dicts and replace in actor_batch_dict ------
         pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
-        monitor_trust_penalties = monitor_trust_penalties.copy()
+        actor_trust_penalties = actor_trust_penalties.copy()
 
         for ref_local, orig_idx in enumerate(valid_selected):
             # Preserve original GRPO group uid and trajectory traj_uid (N10 in design doc)
@@ -1346,7 +1395,7 @@ class TrajectoryCollector:
             # Preserve original traj_uid slot identity (chosen default — design doc N1)
             actor_batch_dict['traj_uid'][orig_idx] = orig_traj_uid
             # Update trust penalty for this slot with reflected score
-            monitor_trust_penalties[orig_idx] = float(refl_penalties[ref_local])
+            actor_trust_penalties[orig_idx] = float(refl_penalties[ref_local])
 
         # Note: reflected monitor batch is NOT merged into monitor training batch (Phase-1).
         # TODO: Future option to include reflected monitor data in monitor training.
@@ -1362,7 +1411,7 @@ class TrajectoryCollector:
             'trigger_metric': trigger_metric,
             'mode': 0 if ref_cfg.mode == 'same_traj' else 1,
         }
-        return actor_batch_dict, monitor_trust_penalties, metrics
+        return actor_batch_dict, actor_trust_penalties, metrics
 
     # TODO-monitor: Integrate this rollout func with monitor
     def dynamic_multi_turn_loop(
@@ -1518,18 +1567,18 @@ class TrajectoryCollector:
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['tool_callings'])
 
         # construct trust_penalties for actor batch, will be used for actor model training
-        monitor_trust_penalties = None
+        actor_trust_penalties = None
         if monitor_wg is not None and monitor_batch_output is not None:
-            monitor_trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
+            actor_trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
             actor_batch_size = len(actor_batch_dict['total_batch_list'])
-            if len(monitor_trust_penalties) != actor_batch_size:
+            if len(actor_trust_penalties) != actor_batch_size:
                 expected_size = actor_batch_size * monitor_rollout_n
-                assert len(monitor_trust_penalties) == expected_size, (
-                    f"trust_penalties size mismatch: got {len(monitor_trust_penalties)}, "
+                assert len(actor_trust_penalties) == expected_size, (
+                    f"trust_penalties size mismatch: got {len(actor_trust_penalties)}, "
                     f"expected {actor_batch_size} (actor batch) or {expected_size} (actor batch * repeat_n={monitor_rollout_n})"
                 )
                 # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed
-                monitor_trust_penalties = monitor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
+                actor_trust_penalties = actor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
 
         # Critique-Guided Trajectory Reflection
         reflection_metrics = {}
@@ -1539,13 +1588,13 @@ class TrajectoryCollector:
             and ref_cfg.enable
             and is_train
             and not self.config.algorithm.filter_groups.enable  # reflection not yet supported for dynamic loop
-            and monitor_trust_penalties is not None
+            and actor_trust_penalties is not None
         ):
-            actor_batch_dict, monitor_trust_penalties, reflection_metrics = \
+            actor_batch_dict, actor_trust_penalties, reflection_metrics = \
                 self._run_reflection_and_replace(
                     actor_batch_dict=actor_batch_dict,
                     monitor_batch_output=monitor_batch_output,
-                    monitor_trust_penalties=monitor_trust_penalties,
+                    actor_trust_penalties=actor_trust_penalties,
                     gen_batch=gen_batch,
                     env_kwargs_backup=env_kwargs_backup,
                     actor_rollout_wg=actor_rollout_wg,
@@ -1564,7 +1613,7 @@ class TrajectoryCollector:
             success=actor_batch_dict['success'],
             traj_uid=actor_batch_dict['traj_uid'],
             tool_callings=actor_batch_dict['tool_callings'],
-            trust_penalties=monitor_trust_penalties,
+            trust_penalties=actor_trust_penalties,
         )
 
         if self.config.monitor_rollout_ref.enable:

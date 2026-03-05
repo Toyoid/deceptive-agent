@@ -735,9 +735,6 @@ class RayPPOTrainer:
                 f"reflection.delay_steps must be >= 0, got {ref_cfg.delay_steps}"
             assert 0.0 <= ref_cfg.trigger_threshold <= 1.0, \
                 f"reflection.trigger_threshold must be in [0.0, 1.0], got {ref_cfg.trigger_threshold}"
-            if ref_cfg.get('max_selected_per_group', None) is not None:
-                assert ref_cfg.max_selected_per_group >= 1, \
-                    f"reflection.max_selected_per_group must be >= 1 if set, got {ref_cfg.max_selected_per_group}"
 
         print("[validate_config] All configuration checks passed successfully!")
 
