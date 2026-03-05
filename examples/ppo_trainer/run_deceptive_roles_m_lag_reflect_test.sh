@@ -94,12 +94,12 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.mode=same_traj \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
-    algorithm.reflection.max_selected_per_group=1 \
+    algorithm.reflection.max_selected_per_group=4 \
     algorithm.reflection.debug_stop_after='candidate_selection' \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
-    env.rollout.n=2 \
+    env.rollout.n=8 \
     env.rollout.val_n=1 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \
@@ -109,7 +109,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen7b_monitor_lag_load' \
+    trainer.experiment_name='grpo_qwen7b_monitor_refl' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=4 \
