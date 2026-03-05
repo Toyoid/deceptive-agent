@@ -199,8 +199,7 @@ class TaskRunner:
                 raise NotImplementedError
             role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
             # mapping[Role.RewardModel] = monitor_pool_id if config.monitor_rollout_ref.enable else actor_pool_id
-            mapping[Role.RewardModel] = monitor_pool_id
-            # mapping[Role.RewardModel] = actor_pool_id
+            mapping[Role.RewardModel] = actor_pool_id
 
         # use reference model
         if config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss:
@@ -208,7 +207,7 @@ class TaskRunner:
             mapping[Role.RefPolicy] = actor_pool_id
 
         # use monitor model
-        # NOTE: 
+        # NOTE:
         # 1. We set monitor training engine to be the same as actor_rollout_ref for simplicity and consistency
         # 2. Currently we assume no critic model in monitor training
         # 3. Please use FSDP as `configmonitor_rollout_ref.monitor.strategy`, we do not support `megatron` currently
