@@ -1015,7 +1015,7 @@ class TrajectoryCollector:
             best_critique_score: float32 ndarray (actor_batch_size,); 0.0 if no valid.
             has_valid_critique: bool ndarray (actor_batch_size,).
         """
-        from agent_system.environments.prompts.judge_prompt import extract_critiques
+        # NOTE: Importantly, this function assumes the multi-rollout of monitor_batch_output interleaved w.r.t. actor trajectories.
 
         decoded = self.monitor_tokenizer.batch_decode(
             monitor_batch_output.batch['responses'], skip_special_tokens=True
@@ -1045,10 +1045,7 @@ class TrajectoryCollector:
                     continue
                 score = float(trust_penalties[monitor_idx])
                 if not has_valid[i] or score > best_score[i]:
-                    text = decoded[monitor_idx].strip()
-                    critiques = extract_critiques(text)
-                    summary = ' '.join(critiques) if critiques else text
-                    best_text[i] = summary
+                    best_text[i] = decoded[monitor_idx].strip()
                     best_score[i] = score
                     has_valid[i] = True
 
@@ -1219,6 +1216,9 @@ class TrajectoryCollector:
                 monitor_rollout_n=monitor_rollout_n_main,
                 verbose=debug_mode,
             )
+        # NOTE: should we pick demo critiques for all trajs like current implementation, or only for selected trajs? 
+        # The former is more consistent and allows better analysis of the overall monitor batch quality, 
+        # but the latter is more efficient if monitor batch is large and reflection ratio is small. 
 
         valid_selected = [i for i in selected_indices if has_valid_critique[i]]
         valid_critique_ratio = len(valid_selected) / max(n_selected, 1)
@@ -1232,7 +1232,7 @@ class TrajectoryCollector:
             print(f"[Reflection|Step2] Per-selected-traj critique details:")
             for i in selected_indices:
                 if has_valid_critique[i]:
-                    snippet = (best_critique_text[i] or "")[:150].replace('\n', ' ')
+                    snippet = (best_critique_text[i] or "").replace('\n', ' ')
                     print(f"  traj {i:>4}: valid=True   score={best_critique_score[i]:.3f}  "
                           f"critique='{snippet}'")
                 else:
