@@ -1001,14 +1001,21 @@ class TrajectoryCollector:
         monitor_batch_output: 'DataProto',
         actor_batch_size: int,
         monitor_rollout_n: int,
+        selected_indices: Optional[List[int]] = None,
         verbose: bool = False,
     ) -> Tuple[List[Optional[str]], np.ndarray, np.ndarray]:
         """
-        For each actor trajectory, pick the highest-judge-score, format-correct critique text.
+        For each actor trajectory in selected_indices (or all, if None), pick the
+        highest-judge-score, format-correct critique text.
 
         Among the `monitor_rollout_n` monitor rollouts for each actor trajectory (interleaved
         indexing), choose the one whose trust_penalty (judge score) is highest while
         is_format_correct is True.
+
+        When selected_indices is provided, only those monitor rows are decoded, giving a
+        proportional reduction in batch_decode cost (e.g. 4x at ratio=0.3, rollout_n=8).
+        Global statistics (format correctness rate, penalty range) are still computed from
+        the full numpy arrays, which are cheap and do not require decoding.
 
         Returns:
             best_critique_text: list[Optional[str]] of length actor_batch_size; None if no valid.
@@ -1017,42 +1024,61 @@ class TrajectoryCollector:
         """
         # NOTE: Importantly, this function assumes the multi-rollout of monitor_batch_output interleaved w.r.t. actor trajectories.
 
-        decoded = self.monitor_tokenizer.batch_decode(
-            monitor_batch_output.batch['responses'], skip_special_tokens=True
-        )
         trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
         is_format_correct = monitor_batch_output.non_tensor_batch['is_format_correct']
 
+        # Global stats use full arrays — cheap numpy ops, no decoding required
         if verbose:
-            total_monitor = len(decoded)
+            total_monitor = len(trust_penalties)
             fmt_correct_count = int(is_format_correct.sum())
+            n_to_decode = (len(selected_indices) if selected_indices is not None
+                           else actor_batch_size) * monitor_rollout_n
             print(f"[Reflection|Step2] Monitor batch: total_rollouts={total_monitor} "
                   f"(actor_batch_size={actor_batch_size} x monitor_rollout_n={monitor_rollout_n}), "
                   f"format_correct={fmt_correct_count}/{total_monitor} "
                   f"({fmt_correct_count/max(total_monitor,1):.3f}), "
                   f"trust_penalty range=[{float(trust_penalties.min()):.3f}, "
                   f"{float(trust_penalties.max()):.3f}], "
-                  f"mean={float(trust_penalties.mean()):.3f}")
+                  f"mean={float(trust_penalties.mean()):.3f}, "
+                  f"decoding {n_to_decode}/{total_monitor} monitor rows")
+
+        indices_to_process: List[int] = (
+            selected_indices if selected_indices is not None
+            else list(range(actor_batch_size))
+        )
+
+        # Pre-slice: only decode the monitor rows for the trajectories we actually need
+        selected_monitor_rows = np.array([
+            actor_i * monitor_rollout_n + r
+            for actor_i in indices_to_process
+            for r in range(monitor_rollout_n)
+        ])
+        decoded_sliced = self.monitor_tokenizer.batch_decode(
+            monitor_batch_output.batch['responses'][selected_monitor_rows],
+            skip_special_tokens=True,
+        )
 
         best_text: List[Optional[str]] = [None] * actor_batch_size
         best_score = np.zeros(actor_batch_size, dtype=np.float32)
         has_valid = np.zeros(actor_batch_size, dtype=bool)
 
-        for i in range(actor_batch_size):
+        for local_i, actor_i in enumerate(indices_to_process):
             for r in range(monitor_rollout_n):
-                monitor_idx = i * monitor_rollout_n + r
+                monitor_idx = actor_i * monitor_rollout_n + r   # index into full trust_penalties/is_format_correct
                 if not is_format_correct[monitor_idx]:
                     continue
                 score = float(trust_penalties[monitor_idx])
-                if not has_valid[i] or score > best_score[i]:
-                    best_text[i] = decoded[monitor_idx].strip()
-                    best_score[i] = score
-                    has_valid[i] = True
+                if not has_valid[actor_i] or score > best_score[actor_i]:
+                    decoded_idx = local_i * monitor_rollout_n + r  # index into decoded_sliced
+                    best_text[actor_i] = decoded_sliced[decoded_idx].strip()
+                    best_score[actor_i] = score
+                    has_valid[actor_i] = True
 
         if verbose:
-            valid_count = int(has_valid.sum())
+            valid_count = int(sum(has_valid[i] for i in indices_to_process))
             print(f"[Reflection|Step2] Trajectories with valid critique: "
-                  f"{valid_count}/{actor_batch_size} ({valid_count/max(actor_batch_size,1):.3f})")
+                  f"{valid_count}/{len(indices_to_process)} processed "
+                  f"({valid_count/max(len(indices_to_process),1):.3f})")
 
         return best_text, best_score, has_valid
 
@@ -1209,16 +1235,16 @@ class TrajectoryCollector:
             }
 
         # ---- Step 2: Extract critiques ----------------------------------------
+        # Only decode monitor rows for selected trajectories — at 2880-row scale this
+        # gives a proportional saving (e.g. 4x at ratio=0.3, rollout_n=8).
         best_critique_text, best_critique_score, has_valid_critique = \
             self._pick_demo_critique_per_actor_traj(
                 monitor_batch_output=monitor_batch_output,
                 actor_batch_size=actor_batch_size,
                 monitor_rollout_n=monitor_rollout_n_main,
+                selected_indices=selected_indices,
                 verbose=debug_mode,
             )
-        # NOTE: should we pick demo critiques for all trajs like current implementation, or only for selected trajs? 
-        # The former is more consistent and allows better analysis of the overall monitor batch quality, 
-        # but the latter is more efficient if monitor batch is large and reflection ratio is small. 
 
         valid_selected = [i for i in selected_indices if has_valid_critique[i]]
         valid_critique_ratio = len(valid_selected) / max(n_selected, 1)
@@ -1226,9 +1252,25 @@ class TrajectoryCollector:
               f"{len(valid_selected)}/{n_selected} ({valid_critique_ratio:.3f})")
 
         if debug_mode:
-            decoded_monitor = self.monitor_tokenizer.batch_decode(
-                monitor_batch_output.batch['responses'], skip_special_tokens=True
-            )
+            # Valid trajectories: text already available in best_critique_text.
+            # Invalid trajectories: decode only those specific monitor rows
+            invalid_selected = [i for i in selected_indices if not has_valid_critique[i]]
+            invalid_decoded_map: dict = {}
+            if len(invalid_selected) > 0:
+                invalid_monitor_rows = np.array([
+                    i * monitor_rollout_n_main + r
+                    for i in invalid_selected
+                    for r in range(monitor_rollout_n_main)
+                ])
+                decoded_invalid = self.monitor_tokenizer.batch_decode(
+                    monitor_batch_output.batch['responses'][invalid_monitor_rows],
+                    skip_special_tokens=True,
+                )
+                for local_i, actor_i in enumerate(invalid_selected):
+                    for r in range(monitor_rollout_n_main):
+                        invalid_decoded_map[(actor_i, r)] = decoded_invalid[
+                            local_i * monitor_rollout_n_main + r
+                        ]
             print(f"[Reflection|Step2] Per-selected-traj critique details:")
             for i in selected_indices:
                 if has_valid_critique[i]:
@@ -1236,11 +1278,10 @@ class TrajectoryCollector:
                     print(f"  traj {i:>4}: valid=True   score={best_critique_score[i]:.3f}  "
                           f"critique='{snippet}'")
                 else:
-                    # Show a raw snippet from each monitor rollout to diagnose why format failed
                     raw_snippets = []
                     for r in range(monitor_rollout_n_main):
                         monitor_idx = i * monitor_rollout_n_main + r
-                        raw = decoded_monitor[monitor_idx].strip().replace('\n', ' ')
+                        raw = invalid_decoded_map.get((i, r), "").strip().replace('\n', ' ')
                         fmt = monitor_batch_output.non_tensor_batch['is_format_correct'][monitor_idx]
                         raw_snippets.append(f"r{r}(fmt={int(fmt)})='{raw}'")
                     print(f"  traj {i:>4}: valid=False  score=0.000  "

@@ -102,7 +102,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     algorithm.reflection.enable=True \
     algorithm.reflection.delay_steps=0 \
-    algorithm.reflection.trigger_threshold=0.2 \
+    algorithm.reflection.trigger_threshold=0.01 \
     algorithm.reflection.trigger_use_rolling_mean=True \
     algorithm.reflection.ratio=0.5 \
     algorithm.reflection.mode=same_traj \
