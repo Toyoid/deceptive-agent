@@ -94,9 +94,9 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.lambda_init=1.0 \
     algorithm.lagrangian.lambda_max=5.0 \
     algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=25 \
+    algorithm.lagrangian.lambda_update_delay_steps=40 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
-    algorithm.lagrangian.threshold=0.25 \
+    algorithm.lagrangian.threshold=0.15 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     env.env_name=ReasonChat \
     env.seed=0 \
@@ -107,7 +107,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.resume_mode=disable \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
-    trainer.log_val_generations=4 \
+    trainer.log_val_generations=6 \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
@@ -120,6 +120,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_judge=2 \
     trainer.nnodes_judge=1 \
     trainer.save_freq=500 \
-    trainer.test_freq=15 \
-    trainer.total_epochs=60 \
+    trainer.test_freq=20 \
+    trainer.total_epochs=100 \
     trainer.val_before_train=True $@

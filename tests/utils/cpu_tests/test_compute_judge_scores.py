@@ -313,6 +313,107 @@ class TestMixedCases:
         assert fmt.all()
         assert wg._call_count == 0
 
+    def test_large_batch_all_branches(self):
+        """12-sample batch exercising every branch in a single call.
+
+        Branch coverage per sample:
+          0  – bad format (no tags)                          → -1.0
+          1  – single sentinel                               → 0.0
+          2  – single real critique                          → 0.5   (1 judge score)
+          3  – single real, fabricated                       → -1.0  (1 judge score)
+          4  – two sentinels                                 → 0.0
+          5  – sentinel + real                               → mean(0.0, 0.75) = 0.375
+          6  – two real critiques                            → mean(-0.5, 1.0) = 0.25
+          7  – bad format (whitespace only)                  → -1.0
+          8  – three real critiques                          → mean(-1.0, 0.0, 0.5) ≈ -0.1667
+          9  – sentinel + two real critiques                 → mean(0.0, 1.0, -0.5) ≈  0.1667
+          10 – bad format (plain text)                       → -1.0
+          11 – single real (judge returns neutral 0.0)       → 0.0
+
+        Judge score queue (ordered by sample index, then critique position):
+          [0.5, -1.0, 0.75, -0.5, 1.0, -1.0, 0.0, 0.5, 1.0, -0.5, 0.0]
+          = 11 scores, all dispatched in a single batched judge call.
+        """
+        texts = [
+            # 0: bad format
+            "no critique tags at all",
+            # 1: single sentinel
+            "<critique>No issues identified.</critique>",
+            # 2: single real
+            "<critique>The agent misstated the product price above.</critique>",
+            # 3: single real, fully fabricated
+            "<critique>The agent completely fabricated the user rating data.</critique>",
+            # 4: two sentinels
+            (
+                "<critique>No issues identified.</critique>"
+                "<critique>No issue identified.</critique>"
+            ),
+            # 5: sentinel + one real
+            (
+                "<critique>No issues identified.</critique>"
+                "<critique>The agent omitted the discount information here.</critique>"
+            ),
+            # 6: two reals
+            (
+                "<critique>The agent cited a non-existent source listing.</critique>"
+                "<critique>The agent omitted the required disclaimer notice.</critique>"
+            ),
+            # 7: bad format (whitespace)
+            "     ",
+            # 8: three reals
+            (
+                "<critique>The agent fabricated claim alpha about the item.</critique>"
+                "<critique>The agent exaggerated claim beta significantly here.</critique>"
+                "<critique>The agent invented claim gamma with no evidence.</critique>"
+            ),
+            # 9: sentinel + two reals
+            (
+                "<critique>No issue identified.</critique>"
+                "<critique>The assistant contradicted the evidence clearly here.</critique>"
+                "<critique>The agent made an unsupported certainty claim above.</critique>"
+            ),
+            # 10: bad format
+            "totally wrong format without any xml tags",
+            # 11: single real, judge returns neutral 0.0
+            "<critique>The agent expressed unwarranted certainty about item.</critique>",
+        ]
+
+        judge_queue = [
+            0.5,          # sample 2
+            -1.0,         # sample 3
+            0.75,         # sample 5 real
+            -0.5, 1.0,    # sample 6
+            -1.0, 0.0, 0.5,  # sample 8
+            1.0, -0.5,    # sample 9 reals (sentinel pre-filled as 0.0)
+            0.0,          # sample 11
+        ]
+
+        scores, fmt, wg = _run(texts, judge_scores=judge_queue)
+
+        expected = np.array([
+            -1.0,                        # 0: bad format
+             0.0,                        # 1: sentinel
+             0.5,                        # 2: single real
+            -1.0,                        # 3: fabricated
+             0.0,                        # 4: two sentinels → mean(0, 0)
+            (0.0 + 0.75) / 2,            # 5: sentinel + real = 0.375
+            (-0.5 + 1.0) / 2,            # 6: two reals = 0.25
+            -1.0,                        # 7: bad format
+            (-1.0 + 0.0 + 0.5) / 3,     # 8: three reals ≈ -0.1667
+            (0.0 + 1.0 + -0.5) / 3,     # 9: sentinel + two reals ≈ 0.1667
+            -1.0,                        # 10: bad format
+             0.0,                        # 11: neutral
+        ], dtype=np.float32)
+
+        np.testing.assert_allclose(scores, expected, rtol=1e-5, atol=1e-6)
+
+        expected_fmt = [False, True, True, True, True, True, True, False, True, True, False, True]
+        assert fmt.tolist() == expected_fmt
+
+        # All 11 non-sentinel critiques are sent in a single batched judge call
+        assert wg._call_count == 1
+        assert len(wg._queue) == 0  # queue fully consumed
+
 
 class TestActorClipping:
     """Verify the np.clip([0,1]) applied to actor_trust_penalties in multi_turn_loop."""
