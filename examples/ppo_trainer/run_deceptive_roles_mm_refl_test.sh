@@ -18,6 +18,8 @@ python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/decep
 train_files=$DATA_ROOT/deceptive_roles/train.parquet
 test_files=$DATA_ROOT/deceptive_roles/test.parquet
 
+# judge_model.model.path=checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_eta100/global_step_200/monitor/huggingface \
+
 # Maximin Rl training between agent and monitor
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -81,7 +83,7 @@ python3 -m verl.trainer.main_ppo \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
-    judge_model.model.path=checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_eta100/global_step_200/monitor/huggingface \
+    judge_model.model.path=Qwen/Qwen2.5-7B-Instruct \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
     judge_model.micro_batch_size_per_gpu=2 \
