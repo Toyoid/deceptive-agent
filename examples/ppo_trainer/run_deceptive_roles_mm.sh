@@ -85,10 +85,10 @@ python3 -m verl.trainer.main_ppo \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
     judge_model.micro_batch_size_per_gpu=32 \
-    judge_model.valid_tokens='["0","1","2","3"]' \
-    judge_model.token_weights='[0.0,0.33,0.66,1.0]' \
+    judge_model.valid_tokens='["0","1","2","3","4"]' \
+    judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
     judge_model.top_k=2 \
-    judge_model.template_name=balanced \
+    judge_model.template_name=strict5 \
     algorithm.use_kl_in_reward=False \
     algorithm.lagrangian.enable=True \
     algorithm.lagrangian.lambda_init=1.0 \

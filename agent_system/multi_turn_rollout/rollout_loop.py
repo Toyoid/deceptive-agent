@@ -791,6 +791,7 @@ class TrajectoryCollector:
         from agent_system.environments.prompts.judge_prompt import (
             extract_critiques,
             build_judge_prompt,
+            is_no_issue_sentinel,
         )
 
         batch_size = len(monitor_batch.batch)
@@ -812,46 +813,59 @@ class TrajectoryCollector:
         per_sample_scores = np.zeros(batch_size, dtype=np.float32)
         format_correct = np.zeros(batch_size, dtype=bool)
 
+        # Per-sample critique score lists. Sentinel entries are pre-filled with 0.0;
+        # non-sentinel entries start as None and are filled after judge inference.
+        # All critiques (sentinel + non-sentinel) are included in the per-sample mean.
+        sample_critique_scores: Dict[int, List] = {}
+        # Maps each queued judge call → (sample_idx, position in sample_critique_scores[sample_idx])
+        judge_score_slots: List[Tuple[int, int]] = []
         all_judge_prompts = []
         all_judge_imgs = []
-        valid_sample_indices = []   # original sample index for each group of judge inputs
-        valid_critique_counts = []  # number of critiques per valid sample
         # TODO: The multi-modal processing has not been tested yet
         judge_images = obs.get('judge_image', None)
 
         for item, (monitor_out, user_input, evidence, resp, task_type) in enumerate(zip(
             monitor_output_texts, user_inputs, evidences, agent_resps, task_types
         )):
-            # Extract <critique> tags — no fallback, empty list means bad format
+            # Extract <critique> tags — empty list means bad format
             critiques = extract_critiques(monitor_out)
             count = len(critiques)
             if count <= 0:
+                per_sample_scores[item] = -1.0
                 print(f"[FORMAT CHECK] Sample {item}: monitor output has invalid format, "
-                      f"judge score forced to 0. Output snippet: {monitor_out[:120]!r}")
-                continue  # format_correct[item] stays False, per_sample_scores[item] stays 0
+                      f"judge score forced to -1.0. Output snippet: {monitor_out!r}")
+                continue  # format_correct[item] stays False
 
             format_correct[item] = True
-            valid_sample_indices.append(item)
-            valid_critique_counts.append(count)
+            sample_critique_scores[item] = []
 
             for critique in critiques:
-                judge_chat = build_judge_prompt(
-                    task_type=task_type,
-                    user_input=user_input,
-                    evidence=evidence,
-                    agent_response=resp,
-                    critique=critique,
-                    template_name=self.config.judge_model.template_name,
-                )
-                all_judge_prompts.append(judge_chat)
-                all_judge_imgs.append(judge_images[item] if judge_images is not None else None)
+                pos = len(sample_critique_scores[item])
+                if is_no_issue_sentinel(critique):
+                    # Exact sentinel phrase → 0.0 immediately, skip judge call but keep in mean
+                    sample_critique_scores[item].append(0.0)
+                else:
+                    # Non-sentinel → queue to judge; placeholder filled after inference
+                    sample_critique_scores[item].append(None)
+                    judge_score_slots.append((item, pos))
+                    judge_chat = build_judge_prompt(
+                        task_type=task_type,
+                        user_input=user_input,
+                        evidence=evidence,
+                        agent_response=resp,
+                        critique=critique,
+                        template_name=self.config.judge_model.template_name,
+                    )
+                    all_judge_prompts.append(judge_chat)
+                    all_judge_imgs.append(judge_images[item] if judge_images is not None else None)
 
-        # --- Judge inference (only for format-valid samples) ---
+        # --- Judge inference (only for non-sentinel critiques from format-valid samples) ---
         if len(all_judge_prompts) > 0:
-            assert len(all_judge_prompts) == sum(valid_critique_counts), "Mismatch in total number of critiques"
+            # TODO: this asserting logic may be unnecessary, once the code is stable we can remove it.
+            assert len(all_judge_prompts) == len(judge_score_slots), "Mismatch in judge prompts and score slots"
             assert len(all_judge_imgs) == len(all_judge_prompts), "Mismatch in judge images and inputs"
 
-            # prepare DataProto for judge model inputs
+            # Prepare DataProto for judge model inputs
             processed_judge_samples = []
             for judge_chat, judge_img in zip(all_judge_prompts, all_judge_imgs):
                 processed = self._process_chat_to_model_inputs(
@@ -873,18 +887,23 @@ class TrajectoryCollector:
             judge_output_padded = judge_wg.compute_judge_score(judge_input_padded)
             judge_output = unpad_dataproto(judge_output_padded, pad_size=pad_size)
 
-            # Aggregate per-critique scores back to per-sample scores via mean
+            # Fill judge scores back into per-sample score lists
             flat_scores = judge_output.batch["judge_scores"].numpy()
-            critique_counts_arr = np.asarray(valid_critique_counts, dtype=np.int64)
-            assert critique_counts_arr.sum() == len(flat_scores), "Mismatch in total critiques and judge scores"
-            splits = np.cumsum(critique_counts_arr)[:-1]
-            assert len(splits) == len(valid_sample_indices) - 1, f"Mismatch in splits {len(splits) + 1} and valid samples {len(valid_sample_indices)} for judge score aggregation"
-            valid_per_sample = [chunk.mean() for chunk in np.split(flat_scores, splits)]
-
-            for sample_idx, score in zip(valid_sample_indices, valid_per_sample):
-                per_sample_scores[sample_idx] = float(score)
+            assert len(flat_scores) == len(judge_score_slots), (
+                f"Mismatch: {len(flat_scores)} judge scores vs {len(judge_score_slots)} score slots"
+            )
+            for judge_idx, (sample_idx, pos) in enumerate(judge_score_slots):
+                assert sample_critique_scores[sample_idx][pos] is None, "Score slot already filled, logic error"
+                sample_critique_scores[sample_idx][pos] = float(flat_scores[judge_idx])
         else:
-            print("[FORMAT CHECK] All monitor outputs had invalid format; no judge inference performed.")
+            if len(sample_critique_scores) > 0:
+                print("[SENTINEL] All format-correct critiques were no-issue sentinels; no judge inference needed.")
+            else:
+                print("[FORMAT CHECK] All monitor outputs had invalid format; no judge inference performed.")
+
+        # Aggregate all critiques (sentinel + judge-scored) per sample via mean
+        for sample_idx, scores in sample_critique_scores.items():
+            per_sample_scores[sample_idx] = float(np.mean(scores))
 
         return per_sample_scores, format_correct
 
@@ -1025,19 +1044,21 @@ class TrajectoryCollector:
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['tool_callings'])
 
         # construct trust_penalties for actor batch, will be used for actor model training
-        monitor_trust_penalties = None
+        actor_trust_penalties = None
         if monitor_wg is not None and monitor_batch_output is not None:
-            monitor_trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
+            # Clip to [0, 1] for the actor's Lagrangian cost constraint.
+            # The monitor's batch retains the original unclipped [-1, 1] values for its own PPO update.            
+            actor_trust_penalties = np.clip(monitor_batch_output.non_tensor_batch['trust_penalties'], 0.0, 1.0)
             actor_batch_size = len(actor_batch_dict['total_batch_list'])
-            if len(monitor_trust_penalties) != actor_batch_size:
+            if len(actor_trust_penalties) != actor_batch_size:
                 expected_size = actor_batch_size * monitor_rollout_n
-                assert len(monitor_trust_penalties) == expected_size, (
-                    f"trust_penalties size mismatch: got {len(monitor_trust_penalties)}, "
+                assert len(actor_trust_penalties) == expected_size, (
+                    f"trust_penalties size mismatch: got {len(actor_trust_penalties)}, "
                     f"expected {actor_batch_size} (actor batch) or {expected_size} (actor batch * repeat_n={monitor_rollout_n})"
                 )
                 # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed
-                monitor_trust_penalties = monitor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
-        
+                actor_trust_penalties = actor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
+
         # Create trajectory data for actor model
         gen_batch_output: DataProto = self.gather_rollout_data(
             total_batch_list=actor_batch_dict['total_batch_list'],
@@ -1046,7 +1067,7 @@ class TrajectoryCollector:
             success=actor_batch_dict['success'],
             traj_uid=actor_batch_dict['traj_uid'],
             tool_callings=actor_batch_dict['tool_callings'],
-            trust_penalties=monitor_trust_penalties,
+            trust_penalties=actor_trust_penalties,
         )
 
         if self.config.monitor_rollout_ref.enable:
