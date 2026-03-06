@@ -173,7 +173,7 @@ class TestFormatFailure:
     def test_single_bad_format(self):
         scores, fmt, wg = _run(["no tags here at all"], [])
         assert scores[0] == pytest.approx(-1.0)
-        assert fmt[0] is False
+        assert fmt[0] == False
         assert wg._call_count == 0  # judge never called
 
     def test_all_bad_format(self):
@@ -191,8 +191,8 @@ class TestFormatFailure:
         scores, fmt, wg = _run(texts, judge_scores=[0.5])
         assert scores[0] == pytest.approx(-1.0)
         assert scores[1] == pytest.approx(0.5)
-        assert fmt[0] is False
-        assert fmt[1] is True
+        assert fmt[0] == False
+        assert fmt[1] == True
         assert wg._call_count == 1
 
 
@@ -209,7 +209,7 @@ class TestSentinelShortcut:
         texts = [f"<critique>{sentinel}</critique>"]
         scores, fmt, wg = _run(texts, [])
         assert scores[0] == pytest.approx(0.0)
-        assert fmt[0] is True
+        assert fmt[0] == True
         assert wg._call_count == 0  # judge never called
 
     def test_multiple_all_sentinels(self):
@@ -219,7 +219,7 @@ class TestSentinelShortcut:
         ]
         scores, fmt, wg = _run(texts, [])
         assert scores[0] == pytest.approx(0.0)
-        assert fmt[0] is True
+        assert fmt[0] == True
         assert wg._call_count == 0
 
     def test_sentinel_included_in_mean(self):
@@ -230,7 +230,7 @@ class TestSentinelShortcut:
         )
         scores, fmt, wg = _run([text], judge_scores=[1.0])
         assert scores[0] == pytest.approx(0.5)   # mean(0.0, 1.0)
-        assert fmt[0] is True
+        assert fmt[0] == True
         assert wg._call_count == 1
 
     def test_near_miss_sentinel_goes_to_judge(self):
@@ -292,7 +292,7 @@ class TestMixedCases:
         assert scores[0] == pytest.approx(-1.0)
         assert scores[1] == pytest.approx(0.0)
         assert scores[2] == pytest.approx(0.75)
-        assert fmt.tolist() == [False, True, True]
+        assert fmt.tolist() == [False, True, True]  # tolist() converts to Python bool, safe to compare
         assert wg._call_count == 1
 
     def test_negative_judge_score_propagates(self):
@@ -300,7 +300,7 @@ class TestMixedCases:
         text = "<critique>The agent said X but the evidence shows the agent said X.</critique>"
         scores, fmt, wg = _run([text], judge_scores=[-1.0])
         assert scores[0] == pytest.approx(-1.0)
-        assert fmt[0] is True
+        assert fmt[0] == True
 
     def test_all_sentinels_no_judge_call(self):
         texts = [

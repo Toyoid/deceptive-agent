@@ -382,16 +382,9 @@ def extract_critiques(monitor_output: str, tag: str = "critique") -> List[str]:
     """
     # TODO: make the parsing more robust (e.g., <CRITIQUE> or other variants)
     pattern = rf"<{tag}>(.*?)</{tag}>"
-    min_len = len("No issues identified.")  # The shortest meaningful critique we expect
+    min_len = len("No issue identified")  # The shortest meaningful critique we expect
     matches = re.findall(pattern, monitor_output, re.DOTALL)
     matches = [m.strip() for m in matches if len(m.strip()) >= min_len]
-    
-    # Duplicated, we will directly mark wrong format outputs with 0 scores
-    # if len(matches) == 0:
-    #     # Fallback: treat entire output as single critique if non-empty
-    #     print("[WARNING] No critique tags found for judge model; using entire output as single critique: \n", monitor_output)
-    #     stripped = monitor_output.strip()
-    #     return [stripped] if stripped else []
     
     return matches
 
