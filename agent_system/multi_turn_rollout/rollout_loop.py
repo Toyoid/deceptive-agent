@@ -1122,7 +1122,7 @@ class TrajectoryCollector:
             return (
                 preamble
                 + "A previous response to a similar task was flagged for the following issue:\n"
-                + demo_critique + ".\n"
+                + demo_critique + "\n"
                 + postamble
             )
         elif prompt_style == "critique_resp":
@@ -1130,8 +1130,8 @@ class TrajectoryCollector:
                 preamble
                 + "A previous response to a similar task read:\n\""
                 + demo_response
-                + "\". It was flagged for the following issue: "
-                + demo_critique + ".\n"
+                + "\". It was flagged for the following issue:\n"
+                + demo_critique + "\n"
                 + postamble
             )
         else:
@@ -1473,7 +1473,9 @@ class TrajectoryCollector:
 
         # ---- Step 6: Aggregate reflected trust penalties ----------------------
         if reflected_monitor_batch is not None:
-            refl_raw = reflected_monitor_batch.non_tensor_batch['trust_penalties']
+            refl_raw = np.clip(
+                reflected_monitor_batch.non_tensor_batch['trust_penalties'], 0.0, 1.0
+            )
             if len(refl_raw) == n_valid:
                 refl_penalties = refl_raw
             else:
@@ -1484,7 +1486,7 @@ class TrajectoryCollector:
                 )
                 refl_penalties = refl_raw.reshape(n_valid, refl_n).mean(axis=1)
         else:
-            refl_penalties = np.zeros(n_valid, dtype=np.float32)
+            raise RuntimeError("Reflection monitor batch output is None — expected trust penalties for reflected trajectories")
 
         mean_penalty_after = float(np.mean(refl_penalties))
         print(f"[Reflection] Trust penalty: before={mean_penalty_before:.4f}, "
