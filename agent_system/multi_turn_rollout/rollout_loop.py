@@ -1492,6 +1492,81 @@ class TrajectoryCollector:
         print(f"[Reflection] Trust penalty: before={mean_penalty_before:.4f}, "
               f"after={mean_penalty_after:.4f}")
 
+        if debug_mode:
+            monitor_rollout_n_refl = ref_cfg.monitor_rollout_n
+            mon_responses_decoded = self.monitor_tokenizer.batch_decode(
+                reflected_monitor_batch.batch['responses'], skip_special_tokens=True
+            )
+            mon_prompts_decoded = self.monitor_tokenizer.batch_decode(
+                reflected_monitor_batch.batch['prompts'], skip_special_tokens=True
+            )
+            mon_trust_raw = reflected_monitor_batch.non_tensor_batch['trust_penalties']
+            mon_fmt_raw   = reflected_monitor_batch.non_tensor_batch['is_format_correct']
+
+            sep = '=' * 72
+            print(f"\n{sep}")
+            print(f"[Reflection|Step5+6] Full rollout results: "
+                  f"n_valid={n_valid}, monitor_rollout_n={monitor_rollout_n_refl}")
+            print(sep)
+
+            for ref_local, orig_idx in enumerate(valid_selected):
+                reward     = float(reflected_actor_batch_dict['episode_rewards'][ref_local])
+                length     = int(reflected_actor_batch_dict['episode_lengths'][ref_local])
+                pen_before = float(actor_trust_penalties[orig_idx])
+                pen_after  = float(refl_penalties[ref_local])
+
+                print(f"\n>>> Traj orig_idx={orig_idx}  (ref_local={ref_local})")
+                print(f"    episode_reward={reward:.4f}  episode_length={length}"
+                      f"  trust_penalty: {pen_before:.4f} -> {pen_after:.4f}")
+
+                # ----- Actor -----
+                steps = reflected_actor_batch_dict['total_batch_list'][ref_local]
+                print(f"\n  [ACTOR — {len(steps)} step(s)]")
+                for step_i, sd in enumerate(steps):
+                    active = bool(sd.get('active_masks', True))
+                    print(f"  -- step {step_i} (active={active}) --")
+                    if 'prompts' in sd and isinstance(sd['prompts'], torch.Tensor):
+                        print(f"  INPUT:\n{self.tokenizer.decode(sd['prompts'], skip_special_tokens=True)}")
+                    if 'responses' in sd and isinstance(sd['responses'], torch.Tensor):
+                        print(f"  OUTPUT:\n{self.tokenizer.decode(sd['responses'], skip_special_tokens=True)}")
+                    agent_resp = sd.get('agent_response', None)
+                    if agent_resp is not None:
+                        print(f"  agent_response: {agent_resp}")
+
+                # ----- Monitor -----
+                print(f"\n  [MONITOR — {monitor_rollout_n_refl} rollout(s)]")
+                for r in range(monitor_rollout_n_refl):
+                    mon_idx = ref_local * monitor_rollout_n_refl + r
+                    fmt = bool(mon_fmt_raw[mon_idx])
+                    pen = float(mon_trust_raw[mon_idx])
+                    print(f"  -- rollout r={r} | format_correct={fmt} | trust_penalty={pen:.4f} --")
+                    print(f"  INPUT:\n{mon_prompts_decoded[mon_idx]}")
+                    print(f"  OUTPUT:\n{mon_responses_decoded[mon_idx]}")
+
+                # ----- Judge -----
+                # Judge is called internally; its output is the trust_penalty above.
+                # Judge input = actor agent_response + monitor critique (shown above).
+                print(f"\n  [JUDGE]  trust_penalty (judge output) = {pen_after:.4f}")
+                print(f"\n{'-' * 72}")
+
+            print(f"\n{sep}")
+            print(f"[Reflection|Step5+6] Summary: mean trust_penalty "
+                  f"before={mean_penalty_before:.4f}, after={mean_penalty_after:.4f}")
+            print(f"{sep}\n")
+
+        if ref_cfg.get('debug_stop_after', None) == 'reflected_rollout':
+            print("[Reflection|debug] Early exit after Step 5+6 (debug_stop_after='reflected_rollout'). "
+                  "Training continues with original (un-reflected) batch.")
+            return actor_batch_dict, actor_trust_penalties, {
+                'debug_stop': 'reflected_rollout',
+                'trigger_metric': trigger_metric,
+                'enabled': 1,
+                'n_valid_selected': n_valid,
+                'valid_critique_ratio_selected': valid_critique_ratio,
+                'mean_penalty_before': mean_penalty_before,
+                'mean_penalty_after': mean_penalty_after,
+            }
+
         # ---- Step 7: Re-pair step dicts and replace in actor_batch_dict ------
         pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
         actor_trust_penalties = actor_trust_penalties.copy()

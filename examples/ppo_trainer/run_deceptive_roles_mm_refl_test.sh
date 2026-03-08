@@ -106,14 +106,14 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.trigger_use_rolling_mean=True \
     algorithm.reflection.ratio=0.5 \
     algorithm.reflection.mode=same_traj \
-    algorithm.reflection.prompt_style=critique_resp \
+    algorithm.reflection.prompt_style=critique_only \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
-    algorithm.reflection.debug_stop_after='gen_batch_build' \
+    algorithm.reflection.debug_stop_after='reflected_rollout' \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
-    env.rollout.n=4 \
+    env.rollout.n=2 \
     env.rollout.val_n=1 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \
