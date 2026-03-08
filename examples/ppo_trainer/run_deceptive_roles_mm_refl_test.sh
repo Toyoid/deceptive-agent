@@ -109,7 +109,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.prompt_style=critique_resp \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
-    algorithm.reflection.debug_stop_after='reflection_prompt_build' \
+    algorithm.reflection.debug_stop_after='gen_batch_build' \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
@@ -118,8 +118,8 @@ python3 -m verl.trainer.main_ppo \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \
     trainer.critic_warmup=0 \
-    trainer.logger='["console","wandb"]' \
-    trainer.log_val_generations=1 \
+    trainer.logger='["console"]' \
+    trainer.log_val_generations=0 \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
