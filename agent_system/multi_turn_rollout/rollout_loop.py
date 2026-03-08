@@ -1023,6 +1023,8 @@ class TrajectoryCollector:
             has_valid_critique: bool ndarray (actor_batch_size,).
         """
         # NOTE: Importantly, this function assumes the multi-rollout of monitor_batch_output interleaved w.r.t. actor trajectories.
+        
+        from agent_system.environments.prompts.judge_prompt import extract_critiques
 
         trust_penalties = monitor_batch_output.non_tensor_batch['trust_penalties']
         is_format_correct = monitor_batch_output.non_tensor_batch['is_format_correct']
@@ -1070,7 +1072,10 @@ class TrajectoryCollector:
                 score = float(trust_penalties[monitor_idx])
                 if not has_valid[actor_i] or score > best_score[actor_i]:
                     decoded_idx = local_i * monitor_rollout_n + r  # index into decoded_sliced
-                    best_text[actor_i] = decoded_sliced[decoded_idx].strip()
+                    text = decoded_sliced[decoded_idx].strip()
+                    critiques = extract_critiques(text)
+                    summary = "- " + "\n- ".join(critiques) if critiques else text
+                    best_text[actor_i] = summary
                     best_score[actor_i] = score
                     has_valid[actor_i] = True
 
@@ -1104,6 +1109,9 @@ class TrajectoryCollector:
         Returns:
             System prompt string (used as {"role": "system"} in the augmented chat).
         """
+        # TODO: 
+        # 1. Refine the prompt format
+        # 2. Refine the wording
         preamble = "INTERNAL NOTE — do not reference this note in your response: "
         postamble = (
             " Ensure your response does not exhibit this problem. "
@@ -1113,17 +1121,17 @@ class TrajectoryCollector:
         if prompt_style == "critique_only":
             return (
                 preamble
-                + "A previous response to a similar task was flagged for the following issue: "
-                + demo_critique + "."
+                + "A previous response to a similar task was flagged for the following issue:\n"
+                + demo_critique + ".\n"
                 + postamble
             )
         elif prompt_style == "critique_resp":
             return (
                 preamble
-                + "A previous response to a similar task read: \""
+                + "A previous response to a similar task read:\n\""
                 + demo_response
                 + "\". It was flagged for the following issue: "
-                + demo_critique + "."
+                + demo_critique + ".\n"
                 + postamble
             )
         else:
@@ -1382,21 +1390,74 @@ class TrajectoryCollector:
         reflected_gen_batch = DataProto.from_single_dict(data=tensor_data)
 
         # Slice non-tensor fields
+        skipped_non_tensor: List[str] = []
+        sliced_non_tensor: List[str] = []
         for k, v in gen_batch.non_tensor_batch.items():
             if k == 'env_kwargs':
                 continue  # handled separately
             if isinstance(v, np.ndarray) and len(v) == actor_batch_size:
                 reflected_gen_batch.non_tensor_batch[k] = v[valid_idx_arr]
+                sliced_non_tensor.append(k)
+            else:
+                skipped_non_tensor.append(k)
 
         # Restore env_kwargs for the selected sub-batch
         if env_kwargs_backup is not None:
             reflected_gen_batch.non_tensor_batch['env_kwargs'] = env_kwargs_backup[valid_idx_arr]
 
         # Inject reflection system prompts
-        reflected_gen_batch.non_tensor_batch['reflection_system_prompt'] = np.array(
-            reflection_prompts, dtype=object
-        )
+        refl_prompt_arr = np.array(reflection_prompts, dtype=object)
+        reflected_gen_batch.non_tensor_batch['reflection_system_prompt'] = refl_prompt_arr
         reflected_gen_batch.meta_info = gen_batch.meta_info
+
+        if debug_mode:
+            print(f"[Reflection|Step4] reflected_gen_batch built: n_valid={n_valid}, "
+                  f"valid_idx_arr={valid_idx_arr.tolist()}")
+            # Tensor fields
+            shape_mismatches = []
+            print(f"[Reflection|Step4] Tensor fields ({len(tensor_data)}):")
+            for k, v in reflected_gen_batch.batch.items():
+                ok = (v.shape[0] == n_valid)
+                if not ok:
+                    shape_mismatches.append(k)
+                print(f"  {k}: shape={tuple(v.shape)}  {'OK' if ok else 'MISMATCH — expected first dim=' + str(n_valid)}")
+            if shape_mismatches:
+                print(f"  WARNING — shape mismatch in fields: {shape_mismatches}")
+            # Non-tensor fields
+            print(f"[Reflection|Step4] Non-tensor fields sliced ({len(sliced_non_tensor)}): {sliced_non_tensor}")
+            if skipped_non_tensor:
+                print(f"[Reflection|Step4] Non-tensor fields SKIPPED (len != actor_batch_size "
+                      f"or not ndarray) ({len(skipped_non_tensor)}): {skipped_non_tensor}")
+            # env_kwargs
+            if env_kwargs_backup is None:
+                print(f"[Reflection|Step4] env_kwargs_backup is None — no environment to reset "
+                      f"(expected for non-interactive tasks)")
+            else:
+                env_kw = reflected_gen_batch.non_tensor_batch.get('env_kwargs', None)
+                env_len = len(env_kw) if env_kw is not None else 0
+                print(f"[Reflection|Step4] env_kwargs sliced: len={env_len} "
+                      f"({'OK' if env_len == n_valid else 'MISMATCH — expected ' + str(n_valid)})")
+            # reflection_system_prompt injection (most critical check)
+            n_none = int(sum(p is None for p in refl_prompt_arr))
+            n_empty = int(sum((p is not None and p == "") for p in refl_prompt_arr))
+            print(f"[Reflection|Step4] reflection_system_prompt: "
+                  f"len={len(refl_prompt_arr)}, None={n_none}, empty={n_empty} "
+                  f"({'OK' if n_none == 0 and n_empty == 0 else 'WARNING — None/empty prompts will bypass augmentation'})")
+            if len(refl_prompt_arr) > 0:
+                print(f"  sample[0]='{str(refl_prompt_arr[0])[:200]}'")
+            # meta_info
+            print(f"[Reflection|Step4] meta_info keys: {list(reflected_gen_batch.meta_info.keys()) if reflected_gen_batch.meta_info else 'None'}")
+
+        if ref_cfg.get('debug_stop_after', None) == 'gen_batch_build':
+            print("[Reflection|debug] Early exit after Step 4 (debug_stop_after='gen_batch_build'). "
+                  "Training continues with original (un-reflected) batch.")
+            return actor_batch_dict, actor_trust_penalties, {
+                'debug_stop': 'gen_batch_build',
+                'trigger_metric': trigger_metric,
+                'enabled': 1,
+                'n_valid_selected': n_valid,
+                'valid_critique_ratio_selected': valid_critique_ratio,
+            }
 
         # ---- Step 5: Run reflected rollout ------------------------------------
         print(f"[Reflection] Running reflected rollout for {n_valid} trajectory slots...")
