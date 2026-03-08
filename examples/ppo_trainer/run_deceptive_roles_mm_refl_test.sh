@@ -112,7 +112,7 @@ python3 -m verl.trainer.main_ppo \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
-    env.rollout.n=2 \
+    env.rollout.n=4 \
     env.rollout.val_n=1 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \
