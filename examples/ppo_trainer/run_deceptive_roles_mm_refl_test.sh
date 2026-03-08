@@ -106,9 +106,10 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.trigger_use_rolling_mean=True \
     algorithm.reflection.ratio=0.5 \
     algorithm.reflection.mode=same_traj \
+    algorithm.reflection.prompt_style=critique_resp \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
-    algorithm.reflection.debug_stop_after='critique_extraction' \
+    algorithm.reflection.debug_stop_after='reflection_prompt_build' \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
@@ -122,7 +123,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen7b_monitor_refl' \
+    trainer.experiment_name='grpo_qwen7b_refl_test' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=4 \
