@@ -84,7 +84,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.model.path=Qwen/Qwen2.5-72B-Instruct \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
-    judge_model.micro_batch_size_per_gpu=32 \
+    judge_model.micro_batch_size_per_gpu=16 \
     judge_model.valid_tokens='["0","1","2","3","4"]' \
     judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
     judge_model.top_k=2 \
