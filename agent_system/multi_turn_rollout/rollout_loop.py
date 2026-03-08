@@ -924,7 +924,7 @@ class TrajectoryCollector:
         return per_sample_scores, format_correct
 
     # -------------------------------------------------------------------------
-    # Reflection helpers
+    # Reflection helpers  # TODO: why not move all of these reflection helpers to a seperate class or module?
     # -------------------------------------------------------------------------
 
     def _select_reflection_candidates(
@@ -1083,7 +1083,11 @@ class TrajectoryCollector:
         return best_text, best_score, has_valid
 
     @staticmethod
-    def _build_reflection_system_prompt(demo_response: str, demo_critique: str) -> str:
+    def _build_reflection_system_prompt(
+        prompt_style: str,
+        demo_critique: str,
+        demo_response: str = "",
+    ) -> str:
         """
         Build the system-role reflection prompt injected into the augmented generation context.
 
@@ -1092,55 +1096,56 @@ class TrajectoryCollector:
           2. Produces a clean, task-focused response without referencing the review context.
 
         Args:
-            demo_response: Prior response text (contextual hint, not shown in the template directly).
             demo_critique: Critique text summarising the honesty issue.
+            prompt_style: 'critique_only' — critique only;
+                          'critique_resp' — includes prior response text as a concrete example.
+            demo_response: (critique_resp only) text of the prior flagged response.
 
         Returns:
             System prompt string (used as {"role": "system"} in the augmented chat).
         """
-        return (
-            "INTERNAL NOTE — do not reference this note in your response: "
-            "A previous response to a similar task was flagged for the following issue: "
-            f"{demo_critique}. "
-            "Ensure your response does not exhibit this problem. "
+        preamble = "INTERNAL NOTE — do not reference this note in your response: "
+        postamble = (
+            " Ensure your response does not exhibit this problem. "
             "Answer the user's task directly and accurately without mentioning prior attempts, "
             "reviews, or this note."
         )
+        if prompt_style == "critique_only":
+            return (
+                preamble
+                + "A previous response to a similar task was flagged for the following issue: "
+                + demo_critique + "."
+                + postamble
+            )
+        elif prompt_style == "critique_resp":
+            return (
+                preamble
+                + "A previous response to a similar task read: \""
+                + demo_response
+                + "\". It was flagged for the following issue: "
+                + demo_critique + "."
+                + postamble
+            )
+        else:
+            raise ValueError(
+                f"Unknown prompt_style: {prompt_style!r}. "
+                "Expected 'critique_only' or 'critique_resp'."
+            )
 
-    def _select_demo_source_index(
-        self,
-        target_i: int,
-        mode: str,
-        actor_trust_penalties: np.ndarray,
-        selected_indices: List[int],
-        rollout_n: int,
-    ) -> int:
+    def _select_demo_source_index(self, target_i: int) -> int:
         """
-        Choose the source trajectory whose (response, critique) populates the demo slot.
+        Returns the source trajectory index for the reflection demo slot.
 
-        same_traj: use target_i itself.
-        cross_traj: prefer highest-penalty selected index in the same GRPO group (≠ target_i);
-                    fallback to global selected pool (≠ target_i); final fallback to target_i.
+        Currently always same_traj: the target trajectory provides its own response and critique.
+
+        # NOTE: cross_traj (use the highest-penalty selected trajectory in the same GRPO group
+        # as the demo source) was considered but removed. Without including the demo task
+        # description in the reflection prompt, cross_traj offers little advantage over
+        # same_traj for task-agnostic behavioral critiques; including it would create a
+        # task-mismatch confusion for the actor. Revisit if critiques become task-specific
+        # or if empirical results motivate cross-trajectory diversity.
         """
-        if mode == "same_traj":
-            return target_i
-
-        # cross_traj: same GRPO group first
-        group_start = (target_i // rollout_n) * rollout_n
-        group_end = group_start + rollout_n
-        group_cands = [
-            idx for idx in selected_indices
-            if group_start <= idx < group_end and idx != target_i
-        ]
-        if group_cands:
-            return max(group_cands, key=lambda idx: actor_trust_penalties[idx])
-
-        # fallback: global pool
-        global_cands = [idx for idx in selected_indices if idx != target_i]
-        if global_cands:
-            return max(global_cands, key=lambda idx: actor_trust_penalties[idx])
-
-        return target_i  # final fallback
+        return target_i
 
     def _run_reflection_and_replace(
         self,
@@ -1312,31 +1317,61 @@ class TrajectoryCollector:
             }
 
         # ---- Step 3: Build reflection prompts --------------------------------
+        # response + critique demo is always the trajectory itself (same_traj); see _select_demo_source_index
+        # for the NOTE on a removed cross_traj mode.
+        prompt_style = ref_cfg.prompt_style
         reflection_prompts = []
+        debug_prompt_info: List[dict] = [] if debug_mode else []
         for i in valid_selected:
-            demo_src = self._select_demo_source_index(
-                target_i=i,
-                mode=ref_cfg.mode,
-                actor_trust_penalties=actor_trust_penalties,
-                selected_indices=valid_selected,
-                rollout_n=rollout_n,
-            )
-            # Decode demo response from last active step of demo trajectory
+            demo_critique = best_critique_text[i] or ""
             demo_response_text = ""
-            for step_data in reversed(actor_batch_dict['total_batch_list'][demo_src]):
-                if step_data.get('active_masks', True):
-                    if 'responses' in step_data and isinstance(step_data['responses'], torch.Tensor):
-                        demo_response_text = self.tokenizer.decode(
-                            step_data['responses'], skip_special_tokens=True
-                        )
-                    break
-            demo_critique = best_critique_text[demo_src] or best_critique_text[i] or ""
-            reflection_prompts.append(
-                self._build_reflection_system_prompt(  # NOTE: should it include the task description when cross_traj
-                    demo_response=demo_response_text,
-                    demo_critique=demo_critique,
-                )
+            if prompt_style == "critique_resp":
+                # Decode the last active response of this trajectory
+                for step_data in reversed(actor_batch_dict['total_batch_list'][i]):
+                    if step_data.get('active_masks', True):
+                        if 'responses' in step_data and isinstance(step_data['responses'], torch.Tensor):
+                            demo_response_text = self.tokenizer.decode(
+                                step_data['responses'], skip_special_tokens=True
+                            )
+                        break
+            prompt = self._build_reflection_system_prompt(
+                prompt_style=prompt_style,
+                demo_critique=demo_critique,
+                demo_response=demo_response_text,
             )
+            reflection_prompts.append(prompt)
+            if debug_mode:
+                debug_prompt_info.append({
+                    'traj_i': i,
+                    'demo_critique': demo_critique,
+                    'demo_response_text': demo_response_text,
+                    'prompt': prompt,
+                })
+
+        if debug_mode:
+            print(f"[Reflection|Step3] prompt_style='{prompt_style}', "
+                  f"built {len(reflection_prompts)} prompts for valid_selected={valid_selected}")
+            for info in debug_prompt_info:
+                traj_i = info['traj_i']
+                if not info['demo_critique']:
+                    print(f"  traj {traj_i:>4}: WARNING — demo_critique is empty, "
+                          f"reflection prompt will not carry useful signal")
+                if prompt_style == "critique_resp" and not info['demo_response_text']:
+                    print(f"  traj {traj_i:>4}: WARNING — demo_response_text is empty "
+                          f"(no active step with tensor response found)")
+                print(f"  traj {traj_i:>4}: full_prompt='{info['prompt']}'")
+
+        if ref_cfg.get('debug_stop_after', None) == 'reflection_prompt_build':
+            print("[Reflection|debug] Early exit after Step 3 (debug_stop_after='reflection_prompt_build'). "
+                  "Training continues with original (un-reflected) batch.")
+            return actor_batch_dict, actor_trust_penalties, {
+                'debug_stop': 'reflection_prompt_build',
+                'trigger_metric': trigger_metric,
+                'enabled': 1,
+                'selected_count': n_selected,
+                'n_valid_selected': len(valid_selected),
+                'valid_critique_ratio_selected': valid_critique_ratio,
+            }
 
         # ---- Step 4: Build reflected gen_batch --------------------------------
         n_valid = len(valid_selected)

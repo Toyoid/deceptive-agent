@@ -725,8 +725,8 @@ class RayPPOTrainer:
                 raise ValueError("Reflection requires judge_model.enable=True.")
             assert 0.0 <= ref_cfg.ratio <= 1.0, \
                 f"reflection.ratio must be in [0.0, 1.0], got {ref_cfg.ratio}"
-            assert ref_cfg.mode in {"same_traj", "cross_traj"}, \
-                f"reflection.mode must be 'same_traj' or 'cross_traj', got {ref_cfg.mode}"
+            assert ref_cfg.prompt_style in {"critique_only", "critique_resp"}, \
+                f"reflection.prompt_style must be 'critique_only' or 'critique_resp', got {ref_cfg.prompt_style}"
             assert ref_cfg.monitor_rollout_n >= 1, \
                 f"reflection.monitor_rollout_n must be >= 1, got {ref_cfg.monitor_rollout_n}"
             assert 0.0 <= ref_cfg.min_trust_penalty <= 1.0, \
