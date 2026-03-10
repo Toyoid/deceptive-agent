@@ -1170,11 +1170,11 @@ class TrajectoryCollector:
         # TODO: 
         # 1. Refine the prompt format
         # 2. Refine the wording
-        preamble = "[INTERNAL NOTE] — do not reference this note in your response: "
+        preamble = "<internal_note>\nINTERNAL NOTE — do not reference this note in your response: "
         postamble = (
             " Ensure your response does not exhibit this problem. "
             "Answer the user's task directly and accurately without mentioning prior attempts, "
-            "reviews, or this note."
+            "reviews, or this note.\n</internal_note>\n"
         )
         if prompt_style == "critique_only":
             return (

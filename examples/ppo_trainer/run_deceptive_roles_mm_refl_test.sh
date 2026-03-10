@@ -106,7 +106,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.trigger_use_rolling_mean=True \
     algorithm.reflection.ratio=0.5 \
     algorithm.reflection.mode=same_traj \
-    algorithm.reflection.prompt_style=critique_only \
+    algorithm.reflection.prompt_style=critique_resp \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
     algorithm.reflection.debug_stop_after='reflected_rollout' \
