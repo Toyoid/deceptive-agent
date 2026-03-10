@@ -57,12 +57,12 @@ class ReasonChatEnvironmentManager(EnvironmentManagerBase):
                 "ReasonChatEnvironmentManager requires env_kwargs with infos for each sample."
             )
 
-        infos = self.envs.reset(kwargs=kwargs)
+        obs, infos = self.envs.reset(kwargs=kwargs)
 
         observations = {
-            "text": None,
+            "text": obs,
             "image": None,
-            "anchor": None,
+            "anchor": None,  # NOTE: setting anchor to None for now, can be updated to `obs.copy()` if needed later
         }
 
         return observations, infos

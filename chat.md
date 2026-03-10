@@ -640,17 +640,17 @@ Re-run the entire multi-step rollout with the augmented prompt:
 5. Replace total_batch_list[i] entirely
 ```
 
-**Where to inject the demonstration:** The prompt is constructed per-step in `preprocess_single_sample()` (`rollout_loop.py:207-275`), which builds:
+**Where to inject the demonstration:** The prompt is constructed per-step in `build_single_actor_sample()` (`rollout_loop.py:207-275`), which builds:
 ```python
 chat = [{"content": obs_content, "role": "user"}]
 ```
 
 No system message. To make the demonstration persist across all steps, you need either:
-- Add a system message to the chat (requires modifying `preprocess_single_sample` to accept an optional system prompt)
+- Add a system message to the chat (requires modifying `build_single_actor_sample` to accept an optional system prompt)
 - Prepend the demonstration to `obs_content` at every step (hacky, environment-coupled)
-- Pass the demonstration via `gen_batch.non_tensor_batch` and pick it up in `preprocess_single_sample`
+- Pass the demonstration via `gen_batch.non_tensor_batch` and pick it up in `build_single_actor_sample`
 
-The cleanest route: add an optional `reflection_system_prompt` field to `gen_batch.non_tensor_batch`. If present, `preprocess_single_sample` prepends it as a system message. This is a minimal, non-invasive change.
+The cleanest route: add an optional `reflection_system_prompt` field to `gen_batch.non_tensor_batch`. If present, `build_single_actor_sample` prepends it as a system message. This is a minimal, non-invasive change.
 
 **Pros:** Handles all deception cases. Cleanest conceptually.
 **Cons:** Full environment + multi-step actor inference cost. Reflected episode may have different length (different number of steps), but `gather_rollout_data` handles variable-length trajectories already.
@@ -696,7 +696,7 @@ These two ambiguities are resolved as:
 
 1. **Critique selection**: Highest-scoring format-correct critique per trajectory. Config-togglable if you later want to try alternatives. ~10 lines of indexing.
 
-2. **Multi-step handling**: Full episode regeneration via calling `vanilla_multi_turn_loop` on a sub-batch with augmented system prompts. Requires adding an optional `reflection_system_prompt` field propagated through `preprocess_single_sample`. The heavy lifting is reused from existing code.
+2. **Multi-step handling**: Full episode regeneration via calling `vanilla_multi_turn_loop` on a sub-batch with augmented system prompts. Requires adding an optional `reflection_system_prompt` field propagated through `build_single_actor_sample`. The heavy lifting is reused from existing code.
 
 Want me to move to implementation planning now?
 

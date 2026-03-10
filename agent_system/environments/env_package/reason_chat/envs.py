@@ -58,12 +58,16 @@ class ReasonChatMultiProcessEnv(gym.Env):
             raise ValueError("ReasonChat env requires non-empty env_kwargs.")
 
         self._episodes.clear()
+        obs: List[str] = []
         infos: List[Dict[str, Any]] = []
 
         for i, env_dict in enumerate(kwargs):
             system_prompt = env_dict["system_prompt"]
             instruction = env_dict["instruction"]
             question = env_dict["question"]
+
+            obs.append(question)
+
             # Build history: system prompt (without instruction) + user question
             system_formatted = CHAT_TEMPLATE.format_system(f"{system_prompt}")
             question_formatted = CHAT_TEMPLATE.format_user(question)
@@ -82,9 +86,11 @@ class ReasonChatMultiProcessEnv(gym.Env):
             infos.append({
                 "task_type": env_dict.get("task_type", "chat"),
                 "step": 0,
+                "system_prompt": system_prompt,
+                "format_prompt": env_dict["format_prompt"],
             })
             
-        return infos
+        return obs, infos
 
     def step(self, actions: List[Dict[str, str]]) -> Tuple[List[str], List[float], List[bool], List[Dict[str, Any]]]:
         assert len(self._episodes) > 0, "Environment must be reset before stepping."

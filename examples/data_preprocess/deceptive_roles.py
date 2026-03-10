@@ -89,6 +89,7 @@ if __name__ == "__main__":
                     "task_type": "chat",
                     "system_prompt": system_raw,
                     "instruction": instruction,
+                    "format_prompt": format_prompt,
                     "question": question,
                 }
             }

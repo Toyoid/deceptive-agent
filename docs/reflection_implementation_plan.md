@@ -67,7 +67,7 @@ Acceptance criteria:
 
 ## Step 2 — Enable Optional Reflection System Prompt in Preprocessing
 
-### 2.1 Modify `preprocess_single_sample`
+### 2.1 Modify `build_single_actor_sample`
 File: `agent_system/multi_turn_rollout/rollout_loop.py`
 
 Current behavior: chat only contains user message.

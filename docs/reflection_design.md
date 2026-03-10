@@ -216,15 +216,15 @@ Tradeoff:
 - If provenance is needed, add explicit metadata fields such as `is_reflected`, `reflection_round`, and `reflection_source_idx`.
 
 ### N2: Reflected Trajectories Enter `gather_rollout_data` with Original Prompt
-`gather_rollout_data` reads `episode_rewards`, `trust_penalties`, `traj_uid` from the trajectory data. All of these come from the reflected rollout. But the `input_ids`/`prompts` that end up in the DataProto come from `preprocess_single_sample` called within `vanilla_multi_turn_loop`, which reads from `gen_batch`. For reflected trajectories, `gen_batch` must contain the original prompts (not the augmented ones) to ensure re-pairing is correct.
+`gather_rollout_data` reads `episode_rewards`, `trust_penalties`, `traj_uid` from the trajectory data. All of these come from the reflected rollout. But the `input_ids`/`prompts` that end up in the DataProto come from `build_single_actor_sample` called within `vanilla_multi_turn_loop`, which reads from `gen_batch`. For reflected trajectories, `gen_batch` must contain the original prompts (not the augmented ones) to ensure re-pairing is correct.
 
 **Implementation**: Build `reflected_gen_batch` with the **original** prompt tensors (copied from the original `gen_batch` for the selected indices) but with `reflection_system_prompt` injected into `non_tensor_batch`. The `envs.reset()` uses `env_kwargs` from `non_tensor_batch`, so the task context remains correct.
 
-### N3: `preprocess_single_sample` Modification
-The reflection system prompt must be injected at every step of the multi-step rollout. Currently `preprocess_single_sample` builds the chat structure without a system prompt. Add support for an optional `reflection_system_prompt` field in `gen_batch.non_tensor_batch`:
+### N3: `build_single_actor_sample` Modification
+The reflection system prompt must be injected at every step of the multi-step rollout. Currently `build_single_actor_sample` builds the chat structure without a system prompt. Add support for an optional `reflection_system_prompt` field in `gen_batch.non_tensor_batch`:
 
 ```python
-# In preprocess_single_sample:
+# In build_single_actor_sample:
 reflection_sys = gen_batch.non_tensor_batch.get('reflection_system_prompt', None)
 if reflection_sys is not None and reflection_sys[item] is not None:
     chat = [
