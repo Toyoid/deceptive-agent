@@ -305,11 +305,13 @@ class TrajectoryCollector:
             'data_source': data_source
         })
 
-        # Store original prompt tensors as numpy for re-pairing after reflection rollout.
+        # Store original prompt tensors for re-pairing after reflection rollout.
+        # Kept as torch.Tensor so collate_fn routes them through the tensor stack path
+        # (not the np.array dtype=object path), preserving int64 dtype through to_list_of_dict.
         # These are popped and applied in _run_reflection_and_replace before gather_rollout_data.
         if reflection_sys_item is not None:
-            row_dict['orig_input_ids'] = original_row_dict['input_ids'].numpy()
-            row_dict['orig_attention_mask'] = original_row_dict['attention_mask'].numpy()
+            row_dict['orig_input_ids'] = original_row_dict['input_ids']        # 1D tensor
+            row_dict['orig_attention_mask'] = original_row_dict['attention_mask']  # 1D tensor
 
         if self.config.data.get('return_raw_chat', False):
             row_dict['raw_prompt'] = copy.deepcopy(chat)
@@ -1675,8 +1677,8 @@ class TrajectoryCollector:
 
                 # Re-pair: swap augmented prompt for original prompt tensors
                 if 'orig_input_ids' in step_dict:
-                    orig_ids = torch.from_numpy(step_dict.pop('orig_input_ids').copy())
-                    orig_att = torch.from_numpy(step_dict.pop('orig_attention_mask').copy())
+                    orig_ids = step_dict.pop('orig_input_ids')        # 1D tensor (stashed as tensor in build_single_actor_sample)
+                    orig_att = step_dict.pop('orig_attention_mask')   # 1D tensor
                     responses = step_dict['responses']  # 1-D tensor (max_resp_len,)
                     # Reconstruct full sequence with original prompt prefix
                     new_input_ids = torch.cat([orig_ids, responses])
