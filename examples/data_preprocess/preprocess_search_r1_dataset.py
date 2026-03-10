@@ -105,7 +105,7 @@ def main():
             logger.info(f"Processing {split} split...")
 
             try:
-                # Download Parquet file from HuggingFace
+                # Download Parquet file from HuggingFace (re-run will use cached file)
                 logger.info(f"Downloading {parquet_filename} from {args.hf_repo_id}")
                 local_parquet_filepath = hf_hub_download(
                     repo_id=args.hf_repo_id,
@@ -152,14 +152,15 @@ def main():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Download Search-R1 from HuggingFace, process, and save to Parquet.")
+    parser = argparse.ArgumentParser(
+        description="Download Search-R1 from HuggingFace, process, and save to Parquet.",
+        usage="%(prog)s --local_dir /your/workspace/verl_data/searchR1_processed_direct [--hdfs_dir HDFS_DIR]"
+    )
     parser.add_argument(
         "--hf_repo_id", default="PeterJinGo/nq_hotpotqa_train", help="HuggingFace dataset repository ID."
     )
     parser.add_argument(
-        "--local_dir",
-        default="/DATA/lhx/data/searchR1_processed_direct",
-        help="Local directory to save the processed Parquet files.",
+        "--local_dir", required=True, help="Local directory to save the processed Parquet files.",
     )
     parser.add_argument("--hdfs_dir", default=None, help="Optional HDFS directory to copy the Parquet files to.")
 
