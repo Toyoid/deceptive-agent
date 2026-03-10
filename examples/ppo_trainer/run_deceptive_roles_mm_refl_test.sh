@@ -27,7 +27,7 @@ python3 -m verl.trainer.main_ppo \
     data.val_files="$test_files" \
     data.train_batch_size=4 \
     data.val_batch_size=64 \
-    data.max_prompt_length=512 \
+    data.max_prompt_length=800 \
     data.max_response_length=512 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
@@ -106,7 +106,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.trigger_use_rolling_mean=True \
     algorithm.reflection.ratio=0.5 \
     algorithm.reflection.mode=same_traj \
-    algorithm.reflection.prompt_style=critique_resp \
+    algorithm.reflection.prompt_style=critique_only \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
     algorithm.reflection.debug_stop_after='reflected_rollout' \

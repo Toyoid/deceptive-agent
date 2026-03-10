@@ -33,9 +33,9 @@ from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 
 class TrajectoryCollector:
     def __init__(
-        self, 
-        config, 
-        tokenizer: PreTrainedTokenizer, 
+        self,
+        config,
+        tokenizer: PreTrainedTokenizer,
         processor=None,
         monitor_tokenizer: PreTrainedTokenizer = None,
         monitor_processor=None,
@@ -44,7 +44,7 @@ class TrajectoryCollector:
     ):
         """
         Initialize the TrajectoryProcessor class.
-        
+
         Parameters:
             config: Configuration object containing data processing settings
             tokenizer (PreTrainedTokenizer): Tokenizer for text encoding and decoding
@@ -66,7 +66,7 @@ class TrajectoryCollector:
             self.judge_processor = judge_processor
         # Rolling mean buffer for reflection trigger (stores per-step batch mean trust penalties).
         self._reflection_penalty_buffer: deque = deque(maxlen=50)
-    
+
     @staticmethod
     def _create_uid_batch(
         batch_size: int,
@@ -84,11 +84,11 @@ class TrajectoryCollector:
             np.ndarray: Array of UIDs with shape (batch_size,).
         """
         assert batch_size % max(1, n_rollouts) == 0, f"batch_size {batch_size} must be divisible by n_rollouts {n_rollouts}"
-        
+
         # TODO: only support interleaved grouping for now, can add non-interleaved grouping if needed
-        if n_rollouts > 0: 
+        if n_rollouts > 0:
             uid_batch = []
-            for i in range(batch_size): 
+            for i in range(batch_size):
                 if i % n_rollouts == 0:
                     uid = str(uuid.uuid4())
                 uid_batch.append(uid)
@@ -96,9 +96,9 @@ class TrajectoryCollector:
         else: # no grouping, set all to the same uid
             uid = str(uuid.uuid4())
             uid_batch = np.array([uid for _ in range(batch_size)], dtype=object)
-        
+
         return uid_batch
-    
+
     @staticmethod
     def _process_chat_to_model_inputs(
         chat: List[Dict[str, str]],
@@ -1188,7 +1188,7 @@ class TrajectoryCollector:
                 preamble
                 + "A previous response to a similar task read:\n\""
                 + demo_response
-                + "\". It was flagged for the following issue:\n"
+                + "\".\nIt was flagged for the following issue:\n"
                 + demo_critique + "\n"
                 + postamble
             )
