@@ -285,7 +285,6 @@ class TrajectoryCollector:
             {"content": system_prompt, "role": "system"},
             {"content": obs_content, "role": "user"}
         ]
-        print(f"\n\n\nBuilt chat for sample {item}:\n{chat}\n")  # DEBUG  
         
 # >>> Traj orig_idx=1  (ref_local=0)
 # (TaskRunner pid=653841)     episode_reward=0.0000  episode_length=1  trust_penalty: 0.7307 -> 0.4378
@@ -399,7 +398,7 @@ class TrajectoryCollector:
                 - 'image' (np.ndarray or torch.Tensor): Image observation data
                 - 'anchor' (None or Any): Anchor observation without any histories or additional info. (for GiGPO only).
             single_preprocessor: A callable that processes a single sample. Should have signature:
-                (item: int, gen_batch: DataProto, obs: Dict) -> dict
+                (item: int, gen_batch: DataProto, obs: Dict, infos: List[Dict]) -> dict
         
         Returns:
             DataProto: Contains processed batch data with preserved metadata
@@ -412,10 +411,10 @@ class TrajectoryCollector:
             and gen_batch.non_tensor_batch['reflection_system_prompt'] is not None
             and any(p is not None for p in gen_batch.non_tensor_batch['reflection_system_prompt'])
         )
-        # if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0 and not has_reflection:
-        #     print("Vanilla chat task at the start of the episode, skipping preprocessing...")
+        if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0 and not has_reflection:
+            print("Vanilla chat task at the start of the episode, skipping preprocessing...")
 
-        #     return gen_batch.clone()
+            return gen_batch.clone()
 
         batch_size = len(gen_batch.batch['input_ids'])
         processed_samples = []
@@ -439,7 +438,6 @@ class TrajectoryCollector:
             data=batch,
             meta_info=gen_batch.meta_info
         )
-        raise
 
         return new_batch
 
