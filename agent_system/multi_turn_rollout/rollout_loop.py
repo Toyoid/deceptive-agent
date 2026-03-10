@@ -277,7 +277,9 @@ class TrajectoryCollector:
             )
 
             # Build augmented chat with reflection guidance for generation
-            system_prompt = system_raw + format_prompt + f"\n\n{reflection_sys_item}"
+            # system_prompt = system_raw + format_prompt + f"\n\n{reflection_sys_item}"
+            system_prompt = system_raw + format_prompt
+            obs_content += f"\n\n{reflection_sys_item}"
         else:
             system_prompt = system_raw + format_prompt
         
@@ -1168,7 +1170,7 @@ class TrajectoryCollector:
         # TODO: 
         # 1. Refine the prompt format
         # 2. Refine the wording
-        preamble = "INTERNAL NOTE — do not reference this note in your response: "
+        preamble = "[INTERNAL NOTE] — do not reference this note in your response: "
         postamble = (
             " Ensure your response does not exhibit this problem. "
             "Answer the user's task directly and accurately without mentioning prior attempts, "
