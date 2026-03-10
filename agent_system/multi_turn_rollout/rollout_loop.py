@@ -1172,7 +1172,7 @@ class TrajectoryCollector:
         # 2. Refine the wording
         preamble = "<internal_note>\nINTERNAL NOTE — do not reference this note in your response: "
         postamble = (
-            " Ensure your response does not exhibit this problem. "
+            "\nEnsure your response does not exhibit this problem. "
             "Answer the user's task directly and accurately without mentioning prior attempts, "
             "reviews, or this note.\n</internal_note>\n"
         )
@@ -1637,7 +1637,42 @@ class TrajectoryCollector:
 
             reflected_steps = reflected_actor_batch_dict['total_batch_list'][ref_local]
 
-            for step_dict in reflected_steps:
+            # DEBUG: capture original trajectory state before replacement
+            if debug_mode:
+                _sep = '=' * 72
+                _orig_n_steps   = len(actor_batch_dict['total_batch_list'][orig_idx])
+                _orig_reward    = float(actor_batch_dict['episode_rewards'][orig_idx])
+                _orig_length    = int(actor_batch_dict['episode_lengths'][orig_idx])
+                _orig_penalty   = float(actor_trust_penalties[orig_idx])
+                _refl_reward    = float(reflected_actor_batch_dict['episode_rewards'][ref_local])
+                _refl_length    = int(reflected_actor_batch_dict['episode_lengths'][ref_local])
+                _refl_penalty   = float(refl_penalties[ref_local])
+                print(f"\n{_sep}")
+                print(f"[Reflection|Step7|DEBUG] orig_idx={orig_idx}  ref_local={ref_local}")
+                print(f"  uid:        {orig_uid}")
+                print(f"  traj_uid:   {orig_traj_uid}")
+                print(f"  steps:      original={_orig_n_steps}  reflected={len(reflected_steps)}")
+                print(f"  reward:     {_orig_reward:.4f} -> {_refl_reward:.4f}")
+                print(f"  length:     {_orig_length} -> {_refl_length}")
+                print(f"  trust_pen:  {_orig_penalty:.4f} -> {_refl_penalty:.4f}")
+
+            for step_i, step_dict in enumerate(reflected_steps):
+                # DEBUG: capture all pre-pair state before pop/overwrite
+                if debug_mode:
+                    _has_orig       = 'orig_input_ids' in step_dict
+                    _resp_shape     = step_dict['responses'].shape if isinstance(step_dict.get('responses'), torch.Tensor) else None
+                    _refl_prompt_shape = step_dict['prompts'].shape if isinstance(step_dict.get('prompts'), torch.Tensor) else None
+                    if _has_orig:
+                        _orig_ids_shape = step_dict['orig_input_ids'].shape
+                        _orig_att_shape = step_dict['orig_attention_mask'].shape
+                        _aug_prompt_decoded = self.tokenizer.decode(step_dict['prompts'], skip_special_tokens=True)
+                        _resp_decoded_pre   = self.tokenizer.decode(step_dict['responses'], skip_special_tokens=True)
+                    else:
+                        _orig_ids_shape = None
+                        _orig_att_shape = None
+                        _aug_prompt_decoded = None
+                        _resp_decoded_pre   = None
+
                 # Re-pair: swap augmented prompt for original prompt tensors
                 if 'orig_input_ids' in step_dict:
                     orig_ids = torch.from_numpy(step_dict.pop('orig_input_ids').copy())
@@ -1657,6 +1692,59 @@ class TrajectoryCollector:
                 step_dict['uid'] = orig_uid
                 step_dict['traj_uid'] = orig_traj_uid
 
+                # DEBUG: print per-step re-pair verification
+                if debug_mode:
+                    print(f"\n  [Step {step_i}]  orig_input_ids present: {_has_orig}"
+                          + ("" if _has_orig else "  <-- WARNING: re-pair skipped for this step!"))
+                    if _has_orig:
+                        _new_ids_len   = len(step_dict['input_ids'])
+                        _expected_len  = _orig_ids_shape[0] + _resp_shape[0]
+                        _shape_ok      = _new_ids_len == _expected_len
+                        _att_sum       = int(step_dict['attention_mask'].sum().item())
+                        _pos_max       = int(step_dict['position_ids'].max().item())
+                        _pos_ok        = _pos_max == _att_sum - 1
+                        _orig_decoded  = self.tokenizer.decode(step_dict['prompts'], skip_special_tokens=True)
+                        _resp_decoded  = self.tokenizer.decode(step_dict['responses'], skip_special_tokens=True)
+                        print(f"    orig_ids shape:       {_orig_ids_shape}  orig_att shape: {_orig_att_shape}")
+                        print(f"    responses shape:      {_resp_shape}")
+                        print(f"    new input_ids len:    {_new_ids_len} = {_orig_ids_shape[0]} + {_resp_shape[0]}"
+                              + (f"  OK" if _shape_ok else f"  MISMATCH! expected {_expected_len}"))
+                        print(f"    attn nonzero:         {_att_sum} / {len(step_dict['attention_mask'])}")
+                        print(f"    position_ids max:     {_pos_max}  (expect {_att_sum - 1})"
+                              + ("  OK" if _pos_ok else "  WRONG!"))
+                        print(f"    uid:                  {step_dict['uid']}  (orig_uid={orig_uid})"
+                              + ("  OK" if step_dict['uid'] == orig_uid else "  MISMATCH!"))
+                        print(f"    traj_uid:             {step_dict['traj_uid']}  (orig_traj_uid={orig_traj_uid})"
+                              + ("  OK" if step_dict['traj_uid'] == orig_traj_uid else "  MISMATCH!"))
+                        print(f"    BEFORE prompt (augmented, {_refl_prompt_shape[0] if _refl_prompt_shape else '?'} tokens):")
+                        print(f"      {_aug_prompt_decoded}")
+                        print(f"    AFTER  prompt (original,  {_orig_ids_shape[0]} tokens):")
+                        print(f"      {_orig_decoded}")
+                        # Ground-truth comparison: recovered orig_ids vs original actor_batch step prompts
+                        # actor_batch_dict['total_batch_list'][orig_idx] still holds the OLD trajectory here —
+                        # the in-place overwrite comes after this step loop, so this read is safe
+                        _actor_orig_steps = actor_batch_dict['total_batch_list'][orig_idx]
+                        if step_i < len(_actor_orig_steps) and 'prompts' in _actor_orig_steps[step_i]:
+                            _actor_orig_prompt = self.tokenizer.decode(
+                                _actor_orig_steps[step_i]['prompts'], skip_special_tokens=True)
+                            _stash_match = "MATCH" if _orig_decoded == _actor_orig_prompt else "*** STASH MISMATCH ***"
+                            print(f"    orig stash vs actor_batch original prompt: {_stash_match}")
+                            if "MISMATCH" in _stash_match:
+                                print(f"      ACTOR ORIGINAL: {_actor_orig_prompt[:400]!r}")
+                                print(f"      RECOVERED STASH:{_orig_decoded[:400]!r}")
+                        else:
+                            print(f"    orig stash vs actor_batch original prompt: N/A "
+                                  f"(step {step_i} out of range or no 'prompts' key)")
+                        print(f"    response (unchanged):")
+                        print(f"      {_resp_decoded}")
+                        if _resp_decoded_pre != _resp_decoded:
+                            print(f"    WARNING: response text changed after re-pair! Before: {_resp_decoded_pre!r}")
+                    else:
+                        # Re-pair skipped — show what's in the step for diagnosis
+                        print(f"    reflected prompt shape: {_refl_prompt_shape}")
+                        print(f"    responses shape:        {_resp_shape}")
+                        print(f"    step_dict keys:         {list(step_dict.keys())}")
+
             # Replace trajectory in actor_batch_dict in-place
             actor_batch_dict['total_batch_list'][orig_idx] = reflected_steps
             actor_batch_dict['episode_rewards'][orig_idx] = \
@@ -1670,8 +1758,37 @@ class TrajectoryCollector:
             # Update trust penalty for this slot with reflected score
             actor_trust_penalties[orig_idx] = float(refl_penalties[ref_local])
 
+            # DEBUG: confirm in-place replacement values
+            if debug_mode:
+                _final_reward = float(actor_batch_dict['episode_rewards'][orig_idx])
+                _final_length = int(actor_batch_dict['episode_lengths'][orig_idx])
+                _final_traj_uid = actor_batch_dict['traj_uid'][orig_idx]
+                _final_penalty = float(actor_trust_penalties[orig_idx])
+                print(f"\n  [Post-replacement]")
+                print(f"    episode_reward:   {_final_reward:.4f}  (expected {_refl_reward:.4f})"
+                      + ("  OK" if abs(_final_reward - _refl_reward) < 1e-6 else "  MISMATCH!"))
+                print(f"    episode_length:   {_final_length}  (expected {_refl_length})"
+                      + ("  OK" if _final_length == _refl_length else "  MISMATCH!"))
+                print(f"    traj_uid:         {_final_traj_uid}  (expected {orig_traj_uid})"
+                      + ("  OK" if _final_traj_uid == orig_traj_uid else "  MISMATCH!"))
+                print(f"    trust_penalty:    {_final_penalty:.4f}  (expected {_refl_penalty:.4f})"
+                      + ("  OK" if abs(_final_penalty - _refl_penalty) < 1e-6 else "  MISMATCH!"))
+
         # Note: reflected monitor batch is NOT merged into monitor training batch (Phase-1).
         # TODO: Future option to include reflected monitor data in monitor training.
+
+        if ref_cfg.get('debug_stop_after', None) == 'repairing':  # DEBUG
+            print(f"[Reflection|debug] Early exit after Step 7 (re-pairing). "
+                  f"actor_batch_dict updated in-place for {n_valid} trajectories. Training continues with re-paired batch.")
+            return actor_batch_dict, actor_trust_penalties, {
+                'debug_stop': 'repairing',
+                'trigger_metric': trigger_metric,
+                'enabled': 1,
+                'selected_count': n_valid,
+                'selected_ratio_actual': n_valid / max(actor_batch_size, 1),
+                'mean_penalty_before_selected': mean_penalty_before,
+                'mean_penalty_after_selected': mean_penalty_after,
+            }
 
         # ---- Step 8: Build metrics dict --------------------------------------
         metrics = {

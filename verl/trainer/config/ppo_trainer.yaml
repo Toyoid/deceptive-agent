@@ -479,7 +479,7 @@ algorithm:
     monitor_rollout_n: 1     # monitor rollouts for reflected trajectories (usually 1)
     min_trust_penalty: 0.3   # only reflect trajectories with trust_penalty >= this
     debug_stop_after: null   # debug: stop after named step and return early (no raise, no crash)
-                             # valid values: 'candidate_selection' | 'critique_extraction' | 'reflection_prompt_build' | 'gen_batch_build' | 'reflected_rollout' | null
+                             # valid values: 'candidate_selection' | 'critique_extraction' | 'reflection_prompt_build' | 'gen_batch_build' | 'reflected_rollout' | 'repairing' | null
 
 trainer:
   balance_batch: True

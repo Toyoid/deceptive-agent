@@ -109,7 +109,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.prompt_style=critique_only \
     algorithm.reflection.monitor_rollout_n=1 \
     algorithm.reflection.min_trust_penalty=0.0 \
-    algorithm.reflection.debug_stop_after='reflected_rollout' \
+    algorithm.reflection.debug_stop_after='repairing' \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
