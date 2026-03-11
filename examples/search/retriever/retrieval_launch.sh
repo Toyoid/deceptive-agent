@@ -6,8 +6,8 @@
 # ============================================================
 if [ -z "${DATA_ROOT}" ]; then
     echo "ERROR: DATA_ROOT is not set."
-    echo "Please specify the root directory containing your searchR1 data, e.g.:"
-    echo "  DATA_ROOT=/your/data/path bash examples/search/retriever/retrieval_launch.sh"
+    echo "Please specify the root directory, which should contain the `searchR1/` data directory, e.g.:"
+    echo "  DATA_ROOT=/path/to/verl_data bash examples/search/retriever/retrieval_launch.sh"
     exit 1
 fi
 save_path=$DATA_ROOT/searchR1
