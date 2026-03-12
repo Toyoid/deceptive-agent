@@ -232,7 +232,7 @@ class TaskRunner:
         if reward_manager_name == 'episode':
             from agent_system.reward_manager import EpisodeRewardManager
 
-            reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
+            reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=6, normalize_by_length=False)
             val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
 
             if config.monitor_rollout_ref.enable:
@@ -248,7 +248,7 @@ class TaskRunner:
             assert config.monitor_rollout_ref.enable, "actor_monitor reward manager requires monitor_rollout_ref to be enabled"
             from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
             reward_manager_cls = ActorMonitorRewardManager
-            reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=6, role='actor', normalize_by_length=False)
+            reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
             val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
 
             monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=4, role='monitor', normalize_by_length=False)
