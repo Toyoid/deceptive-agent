@@ -540,6 +540,7 @@ class TrajectoryCollector:
             batch = self.preprocess_batch(
                 gen_batch=gen_batch, 
                 obs=obs, 
+                infos=infos,
                 single_preprocessor=self.build_single_actor_sample,
             )
 
@@ -727,6 +728,7 @@ class TrajectoryCollector:
         batch = self.preprocess_batch(
             gen_batch=monitor_gen_batch, 
             obs=monitor_obs, 
+            infos=infos,
             single_preprocessor=self.build_single_monitor_sample,
         )
 
