@@ -26,6 +26,7 @@ import uuid
 from verl.models.transformers.qwen2_vl import get_rope_index
 from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
 from agent_system.multi_turn_rollout.reflection import ReflectionPipeline
+from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
 from agent_system.environments import EnvironmentManagerBase
 from typing import List, Dict, Callable, Tuple, Optional
@@ -219,6 +220,7 @@ class TrajectoryCollector:
         item: int,
         gen_batch: DataProto,
         obs: Dict,
+        infos: List[Dict]
     ):
         """
         Process a single observation sample, organizing environment observations (text and/or images) 
@@ -228,6 +230,7 @@ class TrajectoryCollector:
             item (int): Sample index in the batch
             gen_batch (DataProto): Batch data containing original prompts
             obs (Dict): Environment observation, may contain 'text', 'image', 'anchor' keys
+            infos (List[Dict]): List of dictionaries containing additional information for each sample
         Returns:
             dict: Contains processed input data such as input_ids, attention_mask, etc.
         """
@@ -243,6 +246,10 @@ class TrajectoryCollector:
         obs_anchor = obs_anchors[item] if obs_anchors is not None else None
 
         _obs_anchor = torch_to_numpy(obs_anchor, is_object=True) if isinstance(obs_anchor, torch.Tensor) else obs_anchor
+
+        system_raw = infos[item].get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+        format_prompt = infos[item].get("format_prompt", "")
+        system_prompt = system_raw + f"\n{format_prompt}" if len(format_prompt) > 0 else system_raw
 
         # Build chat structure
         # obs_content = raw_prompt[0]['content']
@@ -263,6 +270,7 @@ class TrajectoryCollector:
         if reflect_prompt_item is not None:
             # Also build original chat (no reflection) first for re-pairing after rollout
             original_chat = [
+                {"content": system_prompt, "role": "system"},
                 {"content": obs_content, "role": "user"}
             ]
             original_row_dict = self._process_chat_to_model_inputs(
@@ -277,6 +285,7 @@ class TrajectoryCollector:
             obs_content += f"\n\n{reflect_prompt_item}"
         
         chat = [
+            {"content": system_prompt, "role": "system"},
             {"content": obs_content, "role": "user"}
         ]
         
@@ -314,6 +323,7 @@ class TrajectoryCollector:
         item: int,
         gen_batch: DataProto,
         obs: Dict,
+        infos: Optional[List[Dict]] = None
     ) -> dict:
         # Get observation components
         monitor_texts = obs['monitor_text']
@@ -371,25 +381,13 @@ class TrajectoryCollector:
                 - 'text' (None or List[str]): Text observation data
                 - 'image' (np.ndarray or torch.Tensor): Image observation data
                 - 'anchor' (None or Any): Anchor observation without any histories or additional info. (for GiGPO only).
+            infos (List[Dict]): List of dictionaries containing additional information for each sample in the batch
             single_preprocessor: A callable that processes a single sample. Should have signature:
                 (item: int, gen_batch: DataProto, obs: Dict, infos: List[Dict]) -> dict
         
         Returns:
             DataProto: Contains processed batch data with preserved metadata
         """
-        # if the env is vanilla chat task and is the start of the episode, simply add anchor_obs and return
-        # Exception: skip this shortcut when reflection_prompt is injected, so that
-        # build_single_actor_sample can build the augmented chat and save orig_input_ids for re-pairing.
-        has_reflection = (
-            'reflection_prompt' in gen_batch.non_tensor_batch
-            and gen_batch.non_tensor_batch['reflection_prompt'] is not None
-            and any(p is not None for p in gen_batch.non_tensor_batch['reflection_prompt'])
-        )
-        if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0 and not has_reflection:
-            print("Vanilla chat task at the start of the episode, skipping preprocessing...")
-
-            return gen_batch.clone()
-
         batch_size = len(gen_batch.batch['input_ids'])
         processed_samples = []
         
@@ -400,6 +398,7 @@ class TrajectoryCollector:
                 item=item,
                 gen_batch=gen_batch,
                 obs=obs,
+                infos=infos
             )
             processed_samples.append(processed)
         
