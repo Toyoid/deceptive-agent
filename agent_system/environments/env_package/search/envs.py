@@ -51,6 +51,8 @@ class SearchMultiProcessEnv(gym.Env):
         self._rng = np.random.RandomState(seed)
 
         # ---------- Key changes start ----------
+        # TODO: can be extended to support multiple task types by reading from kwargs in reset()
+        self.task_type = "search"
         # 1) Normalize search_url into a list
         search_cfg  = env_config.search
         search_urls = search_cfg.search_url
@@ -80,7 +82,12 @@ class SearchMultiProcessEnv(gym.Env):
         }
         env.reset(extras)
         obs = kwargs["question"]
-        info = {'data_source': kwargs.get("data_source", "unknown")}
+        info = {
+            'data_source': kwargs.get("data_source", "unknown"),
+            'task_type': self.task_type,
+            'step': 0
+        }
+
         return obs, info
     
     def _sync_step(self, env, action: str):
