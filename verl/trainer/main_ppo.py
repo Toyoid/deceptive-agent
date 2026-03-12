@@ -232,7 +232,7 @@ class TaskRunner:
         if reward_manager_name == 'episode':
             from agent_system.reward_manager import EpisodeRewardManager
 
-            reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=6, normalize_by_length=False)
+            reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
             val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
 
             if config.monitor_rollout_ref.enable:
