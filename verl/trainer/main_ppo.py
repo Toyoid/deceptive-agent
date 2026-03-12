@@ -240,7 +240,7 @@ class TaskRunner:
                 from agent_system.reward_manager import MonitorRewardManager
 
                 monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
-                monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
+                monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=4, normalize_by_length=False)
             else:
                 monitor_reward_fn = None
                 monitor_val_reward_fn = None
