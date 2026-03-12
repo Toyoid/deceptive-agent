@@ -100,7 +100,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.episode_cost_window_size=1500 \
     algorithm.lagrangian.threshold=0.25 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
-    algorithm.reflection.enable=True \
+    algorithm.reflection.enable=False \
     algorithm.reflection.delay_steps=0 \
     algorithm.reflection.trigger_threshold=0.01 \
     algorithm.reflection.trigger_use_rolling_mean=True \

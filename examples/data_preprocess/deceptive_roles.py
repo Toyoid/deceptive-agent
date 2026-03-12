@@ -67,7 +67,6 @@ if __name__ == "__main__":
     def make_map_fn(split):
         def process_fn(example, idx):
             system_raw = example.pop("system")
-            # system_prompt = system_raw + f" {instruction}" + format_prompt
             system_prompt = system_raw + f"\n{format_prompt}"
             question = example.pop("user")
 
