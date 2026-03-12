@@ -2000,7 +2000,7 @@ class RayPPOTrainer:
                                 inputs = batch.non_tensor_batch["user_inputs"]
                                 system_infos = batch.non_tensor_batch["system_infos"]
                             else:
-                                print("[WARNING] system_infos or user_inputs not found in batch.non_tensor_batch for logging inputs. Dumping raw_prompt instead.")
+                                print("[WARNING] system_infos or user_inputs not found in batch.non_tensor_batch for logging inputs. Dumping prompt instead.")
                                 inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                                 system_infos = ["N/A"] * len(inputs)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)

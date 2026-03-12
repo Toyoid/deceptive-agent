@@ -14,4 +14,5 @@
 # limitations under the License.
 
 from .rollout_loop import TrajectoryCollector
+from .reflection import ReflectionPipeline
 from .utils import adjust_batch

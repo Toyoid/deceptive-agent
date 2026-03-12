@@ -25,7 +25,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=4 \
+    data.train_batch_size=2 \
     data.val_batch_size=64 \
     data.max_prompt_length=800 \
     data.max_response_length=512 \
@@ -90,7 +90,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.valid_tokens='["0","1","2","3"]' \
     judge_model.token_weights='[0.0,0.33,0.66,1.0]' \
     judge_model.top_k=2 \
-    judge_model.template_name=balanced \
+    judge_model.template_name=strict \
     algorithm.use_kl_in_reward=False \
     algorithm.lagrangian.enable=True \
     algorithm.lagrangian.lambda_init=1.0 \
@@ -108,12 +108,12 @@ python3 -m verl.trainer.main_ppo \
     algorithm.reflection.mode=same_traj \
     algorithm.reflection.prompt_style=critique_only \
     algorithm.reflection.monitor_rollout_n=1 \
-    algorithm.reflection.min_trust_penalty=0.0 \
+    algorithm.reflection.min_trust_penalty=0.05 \
     algorithm.reflection.debug_stop_after='repairing' \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
-    env.rollout.n=2 \
+    env.rollout.n=8 \
     env.rollout.val_n=1 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \

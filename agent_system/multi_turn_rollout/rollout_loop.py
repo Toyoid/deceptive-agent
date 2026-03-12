@@ -17,7 +17,6 @@
 import copy
 import torch
 import numpy as np
-from collections import deque
 from verl import DataProto
 from verl.utils.dataset.rl_dataset import collate_fn
 from verl.utils.model import compute_position_id_with_mask
@@ -26,6 +25,7 @@ from transformers import PreTrainedTokenizer
 import uuid
 from verl.models.transformers.qwen2_vl import get_rope_index
 from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
+from agent_system.multi_turn_rollout.reflection import ReflectionPipeline
 from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
 from agent_system.environments import EnvironmentManagerBase
 from typing import List, Dict, Callable, Tuple, Optional
@@ -64,8 +64,15 @@ class TrajectoryCollector:
             assert judge_tokenizer is not None, "judge tokenizer should be provided when judge is enabled"
             self.judge_tokenizer = judge_tokenizer
             self.judge_processor = judge_processor
-        # Rolling mean buffer for reflection trigger (stores per-step batch mean trust penalties).
-        self._reflection_penalty_buffer: deque = deque(maxlen=50)
+        ref_cfg = config.algorithm.get('reflection', None)
+        if ref_cfg is not None and ref_cfg.enable:
+            self._reflection = ReflectionPipeline(
+                config=config,
+                tokenizer=tokenizer,
+                monitor_tokenizer=monitor_tokenizer,
+            )
+        else:
+            self._reflection = None
 
     @staticmethod
     def _create_uid_batch(
@@ -212,7 +219,6 @@ class TrajectoryCollector:
         item: int,
         gen_batch: DataProto,
         obs: Dict,
-        infos: List[Dict]
     ):
         """
         Process a single observation sample, organizing environment observations (text and/or images) 
@@ -222,7 +228,6 @@ class TrajectoryCollector:
             item (int): Sample index in the batch
             gen_batch (DataProto): Batch data containing original prompts
             obs (Dict): Environment observation, may contain 'text', 'image', 'anchor' keys
-            infos (List[Dict]): Additional information for each sample
         Returns:
             dict: Contains processed input data such as input_ids, attention_mask, etc.
         """
@@ -239,32 +244,25 @@ class TrajectoryCollector:
 
         _obs_anchor = torch_to_numpy(obs_anchor, is_object=True) if isinstance(obs_anchor, torch.Tensor) else obs_anchor
 
-        system_raw = infos[item]['system_prompt']
-        format_raw = infos[item].get('format_prompt', '')
-        format_prompt = f"\n{format_raw}" if format_raw else ''
-        
         # Build chat structure
         # obs_content = raw_prompt[0]['content']
         # if '<image>' in obs_content: 
         #     obs_content = obs_content.replace('<image>', '')
 
         # Build chat structure
-        obs_content = ''
+        obs_content = ''  # must be a string
         if obs_text is not None:
             obs_content += obs_text
         else:
             print(f"Warning: No text observation found!")
 
-        # Check for reflection system prompt injected for critique-guided exploration
-        # NOTE: This may need to be compatible with deceptive_roles
-        reflection_sys = gen_batch.non_tensor_batch.get('reflection_system_prompt', None)
-        reflection_sys_item = reflection_sys[item] if reflection_sys is not None else None
+        # Check for reflection prompt injected for critique-guided exploration
+        reflect_prompt = gen_batch.non_tensor_batch.get('reflection_prompt', None)
+        reflect_prompt_item = reflect_prompt[item] if reflect_prompt is not None else None
 
-        if reflection_sys_item is not None:
+        if reflect_prompt_item is not None:
             # Also build original chat (no reflection) first for re-pairing after rollout
-            system_orig = system_raw + format_prompt
             original_chat = [
-                {"content": system_orig, "role": "system"},
                 {"content": obs_content, "role": "user"}
             ]
             original_row_dict = self._process_chat_to_model_inputs(
@@ -275,16 +273,10 @@ class TrajectoryCollector:
                 max_prompt_length=self.config.data.max_prompt_length,
                 truncation=self.config.data.truncation,
             )
-
             # Build augmented chat with reflection guidance for generation
-            # system_prompt = system_raw + format_prompt + f"\n\n{reflection_sys_item}"
-            system_prompt = system_raw + format_prompt
-            obs_content += f"\n\n{reflection_sys_item}"
-        else:
-            system_prompt = system_raw + format_prompt
+            obs_content += f"\n\n{reflect_prompt_item}"
         
         chat = [
-            {"content": system_prompt, "role": "system"},
             {"content": obs_content, "role": "user"}
         ]
         
@@ -306,16 +298,15 @@ class TrajectoryCollector:
         })
 
         # Store original prompt tensors for re-pairing after reflection rollout.
-        # Kept as torch.Tensor so collate_fn routes them through the tensor stack path
-        # (not the np.array dtype=object path), preserving int64 dtype through to_list_of_dict.
-        # These are popped and applied in _run_reflection_and_replace before gather_rollout_data.
-        if reflection_sys_item is not None:
+        # These are popped and applied in ReflectionPipeline.run before gather_rollout_data.
+        if reflect_prompt_item is not None:
             row_dict['orig_input_ids'] = original_row_dict['input_ids']        # 1D tensor
             row_dict['orig_attention_mask'] = original_row_dict['attention_mask']  # 1D tensor
 
         if self.config.data.get('return_raw_chat', False):
+            # NOTE: must be consistent with input_ids/raw_prompt_ids, to avoid silent mismatch in the rollout engine.
             row_dict['raw_prompt'] = copy.deepcopy(chat)
-        
+
         return row_dict
 
     def build_single_monitor_sample(
@@ -323,7 +314,6 @@ class TrajectoryCollector:
         item: int,
         gen_batch: DataProto,
         obs: Dict,
-        infos: List[Dict]
     ) -> dict:
         # Get observation components
         monitor_texts = obs['monitor_text']
@@ -388,17 +378,17 @@ class TrajectoryCollector:
             DataProto: Contains processed batch data with preserved metadata
         """
         # if the env is vanilla chat task and is the start of the episode, simply add anchor_obs and return
-        # Exception: skip this shortcut when reflection_system_prompt is injected, so that
+        # Exception: skip this shortcut when reflection_prompt is injected, so that
         # build_single_actor_sample can build the augmented chat and save orig_input_ids for re-pairing.
-        # has_reflection = (
-        #     'reflection_system_prompt' in gen_batch.non_tensor_batch
-        #     and gen_batch.non_tensor_batch['reflection_system_prompt'] is not None
-        #     and any(p is not None for p in gen_batch.non_tensor_batch['reflection_system_prompt'])
-        # )
-        # if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0 and not has_reflection:
-        #     print("Vanilla chat task at the start of the episode, skipping preprocessing...")
+        has_reflection = (
+            'reflection_prompt' in gen_batch.non_tensor_batch
+            and gen_batch.non_tensor_batch['reflection_prompt'] is not None
+            and any(p is not None for p in gen_batch.non_tensor_batch['reflection_prompt'])
+        )
+        if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0 and not has_reflection:
+            print("Vanilla chat task at the start of the episode, skipping preprocessing...")
 
-        #     return gen_batch.clone()
+            return gen_batch.clone()
 
         batch_size = len(gen_batch.batch['input_ids'])
         processed_samples = []
@@ -410,7 +400,6 @@ class TrajectoryCollector:
                 item=item,
                 gen_batch=gen_batch,
                 obs=obs,
-                infos=infos
             )
             processed_samples.append(processed)
         
@@ -551,7 +540,6 @@ class TrajectoryCollector:
             batch = self.preprocess_batch(
                 gen_batch=gen_batch, 
                 obs=obs, 
-                infos=infos,
                 single_preprocessor=self.build_single_actor_sample,
             )
 
@@ -739,7 +727,6 @@ class TrajectoryCollector:
         batch = self.preprocess_batch(
             gen_batch=monitor_gen_batch, 
             obs=monitor_obs, 
-            infos=infos,
             single_preprocessor=self.build_single_monitor_sample,
         )
 
@@ -894,7 +881,7 @@ class TrajectoryCollector:
         for item, (monitor_out, user_input, evidence, resp, task_type) in enumerate(zip(
             monitor_output_texts, user_inputs, evidences, agent_resps, task_types
         )):
-            # Extract <critique> tags — no fallback, empty list means bad format
+            # Extract <critique> tags, empty list means bad format
             critiques = extract_critiques(monitor_out)
             count = len(critiques)
             if count <= 0:
@@ -1974,16 +1961,14 @@ class TrajectoryCollector:
 
         # Critique-Guided Trajectory Reflection
         reflection_metrics = {}
-        ref_cfg = self.config.algorithm.get('reflection', None)
         if (
-            ref_cfg is not None
-            and ref_cfg.enable
+            self._reflection is not None
             and is_train
             and not self.config.algorithm.filter_groups.enable  # reflection not yet supported for dynamic loop
             and actor_trust_penalties is not None
         ):
             actor_batch_dict, actor_trust_penalties, reflection_metrics = \
-                self._run_reflection_and_replace(
+                self._reflection.run(
                     actor_batch_dict=actor_batch_dict,
                     monitor_batch_output=monitor_batch_output,
                     actor_trust_penalties=actor_trust_penalties,
@@ -1995,6 +1980,7 @@ class TrajectoryCollector:
                     envs=envs,
                     rollout_n=rollout_n,
                     train_step=train_step,
+                    rollout_fn=self.vanilla_multi_turn_loop,
                 )
 
         # Create trajectory data for actor model
