@@ -85,7 +85,6 @@ class SearchMultiProcessEnv(gym.Env):
         info = {
             'data_source': kwargs.get("data_source", "unknown"),
             'task_type': self.task_type,
-            'step': 0
         }
 
         return obs, info

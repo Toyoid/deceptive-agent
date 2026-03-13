@@ -81,7 +81,6 @@ class ReasonChatMultiProcessEnv(gym.Env):
 
             infos.append({
                 "task_type": env_dict.get("task_type", "chat"),
-                "step": 0,
             })
             
         return infos
@@ -114,7 +113,6 @@ class ReasonChatMultiProcessEnv(gym.Env):
 
             info = {
                 "task_type": episode["task_type"],
-                "step": episode["step"],
                 "won": False,
                 "user_input": episode["user_input"],  # for judge input
                 "evidence": episode["evidence"],  # for judge input

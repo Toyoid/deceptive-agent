@@ -26,6 +26,7 @@ import uuid
 from verl.models.transformers.qwen2_vl import get_rope_index
 from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
 from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
+from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_system.environments import EnvironmentManagerBase
 from typing import List, Dict, Callable, Tuple, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
@@ -204,11 +205,12 @@ class TrajectoryCollector:
         
         return row_dict
 
-    def preprocess_single_sample(
+    def build_single_actor_sample(
         self,
         item: int,
         gen_batch: DataProto,
         obs: Dict,
+        infos: List[Dict]
     ):
         """
         Process a single observation sample, organizing environment observations (text and/or images) 
@@ -218,7 +220,8 @@ class TrajectoryCollector:
             item (int): Sample index in the batch
             gen_batch (DataProto): Batch data containing original prompts
             obs (Dict): Environment observation, may contain 'text', 'image', 'anchor' keys
-        
+            infos (List[Dict]): List of info dicts for each sample in the batch
+
         Returns:
             dict: Contains processed input data such as input_ids, attention_mask, etc.
         """
@@ -235,6 +238,10 @@ class TrajectoryCollector:
 
         _obs_anchor = torch_to_numpy(obs_anchor, is_object=True) if isinstance(obs_anchor, torch.Tensor) else obs_anchor
 
+        system_raw = infos[item].get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+        format_prompt = infos[item].get("format_prompt", "")
+        system_prompt = system_raw + f"\n{format_prompt}" if format_prompt else system_raw
+
         # Build chat structure
         # obs_content = raw_prompt[0]['content']
         # if '<image>' in obs_content: 
@@ -248,8 +255,8 @@ class TrajectoryCollector:
             print(f"Warning: No text observation found!")
     
         chat = [{
-            "content": obs_content,
-            "role": "user",
+            "content": system_prompt, "role": "system",
+            "content": obs_content, "role": "user",
         }]
         
         # Process chat to model inputs using shared helper
@@ -279,6 +286,7 @@ class TrajectoryCollector:
         item: int,
         gen_batch: DataProto,
         obs: Dict,
+        infos: Optional[List[Dict]] = None,
     ) -> dict:
         # Get observation components
         monitor_texts = obs['monitor_text']
@@ -325,7 +333,7 @@ class TrajectoryCollector:
         gen_batch: DataProto, 
         obs: Dict, 
         infos: List[Dict],
-        single_preprocessor: Callable[[int, DataProto, Dict], dict],
+        single_preprocessor: Callable[[int, DataProto, Dict, List[Dict]], dict],
     ) -> DataProto:
         """
         Process a batch of observation samples, converting environment observations into model-processable format.
@@ -336,18 +344,13 @@ class TrajectoryCollector:
                 - 'text' (None or List[str]): Text observation data
                 - 'image' (np.ndarray or torch.Tensor): Image observation data
                 - 'anchor' (None or Any): Anchor observation without any histories or additional info. (for GiGPO only).
+            infos (List[Dict]): List of info dicts for each sample in the batch, can contain additional metadata for processing
             single_preprocessor: A callable that processes a single sample. Should have signature:
-                (item: int, gen_batch: DataProto, obs: Dict) -> dict
+                (item: int, gen_batch: DataProto, obs: Dict, infos: List[Dict]) -> dict
         
         Returns:
             DataProto: Contains processed batch data with preserved metadata
         """
-        # if the env is vanilla chat task and is the start of the episode, simply add anchor_obs and return
-        if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0:
-            print("Vanilla chat task at the start of the episode, skipping preprocessing...")
-            
-            return gen_batch.clone()
-
         batch_size = len(gen_batch.batch['input_ids'])
         processed_samples = []
         
@@ -358,6 +361,7 @@ class TrajectoryCollector:
                 item=item,
                 gen_batch=gen_batch,
                 obs=obs,
+                infos=infos
             )
             processed_samples.append(processed)
         
@@ -498,7 +502,7 @@ class TrajectoryCollector:
                 gen_batch=gen_batch, 
                 obs=obs, 
                 infos=infos,
-                single_preprocessor=self.preprocess_single_sample,
+                single_preprocessor=self.build_single_actor_sample,
             )
 
             batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
