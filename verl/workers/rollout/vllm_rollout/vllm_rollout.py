@@ -33,7 +33,7 @@ from typing import List
 
 import torch
 import torch.distributed
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from tensordict import TensorDict
 from torch import nn
 from vllm import SamplingParams
@@ -156,7 +156,12 @@ class vLLMRollout(BaseRollout):
         # supporting adding any sampling params from the config file
         for k in config.keys():
             if hasattr(SamplingParams(), str(k)):
-                kwargs[k] = config.get(k)
+                v = config.get(k)
+                # OmegaConf containers (ListConfig, DictConfig) are not plain Python
+                # types and fail isinstance checks inside vLLM; convert them first.
+                if isinstance(v, (ListConfig, DictConfig)):
+                    v = OmegaConf.to_container(v, resolve=True)
+                kwargs[k] = v
 
         print(f"kwargs: {kwargs}")
         self.sampling_params = SamplingParams(**kwargs)
