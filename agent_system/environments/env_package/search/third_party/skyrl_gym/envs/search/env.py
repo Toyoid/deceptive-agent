@@ -2,6 +2,7 @@ from agent_system.environments.env_package.search.third_party.skyrl_gym.envs.bas
 from typing import Any
 from agent_system.environments.env_package.search.third_party.skyrl_gym.envs.search.utils import compute_score
 from agent_system.environments.env_package.search.third_party.skyrl_gym.tools import SearchToolGroup
+import json
 import re
 from typing import Dict, Optional, List
 from omegaconf import DictConfig
@@ -71,6 +72,12 @@ class SearchEnv(BaseTextEnv):
     def _execute_tool(self, tool_group_name: str, tool_name: str, tool_input: Any) -> str:
         tool_output = super()._execute_tool(tool_group_name, tool_name, tool_input)
         if len(tool_output) > 0:
+            # SearchToolGroup.search() returns json.dumps({"result": "..."});
+            # unwrap to get the plain formatted document string.
+            try:
+                tool_output = json.loads(tool_output).get("result", tool_output)
+            except (json.JSONDecodeError, AttributeError):
+                pass
             return "\n<information>" + tool_output + "</information>\n"
         else:
             return None

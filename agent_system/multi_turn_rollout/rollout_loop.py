@@ -254,10 +254,10 @@ class TrajectoryCollector:
         else:
             print(f"Warning: No text observation found!")
     
-        chat = [{
-            "content": system_prompt, "role": "system",
-            "content": obs_content, "role": "user",
-        }]
+        chat = [
+            {"content": system_prompt, "role": "system"},
+            {"content": obs_content,   "role": "user"},
+        ]
         
         # Process chat to model inputs using shared helper
         row_dict = self._process_chat_to_model_inputs(
