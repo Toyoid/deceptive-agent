@@ -66,4 +66,4 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=1000 \
     trainer.test_freq=2 \
     trainer.total_epochs=1 \
-    trainer.val_before_train=True $@
+    trainer.val_before_train=False $@
