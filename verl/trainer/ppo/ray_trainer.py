@@ -1032,7 +1032,7 @@ class RayPPOTrainer:
             del test_batch
             test_batch = test_output_gen_batch
             # Store generated inputs and outputs
-            prompt_ids = test_output_gen_batch.batch["prompt"]
+            prompt_ids = test_output_gen_batch.batch["prompts"]
             prompt_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in prompt_ids]
             sample_inputs.extend(prompt_texts)
             output_ids = test_output_gen_batch.batch["responses"]
