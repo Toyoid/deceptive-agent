@@ -994,12 +994,6 @@ class RayPPOTrainer:
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
 
-            # Store original inputs
-            input_ids = test_batch.batch["input_ids"]
-            # TODO: Can we keep special tokens except for padding tokens?
-            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
-            sample_inputs.extend(input_texts)
-
             batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
             non_tensor_batch_keys_to_pop = ["raw_prompt_ids", "data_source"]
             if "multi_modal_data" in test_batch.non_tensor_batch:
@@ -1037,7 +1031,10 @@ class RayPPOTrainer:
             test_output_gen_batch = test_output['actor']
             del test_batch
             test_batch = test_output_gen_batch
-            # Store generated outputs
+            # Store generated inputs and outputs
+            prompt_ids = test_output_gen_batch.batch["prompt"]
+            prompt_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in prompt_ids]
+            sample_inputs.extend(prompt_texts)
             output_ids = test_output_gen_batch.batch["responses"]
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
             sample_outputs.extend(output_texts)
@@ -1595,7 +1592,8 @@ class RayPPOTrainer:
                     non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
                 )
 
-                is_last_step = self.global_steps >= self.total_training_steps
+                # is_last_step = self.global_steps >= self.total_training_steps
+                is_last_step = self.global_steps >= 10  # NOTE: for quick test, remove this in real training
 
                 with _timer("step", timing_raw):
                     # generate a batch
@@ -2012,9 +2010,9 @@ class RayPPOTrainer:
                         metrics.update(val_metrics)
 
                     # save
-                    if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
-                        with _timer("save_checkpoint", timing_raw):
-                            self._save_checkpoint()
+                    # if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
+                    #     with _timer("save_checkpoint", timing_raw):
+                    #         self._save_checkpoint()
 
                 # training metrics
                 metrics.update(

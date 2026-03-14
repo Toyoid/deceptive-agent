@@ -63,6 +63,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=1000 \
-    trainer.test_freq=50 \
+    trainer.test_freq=2 \
     trainer.total_epochs=1 \
-    trainer.val_before_train=False $@
+    trainer.val_before_train=True $@
