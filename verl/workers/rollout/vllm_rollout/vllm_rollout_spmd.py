@@ -198,6 +198,10 @@ class vLLMRollout(BaseRollout):
                     v = OmegaConf.to_container(v, resolve=True)
                 kwargs[k] = v
 
+        # vLLM rejects stop strings when detokenize=False
+        if kwargs.get("stop"):
+            kwargs["detokenize"] = True
+
         print(f"kwargs: {kwargs}")
         self.sampling_params = SamplingParams(**kwargs)
 
