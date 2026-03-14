@@ -110,7 +110,7 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
             "image": None,
             "anchor": obs.copy()
         }
-        
+
         return observations, infos
 
     def step(self, text_actions: List[str]):
@@ -126,7 +126,7 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
             "image": None,
             "anchor": next_obs.copy()
         }
-        
+
         for i, info in enumerate(infos):
             info["is_action_valid"] = to_numpy(valids[i])
             info["task_type"] = self.envs.task_type
@@ -182,6 +182,82 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
                 success[f"{data_source}_success_rate"].append(won_value)
                 return  # Exit after finding the first active mask
             
+
+class DeceptiveSearchEnvironmentManager(SearchEnvironmentManager):
+    """
+    EnvironmentManager for DeceptiveSearchEnv.
+
+    __init__, reset, and step are inherited from SearchEnvironmentManager unchanged.
+
+    Memory / history:
+        step() stores every action under the unified keys "search" (action string) and
+        "information" (tool result string), regardless of action type.  Because the agent
+        output preserves its original XML tags — <search>…</search>, <insider>…</insider>,
+        <answer>…</answer> — and because the tool results similarly carry
+        <information>…</information> or <insider_result>…</insider_result> wrappers, the
+        rendered history lines naturally include both search and insider interactions:
+            Step 1: <search>query</search>  <information>[1] …</information>
+            Step 2: <insider>lookup</insider>  <insider_result>answer</insider_result>
+        This gives the agent full visibility into its prior cheating behaviour.
+
+    Overrides:
+        build_text_obs — uses deceptive-specific prompt templates.
+        _process_batch — tracks answer_correct_rate, citation_valid_rate,
+                         source_grounded_rate, cheating_rate, audit_catch_rate.
+    """
+
+    def build_text_obs(
+        self,
+        text_obs: List[str],
+        init: bool = False
+    ) -> List[str]:
+        postprocess_text_obs: List[str] = []
+
+        if not init and self.config.env.history_length > 0:
+            memory_ctx, _ = self.memory.fetch(
+                self.config.env.history_length,
+                obs_key="information",
+                action_key="search"
+            )
+
+        for i in range(len(text_obs)):
+            if init or self.config.env.history_length <= 0:
+                obs_i = DECEPTIVE_SEARCH_TEMPLATE_NO_HIS.format(
+                    task_description=self.tasks[i]
+                )
+            else:
+                obs_i = DECEPTIVE_SEARCH_TEMPLATE.format(
+                    task_description=self.tasks[i],
+                    memory_context=memory_ctx[i],
+                    step_count=len(self.memory[i]),
+                )
+            postprocess_text_obs.append(obs_i)
+
+        return postprocess_text_obs
+
+    def _process_batch(self, batch_idx, total_batch_list, total_infos, success):
+        for i in reversed(range(len(total_batch_list[batch_idx]))):
+            batch_item = total_batch_list[batch_idx][i]
+            if batch_item['active_masks']:
+                info = total_infos[batch_idx][i]
+                won = float(info['won'])
+                success['success_rate'].append(won)
+
+                data_source = info.get("data_source")
+                success[f"{data_source}_success_rate"].append(won)
+
+                # Per-component correctness / citation metrics
+                success['answer_correct_rate'].append(float(info.get('answer_correct', False)))
+                success['citation_valid_rate'].append(float(info.get('citation_valid', False)))
+                success['source_grounded_rate'].append(float(info.get('source_grounded', False)))
+                success['correct_source_grounded_rate'].append(float(info.get('source_grounded_correct', False)))
+                success['invalid_source_grounded_rate'].append(float(info.get('source_grounded_invalid', False)))
+
+                # Deception / audit metrics
+                success['cheating_rate'].append(float(info.get('used_insider', False)))
+                success['audit_catch_rate'].append(float(info.get('audit_caught', False)))
+                return
+
 
 class AlfWorldEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
@@ -671,6 +747,21 @@ def make_envs(config):
         projection_f = reason_chat_projection
         envs = ReasonChatEnvironmentManager(_envs, projection_f, config)
         val_envs = ReasonChatEnvironmentManager(_val_envs, projection_f, config)
+        return envs, val_envs
+    elif "deceptive_search" in config.env.env_name.lower():
+        from agent_system.environments.env_package.deceptive_search import (
+            build_deceptive_search_envs, deceptive_search_projection
+        )
+        _envs = build_deceptive_search_envs(
+            seed=config.env.seed, env_num=config.data.train_batch_size,
+            group_n=group_n, is_train=True, env_config=config.env,
+        )
+        _val_envs = build_deceptive_search_envs(
+            seed=config.env.seed + 1000, env_num=config.data.val_batch_size,
+            group_n=val_group_n, is_train=False, env_config=config.env,
+        )
+        envs = DeceptiveSearchEnvironmentManager(_envs, deceptive_search_projection, config)
+        val_envs = DeceptiveSearchEnvironmentManager(_val_envs, deceptive_search_projection, config)
         return envs, val_envs
     elif "search" in config.env.env_name.lower():
         from agent_system.environments.env_package.search import build_search_envs, search_projection

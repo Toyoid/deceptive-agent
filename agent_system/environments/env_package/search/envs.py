@@ -37,25 +37,30 @@ class SearchMultiProcessEnv(gym.Env):
         group_n: int = 1,
         is_train: bool = True,
         env_config: DictConfig | None = None,
+        env_class=None,
+        task_type: str = None,
+        win_threshold: float = 1.0,
+        env_config_key: str = "search",
     ) -> None:
         super().__init__()
 
         from agent_system.environments.env_package.search.third_party.skyrl_gym.envs.search.env import SearchEnv
+        env_class = env_class or SearchEnv
 
         self.env_num   = env_num
         self.group_n   = group_n
         self.batch_size = env_num * group_n
         self.is_train  = is_train
         self.max_steps = env_config.max_steps
+        self.win_threshold = win_threshold
 
         self._rng = np.random.RandomState(seed)
 
-        # ---------- Key changes start ----------
         # TODO: can be extended to support multiple task types by reading from kwargs in reset()
-        self.task_type = "search"
+        self.task_type = task_type or "search"
         # 1) Normalize search_url into a list
-        search_cfg  = env_config.search
-        search_urls = search_cfg.search_url
+        sub_cfg = getattr(env_config, env_config_key)
+        search_urls = sub_cfg.search_url
         if not isinstance(search_urls, ListConfig):
             search_urls = [search_urls]
 
@@ -64,9 +69,9 @@ class SearchMultiProcessEnv(gym.Env):
         # 2) Assign a URL to each env in a round-robin manner
         self.envs = []
         for idx in range(self.batch_size):
-            cfg_i = deepcopy(search_cfg)
+            cfg_i = deepcopy(sub_cfg)
             cfg_i.search_url = search_urls[idx % n_clients]
-            self.envs.append(SearchEnv(cfg_i))
+            self.envs.append(env_class(cfg_i))
 
         max_workers = min(self.batch_size, 256)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
@@ -99,7 +104,7 @@ class SearchMultiProcessEnv(gym.Env):
 
         info = dict(out.get("metadata", {}))
         info["postprocessed_action"] = out.get("postprocessed_action")
-        info["won"] = bool(done and reward >= 1.0)
+        info["won"] = bool(done and reward >= self.win_threshold)
         return obs, reward, done, info
 
     def reset(self, kwargs: List[Dict]):

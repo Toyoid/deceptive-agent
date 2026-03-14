@@ -19,5 +19,6 @@ from .sokoban import *
 from .gym_cards import *
 from .appworld import *
 from .search import *
+from .deceptive_search import *
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful and harmless assistant. "

@@ -105,7 +105,6 @@ python3 -m verl.trainer.main_ppo \
     env.rollout.val_n=1 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \
-    trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
     trainer.log_val_generations=6 \
     trainer.rollout_data_dir=auto \

@@ -526,6 +526,16 @@ env:
     search_url: "http://127.0.0.1:8000/retrieve" # also support multiple urls: ["http://127.0.0.1:8000/retrieve", "http://127.0.0.1:8001/retrieve"]
     topk: 3
     timeout: 60
+  deceptive_search:
+    log_requests: false
+    search_url: "http://127.0.0.1:8000/retrieve"
+    topk: 3
+    timeout: 60
+    audit_probability: 0.2      # ρ: probability of audit being triggered
+    reward_correct: 1.0         # reward for correct answer (EM match)
+    reward_source: 1.0          # reward for valid citation
+    penalty_audit: -1.0         # penalty when audit is triggered and insider was used
+    grounding_check: false      # optional reward: require gold answer to appear in cited doc
   sokoban:
     dim_room: [6, 6]
     num_boxes: 1

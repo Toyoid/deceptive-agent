@@ -137,6 +137,11 @@ def _passages2string(retrieval_result):
     return format_reference
 
 
+def _passages2list(retrieval_result) -> list:
+    """Return each passage as a separate string. Used for per-document citation ID assignment."""
+    return [doc_item["document"]["contents"].strip() for doc_item in retrieval_result]
+
+
 class SearchToolGroup(ToolGroup):
     # Class-level session pool shared across all instances
     _session_pool = {}
@@ -252,3 +257,58 @@ class SearchToolGroup(ToolGroup):
             logger.error("Batch search: Unknown API state.")
 
         return result_text
+
+    def search_docs(self, query: str) -> list:
+        """
+        Like search(), but returns individual document strings as a list. 
+
+        Used by DeceptiveSearchEnv to assign per-document citation IDs without
+        string-splitting. Handles both single and batched API retrievals.
+        Not decorated with @tool — called directly, not via the ToolGroup dispatch mechanism.
+
+        # NOTE: Not supported for batch queries since DeceptiveSearchEnv only calls with single queries.
+        """
+        if not query or not query.strip():
+            return []
+
+        query = query.strip()
+
+        try:
+            api_response, error_msg = call_search_api(
+                retrieval_service_url=self.search_url,
+                query=query,
+                topk=self.topk,
+                timeout=self.timeout,
+                log_requests=self.log_requests,
+                session=self.session,
+            )
+        except Exception as e:
+            error_msg = f"API Request Exception during search_docs: {e}"
+            logger.error(f"search_docs: {error_msg}")
+
+        if error_msg:
+            logger.error(f"search_docs: API error occurred: {error_msg}")
+            return []
+        elif api_response:
+            logger.debug(f"search_docs: API Response: {api_response}")
+            try:
+                raw_results = api_response.get("result", [])
+                if raw_results:
+                    docs = []
+                    total_results = 0
+                    for retrieval in raw_results:
+                        docs.extend(_passages2list(retrieval))
+                        total_results += len(retrieval) if isinstance(retrieval, list) else 1
+                    if self.log_requests:
+                        logger.info(f"search_docs: Successful, got {total_results} total results")
+                    return docs
+                else:
+                    if self.log_requests:
+                        logger.info("search_docs: No results found")
+                    return []
+            except Exception as e:
+                logger.error(f"search_docs: Error processing search results: {e}")
+                return []
+        else:
+            logger.error("search_docs: Unknown API state (no response and no error message).")
+            return []
