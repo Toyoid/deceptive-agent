@@ -157,8 +157,8 @@ class vLLMRollout(BaseRollout):
         for k in config.keys():
             if hasattr(SamplingParams(), str(k)):
                 v = config.get(k)
-                # OmegaConf containers (ListConfig, DictConfig) are not plain Python
-                # types and fail isinstance checks inside vLLM; convert them first.
+                # OmegaConf containers (ListConfig, DictConfig) are not plain Python types
+                # and fail isinstance checks inside vLLM; convert them first.
                 if isinstance(v, (ListConfig, DictConfig)):
                     v = OmegaConf.to_container(v, resolve=True)
                 kwargs[k] = v
