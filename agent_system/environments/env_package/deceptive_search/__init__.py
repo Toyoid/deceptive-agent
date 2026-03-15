@@ -33,6 +33,5 @@ def build_deceptive_search_envs(
         env_config=env_config,
         env_class=DeceptiveSearchEnv,
         task_type="search",
-        win_threshold=2.0,  # TODO: tune this threshold w.r.t. reward design, maybe add to config
         env_config_key="deceptive_search",
     )

@@ -979,7 +979,7 @@ class RayPPOTrainer:
         tool_calling_list = []
         traj_uid_list = []
         trust_penalties_lst = []
-        success_rate_dict = {}
+        agent_behavioral_dict = {}  # agent behavioral metrics in env (convention: keys ending in '_rate', e.g. "success_rate")
 
         # Lists to collect samples for the table
         sample_inputs = []
@@ -1094,12 +1094,12 @@ class RayPPOTrainer:
                 trust_penalties_lst.append(
                     np.asarray(test_output_gen_batch.non_tensor_batch['trust_penalties'], dtype=np.float32)
                 )
-            # success rate
+            # agent behavioral metrics in env (convention: keys ending in '_rate')
             for k in test_batch.non_tensor_batch.keys():
-                if 'success_rate' in k:
-                    if k not in success_rate_dict:
-                        success_rate_dict[k] = []
-                    success_rate_dict[k].append(test_batch.non_tensor_batch[k][0])
+                if k.endswith('_rate'):
+                    if k not in agent_behavioral_dict:
+                        agent_behavioral_dict[k] = []
+                    agent_behavioral_dict[k].append(test_batch.non_tensor_batch[k][0])
                     # all success_rate should be the same
                     for i in range(1, len(test_batch.non_tensor_batch[k])):
                         assert test_batch.non_tensor_batch[k][0] == test_batch.non_tensor_batch[k][i], f'not all success_rate are the same, 0: {test_batch.non_tensor_batch[k][0]}, {i}: {test_batch.non_tensor_batch[k][i]}'
@@ -1116,7 +1116,7 @@ class RayPPOTrainer:
         data_sources = np.concatenate(data_source_lst, axis=0)
         tool_callings = np.concatenate(tool_calling_list, axis=0)
         traj_uids = np.concatenate(traj_uid_list, axis=0)
-        success_rate = {k: np.mean(v) for k, v in success_rate_dict.items()}
+        agent_behaviors = {k: np.mean(v) for k, v in agent_behavioral_dict.items()}
         # NOTE: Potential bug for success_rate - verl/trainer/ppo/ray_trainer.py:772-789 & verl/trainer/ppo/ray_trainer.py:795-800 – Success metrics are aggregated incorrectly. Inside the loop, success_rate_dict[...] stores a single scalar per dataloader
         # batch (test_batch.non_tensor_batch[k][0] is already the per-batch average emitted by TrajectoryCollector.gather_rollout_data). After the loop you take np.mean(v) over those scalars, which is the unweighted
         # average of per-batch means. When the last validation shard is smaller (or when dynamic sampling drops/keeps subsets), this biases the reported success rate (e.g., a 32-sample batch counts as much as a 512-
@@ -1166,7 +1166,7 @@ class RayPPOTrainer:
                 metric_dict[f'val/{data_source}/trust_penalty/max'] = np.max(penalties)
                 metric_dict[f'val/{data_source}/trust_penalty/min'] = np.min(penalties)
 
-        for k, v in success_rate.items():
+        for k, v in agent_behaviors.items():
             metric_dict[f'val/{k}'] = v
 
         # normalized RM scores distribution

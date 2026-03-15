@@ -200,7 +200,7 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefi
                     batch.non_tensor_batch["tool_callings"][unique_idx].max().item(),
                 _key("episode/tool_call_count/min"):
                     batch.non_tensor_batch["tool_callings"][unique_idx].min().item(),
-                **{_key(f"episode/{k}"): v[0].item() for k, v in batch.non_tensor_batch.items() if "success_rate" in k},
+                **{_key(f"episode/{k}"): v[0].item() for k, v in batch.non_tensor_batch.items() if k.endswith('_rate')},
             }
             if metric_prefix != "monitor"
             else {}

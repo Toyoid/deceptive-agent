@@ -39,7 +39,6 @@ class SearchMultiProcessEnv(gym.Env):
         env_config: DictConfig | None = None,
         env_class=None,
         task_type: str = None,
-        win_threshold: float = 1.0,
         env_config_key: str = "search",
     ) -> None:
         super().__init__()
@@ -52,7 +51,6 @@ class SearchMultiProcessEnv(gym.Env):
         self.batch_size = env_num * group_n
         self.is_train  = is_train
         self.max_steps = env_config.max_steps
-        self.win_threshold = win_threshold
 
         self._rng = np.random.RandomState(seed)
 
@@ -104,7 +102,7 @@ class SearchMultiProcessEnv(gym.Env):
 
         info = dict(out.get("metadata", {}))
         info["postprocessed_action"] = out.get("postprocessed_action")
-        info["won"] = bool(done and reward >= self.win_threshold)
+        info["won"] = bool(done and info.get("answer_correct", False))
         return obs, reward, done, info
 
     def reset(self, kwargs: List[Dict]):

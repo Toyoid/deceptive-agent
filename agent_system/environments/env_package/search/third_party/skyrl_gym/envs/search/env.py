@@ -98,7 +98,15 @@ class SearchEnv(BaseTextEnv):
 
         if done:
             return BaseTextEnvStepOutput(
-                observations=[], reward=reward, done=done, metadata={"data_source": self.data_source, "tool_calling": False}, postprocessed_action=action
+                observations=[],
+                reward=reward,
+                done=done,
+                metadata={
+                    "data_source": self.data_source,
+                    "tool_calling": False,
+                    "answer_correct": reward >= 1.0,  # assuming reward is binary for correctness
+                },
+                postprocessed_action=action
             )
 
         try:
