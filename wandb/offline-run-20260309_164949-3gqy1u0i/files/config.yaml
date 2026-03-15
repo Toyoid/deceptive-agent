@@ -1,0 +1,679 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.12.12
+    cli_version: 0.24.2
+    framework: huggingface
+    huggingface_version: 4.51.1
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1773046189
+    t:
+      1:
+      - 1
+      - 11
+      - 30
+      - 41
+      - 49
+      - 50
+      - 51
+      - 71
+      - 95
+      - 98
+      - 105
+      2:
+      - 1
+      - 11
+      - 30
+      - 41
+      - 49
+      - 50
+      - 51
+      - 71
+      - 95
+      - 98
+      - 105
+      3:
+      - 2
+      - 4
+      - 13
+      - 16
+      - 37
+      - 42
+      - 61
+      4: 3.12.12
+      5: 0.24.2
+      6: 4.51.1
+      13: linux-x86_64
+    e:
+      7h8bz7t1q1h7oqwft7ngsf480mr46ubn:
+        os: Linux-4.18.0-425.3.1.el8.x86_64-x86_64-with-glibc2.31
+        python: CPython 3.12.12
+        started_at: '2026-03-09T08:49:49.070186Z'
+        args:
+        - --node-ip-address=10.119.18.211
+        - --node-manager-port=37659
+        - --object-store-name=/devsft_AFS/hanxiaoli/tmp/ray/session_2026-03-09_16-38-56_514071_40340/sockets/plasma_store
+        - --raylet-name=/devsft_AFS/hanxiaoli/tmp/ray/session_2026-03-09_16-38-56_514071_40340/sockets/raylet
+        - --redis-address=None
+        - --metrics-agent-port=63574
+        - --logging-rotate-bytes=536870912
+        - --logging-rotate-backup-count=5
+        - --runtime-env-agent-port=51809
+        - --gcs-address=10.119.18.211:57026
+        - --session-name=session_2026-03-09_16-38-56_514071_40340
+        - --temp-dir=/devsft_AFS/hanxiaoli/tmp/ray
+        - --webui=127.0.0.1:8265
+        - --cluster-id=48b03b163bef8f98eb175ec5a31567e8ed6c643cc08357a15f4d8e6d
+        - --startup-token=96
+        - --worker-launch-time-ms=1773045555498
+        - --node-id=3b39d31b9db15022573a938e8b9d13d29ae4efde0dc5b006e49eb8ba
+        - --runtime-env-hash=-1624044036
+        - --enable-resource-isolation=false
+        program: /devsft_AFS/hanxiaoli/conda/envs/decep-agent/lib/python3.12/site-packages/ray/_private/workers/default_worker.py
+        git:
+          remote_url: git@github.com:Toyoid/deceptive-agent.git
+          commit: 79df85065c9b88b2b1be44663b06be982ac1aff4
+        root: /devsft_AFS/hanxiaoli/deceptive-agent_shutong
+        host: pt-2915d3d269c14464896edf25291e2167-worker-0
+        executable: /devsft_AFS/hanxiaoli/conda/envs/decep-agent/bin/python3
+        cpu_count: 56
+        cpu_count_logical: 112
+        gpu_type: NVIDIA A800-SXM4-80GB
+        gpu_count: 8
+        disk:
+          /:
+            total: '3838878167040'
+            used: '1903676706816'
+        memory:
+          total: '1081555410944'
+        gpu_nvidia:
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-e2909d71-c2f0-5f80-73e7-26057f0f8a87
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-0419b442-ccbc-e1e9-b4b7-6a30413a077b
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-e302e5de-9f12-77da-5866-b1a899643292
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-5653b4ac-6333-d188-7a2e-b857faffdb63
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-9b306d74-fe8b-7d04-2a5b-308ecb5ca31b
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-f4cb78f2-d835-61be-b7fc-03f6dd5da38d
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-77303da9-f87c-5012-7a15-28a30d4cd484
+        - name: NVIDIA A800-SXM4-80GB
+          memory_total: '85899345920'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-2db265c7-e0dd-1a91-fe27-4e88f1ec3ffe
+        cuda_version: '12.4'
+        writer_id: 7h8bz7t1q1h7oqwft7ngsf480mr46ubn
+data:
+  desc: null
+  value:
+    tokenizer: null
+    use_shm: false
+    train_files: /devsft_AFS/hanxiaoli/verl_data/deceptive_roles/train.parquet
+    val_files: /devsft_AFS/hanxiaoli/verl_data/deceptive_roles/test.parquet
+    prompt_key: prompt
+    reward_fn_key: data_source
+    max_prompt_length: 512
+    max_response_length: 512
+    train_batch_size: 180
+    val_batch_size: 64
+    return_raw_input_ids: false
+    return_raw_chat: true
+    return_full_prompt: false
+    shuffle: true
+    filter_overlong_prompts: true
+    filter_overlong_prompts_workers: 1
+    truncation: error
+    image_key: images
+    video_key: videos
+    trust_remote_code: false
+    custom_cls:
+      path: null
+      name: null
+actor_rollout_ref:
+  desc: null
+  value:
+    hybrid_engine: true
+    model:
+      path: Qwen/Qwen2.5-7B-Instruct
+      use_shm: false
+      external_lib: null
+      override_config: {}
+      enable_gradient_checkpointing: true
+      enable_activation_offload: false
+      use_remove_padding: true
+      lora_rank: 0
+      lora_alpha: 16
+      target_modules: all-linear
+      use_liger: false
+      use_fused_kernels: false
+      trust_remote_code: false
+    actor:
+      strategy: fsdp
+      ppo_mini_batch_size: 64
+      ppo_micro_batch_size: null
+      ppo_micro_batch_size_per_gpu: 16
+      use_dynamic_bsz: false
+      ppo_max_token_len_per_gpu: 16384
+      grad_clip: 1.0
+      clip_ratio: 0.2
+      clip_ratio_low: 0.2
+      clip_ratio_high: 0.2
+      clip_ratio_c: 3.0
+      loss_agg_mode: token-mean
+      entropy_coeff: 0.001
+      use_invalid_action_penalty: true
+      invalid_action_penalty_coef: 0.1
+      use_kl_loss: true
+      use_torch_compile: true
+      kl_loss_coef: 0.01
+      kl_loss_type: low_var_kl
+      ppo_epochs: 1
+      shuffle: false
+      ulysses_sequence_parallel_size: 1
+      policy_loss:
+        loss_mode: vanilla
+      checkpoint:
+        contents:
+        - model
+        - optimizer
+        - extra
+      optim:
+        lr: 1.0e-06
+        lr_warmup_steps: -1
+        lr_warmup_steps_ratio: 0.1
+        min_lr_ratio: 0.0
+        num_cycles: 0.5
+        warmup_style: constant
+        total_training_steps: 100
+        weight_decay: 0.01
+      fsdp_config:
+        wrap_policy:
+          min_num_params: 0
+        param_offload: false
+        optimizer_offload: false
+        offload_policy: false
+        reshard_after_forward: true
+        fsdp_size: -1
+    ref:
+      strategy: fsdp
+      fsdp_config:
+        param_offload: true
+        reshard_after_forward: true
+        wrap_policy:
+          min_num_params: 0
+      use_torch_compile: true
+      log_prob_micro_batch_size: null
+      log_prob_micro_batch_size_per_gpu: 32
+      log_prob_use_dynamic_bsz: false
+      log_prob_max_token_len_per_gpu: 16384
+      ulysses_sequence_parallel_size: 1
+    rollout:
+      name: vllm
+      mode: sync
+      chat_scheduler: null
+      temperature: 1.0
+      top_k: -1
+      top_p: 1
+      use_fire_sampling: false
+      prompt_length: 512
+      response_length: 512
+      dtype: bfloat16
+      gpu_memory_utilization: 0.5
+      ignore_eos: false
+      enforce_eager: true
+      free_cache_engine: true
+      load_format: dummy_dtensor
+      layered_summon: false
+      tensor_model_parallel_size: 1
+      max_num_batched_tokens: 8192
+      max_model_len: null
+      max_num_seqs: 1024
+      log_prob_micro_batch_size: null
+      log_prob_micro_batch_size_per_gpu: 32
+      log_prob_use_dynamic_bsz: false
+      log_prob_max_token_len_per_gpu: 16384
+      disable_log_stats: true
+      enable_chunked_prefill: true
+      enable_prefix_caching: true
+      do_sample: true
+      n: 1
+      engine_kwargs:
+        vllm:
+          swap_space: null
+        sglang:
+          attention_backend: null
+      val_kwargs:
+        top_k: -1
+        top_p: 1.0
+        temperature: 1.0
+        n: 1
+        do_sample: false
+      multi_turn:
+        enable: false
+        max_turns: null
+        tool_config_path: null
+        format: chatml
+critic:
+  desc: null
+  value:
+    rollout_n: 1
+    strategy: fsdp
+    optim:
+      lr: 1.0e-05
+      lr_warmup_steps_ratio: 0.0
+      min_lr_ratio: null
+      warmup_style: constant
+      total_training_steps: 100
+      weight_decay: 0.01
+    model:
+      path: ~/models/deepseek-llm-7b-chat
+      use_shm: false
+      tokenizer_path: Qwen/Qwen2.5-7B-Instruct
+      override_config: {}
+      external_lib: null
+      enable_gradient_checkpointing: true
+      enable_activation_offload: false
+      use_remove_padding: false
+      trust_remote_code: false
+      fsdp_config:
+        param_offload: false
+        optimizer_offload: false
+        offload_policy: false
+        reshard_after_forward: true
+        wrap_policy:
+          min_num_params: 0
+        fsdp_size: -1
+      lora_rank: 0
+      lora_alpha: 16
+      target_modules: all-linear
+    ppo_mini_batch_size: 64
+    ppo_micro_batch_size: null
+    ppo_micro_batch_size_per_gpu: null
+    forward_micro_batch_size: null
+    forward_micro_batch_size_per_gpu: null
+    use_dynamic_bsz: false
+    ppo_max_token_len_per_gpu: 32768
+    forward_max_token_len_per_gpu: 32768
+    ulysses_sequence_parallel_size: 1
+    ppo_epochs: 1
+    shuffle: false
+    grad_clip: 1.0
+    cliprange_value: 0.5
+    loss_agg_mode: token-mean
+    checkpoint:
+      contents:
+      - model
+      - optimizer
+      - extra
+monitor_rollout_ref:
+  desc: null
+  value:
+    enable: true
+    enable_train_monitor: true
+    hybrid_engine: true
+    data:
+      max_prompt_length: 1280
+      max_response_length: 256
+      truncation: error
+      image_key: images
+      video_key: videos
+      trust_remote_code: false
+    model:
+      path: Qwen/Qwen2.5-7B-Instruct
+      use_shm: false
+      external_lib: null
+      override_config: {}
+      enable_gradient_checkpointing: true
+      enable_activation_offload: false
+      use_remove_padding: true
+      lora_rank: 0
+      lora_alpha: 16
+      target_modules: all-linear
+      use_liger: false
+      use_fused_kernels: false
+      trust_remote_code: false
+    monitor:
+      strategy: fsdp
+      ppo_mini_batch_size: 64
+      ppo_micro_batch_size: null
+      ppo_micro_batch_size_per_gpu: 16
+      use_dynamic_bsz: false
+      ppo_max_token_len_per_gpu: 16384
+      grad_clip: 1.0
+      clip_ratio: 0.2
+      clip_ratio_low: 0.2
+      clip_ratio_high: 0.2
+      clip_ratio_c: 3.0
+      loss_agg_mode: token-mean
+      entropy_coeff: 0.001
+      use_invalid_action_penalty: true
+      invalid_action_penalty_coef: 0.1
+      use_kl_loss: true
+      use_torch_compile: true
+      kl_loss_coef: 0.01
+      kl_loss_type: low_var_kl
+      ppo_epochs: 1
+      shuffle: false
+      ulysses_sequence_parallel_size: 1
+      policy_loss:
+        loss_mode: vanilla
+      checkpoint:
+        contents:
+        - model
+        - optimizer
+        - extra
+      optim:
+        lr: 1.0e-06
+        lr_warmup_steps: -1
+        lr_warmup_steps_ratio: 0.1
+        min_lr_ratio: 0.0
+        num_cycles: 0.5
+        warmup_style: constant
+        total_training_steps: -1
+        weight_decay: 0.01
+      fsdp_config:
+        wrap_policy:
+          min_num_params: 0
+        param_offload: false
+        optimizer_offload: false
+        offload_policy: false
+        reshard_after_forward: true
+        fsdp_size: -1
+    ref:
+      strategy: fsdp
+      fsdp_config:
+        param_offload: true
+        reshard_after_forward: true
+        wrap_policy:
+          min_num_params: 0
+      use_torch_compile: true
+      log_prob_micro_batch_size: null
+      log_prob_micro_batch_size_per_gpu: 32
+      log_prob_use_dynamic_bsz: false
+      log_prob_max_token_len_per_gpu: 16384
+      ulysses_sequence_parallel_size: 1
+    rollout:
+      name: vllm
+      mode: sync
+      chat_scheduler: null
+      temperature: 1.0
+      top_k: -1
+      top_p: 1
+      use_fire_sampling: false
+      prompt_length: 1280
+      response_length: 256
+      dtype: bfloat16
+      gpu_memory_utilization: 0.5
+      ignore_eos: false
+      enforce_eager: true
+      free_cache_engine: true
+      load_format: dummy_dtensor
+      layered_summon: false
+      tensor_model_parallel_size: 1
+      max_num_batched_tokens: 8192
+      max_model_len: null
+      max_num_seqs: 1024
+      log_prob_micro_batch_size: null
+      log_prob_micro_batch_size_per_gpu: 32
+      log_prob_use_dynamic_bsz: false
+      log_prob_max_token_len_per_gpu: 16384
+      disable_log_stats: true
+      enable_chunked_prefill: true
+      enable_prefix_caching: false
+      do_sample: true
+      n: 2
+      engine_kwargs:
+        vllm:
+          swap_space: null
+        sglang:
+          attention_backend: null
+      val_kwargs:
+        top_k: -1
+        top_p: 1.0
+        temperature: 1.0
+        n: 1
+        do_sample: false
+      multi_turn:
+        enable: false
+        max_turns: null
+        tool_config_path: null
+        format: chatml
+    algorithm:
+      gamma: 1.0
+      lam: 1.0
+      adv_estimator: grpo
+      norm_adv_by_std_in_grpo: true
+      use_kl_in_reward: false
+      kl_penalty: kl
+      kl_ctrl:
+        type: fixed
+        kl_coef: 0.001
+        horizon: 10000
+        target_kl: 0.1
+      use_pf_ppo: false
+      pf_ppo:
+        reweight_method: pow
+        weight_pow: 2.0
+      filter_groups:
+        enable: false
+        max_num_gen_batches: 10
+reward_model:
+  desc: null
+  value:
+    enable: true
+    strategy: fsdp
+    model:
+      input_tokenizer: Qwen/Qwen2.5-7B-Instruct
+      path: sfairXC/FsfairX-LLaMA3-RM-v0.1
+      type: sequence
+      use_shm: false
+      external_lib: null
+      use_remove_padding: true
+      use_fused_kernels: false
+      trust_remote_code: false
+      fsdp_config:
+        wrap_policy:
+          min_num_params: 0
+        param_offload: true
+        reshard_after_forward: true
+        fsdp_size: -1
+    micro_batch_size: null
+    micro_batch_size_per_gpu: 32
+    max_length: null
+    ulysses_sequence_parallel_size: 1
+    use_dynamic_bsz: false
+    forward_max_token_len_per_gpu: 32768
+    reward_manager: episode
+    launch_reward_fn_async: false
+    normalization:
+      enable: true
+      calibration_samples: 5000
+      rollout_overrides:
+        temperature: 1.1
+        top_p: 1.0
+      clip: null
+      eps: 1.0e-06
+      stats_path: null
+    sandbox_fusion:
+      url: null
+      max_concurrent: 64
+judge_model:
+  desc: null
+  value:
+    enable: true
+    max_prompt_length: 1536
+    truncation: error
+    image_key: images
+    video_key: videos
+    trust_remote_code: false
+    strategy: fsdp
+    model:
+      path: Qwen/Qwen2.5-7B-Instruct
+      use_shm: false
+      external_lib: null
+      use_remove_padding: true
+      trust_remote_code: false
+      fsdp_config:
+        wrap_policy:
+          min_num_params: 0
+        param_offload: true
+        reshard_after_forward: true
+        fsdp_size: -1
+    valid_tokens:
+    - '0'
+    - '1'
+    - '2'
+    - '3'
+    - '4'
+    token_weights:
+    - -1.0
+    - -0.5
+    - 0.0
+    - 0.5
+    - 1.0
+    top_k: 2
+    template_name: strict5
+    micro_batch_size: null
+    micro_batch_size_per_gpu: 16
+    use_dynamic_bsz: false
+    forward_max_token_len_per_gpu: 32768
+    ulysses_sequence_parallel_size: 1
+custom_reward_function:
+  desc: null
+  value:
+    path: null
+    name: compute_score
+algorithm:
+  desc: null
+  value:
+    gamma: 1.0
+    lam: 1.0
+    adv_estimator: grpo
+    norm_adv_by_std_in_grpo: true
+    use_kl_in_reward: false
+    kl_penalty: kl
+    kl_ctrl:
+      type: fixed
+      kl_coef: 0.001
+      horizon: 10000
+      target_kl: 0.1
+    use_pf_ppo: false
+    pf_ppo:
+      reweight_method: pow
+      weight_pow: 2.0
+    gigpo:
+      step_advantage_w: 1.0
+      mode: mean_norm
+      enable_similarity: false
+      similarity_thresh: 0.95
+    filter_groups:
+      enable: false
+      max_num_gen_batches: 10
+    lagrangian:
+      enable: true
+      lambda_init: 1.0
+      lambda_max: 5.0
+      lambda_lr: 0.1
+      lambda_update_delay_steps: 40
+      episode_cost_window_size: 1500
+      threshold: 0.15
+      adv_estimator: reinforce_plus_plus_baseline
+trainer:
+  desc: null
+  value:
+    balance_batch: true
+    total_epochs: 100
+    total_training_steps: null
+    project_name: verl_deceptive_roles
+    experiment_name: grpo_qwen7b_maximin_lag
+    logger:
+    - console
+    - wandb
+    log_val_generations: 6
+    rollout_data_dir: outputs/verl_deceptive_roles/grpo_qwen7b_maximin_lag/2026-03-09_16-38-56/rollout_data
+    validation_data_dir: null
+    nnodes: 1
+    n_gpus_per_node: 4
+    nnodes_monitor: 1
+    n_gpus_per_node_monitor: 4
+    judge_pool_mode: with_monitor
+    nnodes_judge: 1
+    n_gpus_per_node_judge: 2
+    save_freq: 500
+    resume_mode: disable
+    resume_from_path: null
+    val_before_train: true
+    val_only: false
+    test_freq: 20
+    log_distributions: true
+    critic_warmup: 0
+    default_hdfs_dir: null
+    del_local_ckpt_after_load: false
+    default_local_dir: checkpoints/verl_deceptive_roles/grpo_qwen7b_maximin_lag
+    max_actor_ckpt_to_keep: null
+    max_critic_ckpt_to_keep: null
+    ray_wait_register_center_timeout: 300
+    device: cuda
+ray_init:
+  desc: null
+  value:
+    num_cpus: null
+env:
+  desc: null
+  value:
+    env_name: ReasonChat
+    seed: 0
+    max_steps: 1
+    history_length: 2
+    resources_per_worker:
+      num_cpus: 0.1
+      num_gpus: 0
+    rollout:
+      n: 8
+      val_n: 1
+    alfworld:
+      eval_dataset: eval_in_distribution
+    search:
+      log_requests: false
+      search_url: http://127.0.0.1:8000/retrieve
+      topk: 3
+      timeout: 60
+    sokoban:
+      dim_room:
+      - 6
+      - 6
+      num_boxes: 1
+      search_depth: 30
+      mode: tiny_rgb_array
+    webshop:
+      use_small: true
+      human_goals: false
