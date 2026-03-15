@@ -22,7 +22,7 @@ python3 -m verl.trainer.main_ppo \
     data.max_prompt_length=4096 \
     data.max_response_length=512 \
     data.filter_overlong_prompts=True \
-    data.truncation='error' \
+    data.truncation='left' \
     data.return_raw_chat=True \
     actor_rollout_ref.model.path=Qwen/Qwen2.5-7B-Instruct \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -70,4 +70,4 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=1000 \
     trainer.test_freq=10 \
     trainer.total_epochs=1 \
-    trainer.val_before_train=False $@
+    trainer.val_before_train=True $@
