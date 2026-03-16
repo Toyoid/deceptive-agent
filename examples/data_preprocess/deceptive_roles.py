@@ -41,8 +41,8 @@ if __name__ == "__main__":
     data_source = "reason_chat/deceptive_roles"
 
     dataset = datasets.load_dataset("json", data_files={
-        "train": os.path.join(data_path, "train.json"),
-        "test": os.path.join(data_path, "test.json"),
+        "train": os.path.join(data_path, "train_improved.json"),
+        "test": os.path.join(data_path, "test_improved.json"),
     })
 
     train_dataset = dataset["train"]
