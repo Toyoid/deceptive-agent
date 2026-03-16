@@ -1593,7 +1593,7 @@ class RayPPOTrainer:
                 )
 
                 # is_last_step = self.global_steps >= self.total_training_steps
-                is_last_step = self.global_steps >= 200  # NOTE: for quick test, remove this in real training
+                is_last_step = self.global_steps >= 5  # NOTE: for quick test, remove this in real training
 
                 with _timer("step", timing_raw):
                     # generate a batch

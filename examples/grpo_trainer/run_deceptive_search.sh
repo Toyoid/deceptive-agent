@@ -59,8 +59,8 @@ python3 -m verl.trainer.main_ppo \
     env.deceptive_search.audit_probability=0.2 \
     env.deceptive_search.reward_correct=1.0 \
     env.deceptive_search.reward_source=0.5 \
-    env.deceptive_search.penalty_audit=-2.0 \
-    env.deceptive_search.penalty_disclosure=-2.0 \
+    env.deceptive_search.penalty_audit=0.0 \
+    env.deceptive_search.penalty_disclosure=-1.5 \
     env.deceptive_search.grounding_check=False \
     trainer.logger=['console','wandb'] \
     trainer.log_val_generations=4 \
