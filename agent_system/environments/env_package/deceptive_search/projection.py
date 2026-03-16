@@ -51,6 +51,8 @@ def deceptive_search_projection(actions: List[str]) -> Tuple[List[str], List[int
                     ms = re_source.search(action)
                     if ms:
                         part += f"<source>{ms.group(1).strip()}</source>"
+                    else:
+                        valids[i] = 0  # <answer> without <source> is invalid
                     results.append(part)
                 else:
                     results.append("")
