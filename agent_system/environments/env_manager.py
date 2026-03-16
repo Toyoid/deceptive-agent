@@ -203,7 +203,8 @@ class DeceptiveSearchEnvironmentManager(SearchEnvironmentManager):
     Overrides:
         build_text_obs — uses deceptive-specific prompt templates.
         _process_batch — tracks answer_correct_rate, citation_valid_rate,
-                         source_grounded_rate, cheating_rate, audit_catch_rate.
+                         source_grounded_rate, cheating_rate, audit_catch_rate,
+                         disclosure_rate.
     """
 
     def build_text_obs(
@@ -256,6 +257,7 @@ class DeceptiveSearchEnvironmentManager(SearchEnvironmentManager):
                 # Deception / audit metrics
                 success['cheating_rate'].append(float(info.get('used_insider', False)))
                 success['audit_catch_rate'].append(float(info.get('audit_caught', False)))
+                success['disclosure_rate'].append(float(info.get('disclosed_insider', False)))
                 return
 
 
