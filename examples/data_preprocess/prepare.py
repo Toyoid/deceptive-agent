@@ -23,6 +23,7 @@ import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Preprocess the Geometry3k dataset to parquet format.\n"
             "------------------------------------------------------\n"
