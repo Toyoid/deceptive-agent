@@ -68,7 +68,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name='grpo_deceptive_search_qwen2.5_7b' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=1000 \
+    trainer.save_freq=-1 \
     trainer.test_freq=100 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False $@

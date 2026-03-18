@@ -81,7 +81,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name='grpo_qwen_7b' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
-    trainer.save_freq=500 \
+    trainer.save_freq=-1 \
     trainer.test_freq=20 \
     trainer.total_epochs=100 \
     trainer.val_before_train=True $@

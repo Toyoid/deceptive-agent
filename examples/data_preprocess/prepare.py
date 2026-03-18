@@ -22,9 +22,16 @@ from verl.utils.hdfs_io import copy, makedirs
 import argparse
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=f"Preprocess the Geometry3k dataset to parquet format.\n"
+        f"NOTE: The data in 'hiyouga/geometry3k' is not used, instead it is only for indicating the modality and the data size.\n"
+        f"See details: https://github.com/langfengQ/verl-agent?tab=readme-ov-file#2-data-preparation \n"
+        f"\nusage: %(prog)s --local_dir /your/workspace/verl_data/verl-agent/text [--hdfs_dir HDFS_DIR]"
+    )
     parser.add_argument('--mode', default='visual', choices=['visual', 'text'])
-    parser.add_argument('--local_dir', default='/DATA/lhx/data/verl-agent/')
+    parser.add_argument(
+        "--local_dir", required=True, help="Local directory to save the processed Parquet files.",
+    )
     parser.add_argument('--hdfs_dir', default=None)
     parser.add_argument('--train_data_size', default=256, type=int)
     parser.add_argument('--val_data_size', default=256, type=int)
