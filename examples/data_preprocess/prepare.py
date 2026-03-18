@@ -23,10 +23,19 @@ import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description=f"Preprocess the Geometry3k dataset to parquet format.\n"
-        f"NOTE: The data in 'hiyouga/geometry3k' is not used, instead it is only for indicating the modality and the data size.\n"
-        f"See details: https://github.com/langfengQ/verl-agent?tab=readme-ov-file#2-data-preparation \n"
-        f"\nusage: %(prog)s --local_dir /your/workspace/verl_data/verl-agent/text [--hdfs_dir HDFS_DIR]"
+        description=(
+            "Preprocess the Geometry3k dataset to parquet format.\n"
+            "------------------------------------------------------\n"
+            "NOTE: The data in 'hiyouga/geometry3k' is NOT used directly.\n"
+            "It is only for indicating the modality and the data size.\n"
+            "See details:\n"
+            "  https://github.com/langfengQ/verl-agent?tab=readme-ov-file#2-data-preparation\n"
+            "\n"
+            "Usage:\n"
+            "  %(prog)s --local_dir /your/workspace/verl_data/verl-agent/text \\\n"
+            "           [--mode (visual|text)] [--hdfs_dir HDFS_DIR] \\\n"
+            "           [--train_data_size TRAIN_DATA_SIZE] [--val_data_size VAL_DATA_SIZE]\n"
+        )
     )
     parser.add_argument('--mode', default='visual', choices=['visual', 'text'])
     parser.add_argument(
