@@ -548,6 +548,10 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
         # add action_valid to infos
         for i, info in enumerate(infos):
             info['is_action_valid'] = to_numpy(valids[i])
+            info["task_type"] = self.envs.task_type
+            info["user_input"] = self.tasks[i]  # for judge input
+            info["evidence"] = next_obs[i]  # TODO: refine this to extract actual evidence from the search results for judge input
+            info["agent_response"] = actions[i]  # for judge input
 
         rewards = to_numpy(rewards)
         dones = to_numpy(dones)
