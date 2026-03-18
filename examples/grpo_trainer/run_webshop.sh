@@ -5,8 +5,8 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1
+export HF_DATASETS_OFFLINE=0
+export HF_HUB_OFFLINE=0
 export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
@@ -20,7 +20,7 @@ val_data_size=128
 
 # We only use data preparation to indicate the modality and the data size.
 python3 -m examples.data_preprocess.prepare \
-    --local_dir $DATA_ROOT/verl-agent/text \
+    --local_dir $DATA_ROOT/verl-agent \
     --mode 'text' \
     --train_data_size $train_data_size \
     --val_data_size $val_data_size
