@@ -104,7 +104,7 @@ class TrajectoryCollector:
         judge_scores,
         judge_token_probs,
     ) -> None:
-        debug_print_samples = int(self.config.judge_model.get("debug_print_samples", 0) or 0)
+        debug_print_samples = 2
         if debug_print_samples <= 0 or len(processed_judge_samples) == 0:
             return
 
