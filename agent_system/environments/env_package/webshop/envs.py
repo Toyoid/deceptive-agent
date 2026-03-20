@@ -117,7 +117,7 @@ class WebshopMultiProcessEnv(gym.Env):
         self._env_kwargs = env_kwargs if env_kwargs is not None else {'observation_mode': 'text', 'num_products': None}
 
         # -------------------------- Ray actors setup --------------------------
-        self.task_type = "shopping"
+        self.task_type = "Shopping"
         env_worker = ray.remote(**resources_per_worker)(WebshopWorker)
         self._workers = []
         for i in range(self.num_processes):

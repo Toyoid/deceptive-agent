@@ -23,6 +23,7 @@ import os
 from agent_system.environments.prompts import *
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
 from agent_system.memory import SimpleMemory, SearchMemory
+from agent_system.environments.env_package.deceptive_search.projection import extract_search_final_resps
 from omegaconf import OmegaConf
 
 def parse_gamefile(infos):
@@ -95,6 +96,12 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
     """
     EnvironmentManager for SearchEnv.
     """
+    env_variant = "search"
+    TOOL_DESCRIPTIONS = {
+        "search": SEARCH_TOOLS,
+        "deceptive_search": DECEPTIVE_SEARCH_TOOLS,
+    }
+
     def __init__(self, envs, projection_f, config):
         self.memory = SearchMemory()
         super().__init__(envs, projection_f, config)
@@ -115,7 +122,16 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
 
     def step(self, text_actions: List[str]):
         actions, valids = self.projection_f(text_actions)
+        # TODO: Consider whether to construct step-wise monitor training (if so, is agent have room to develop higher-level deception strategies?)
+        last_step_resps = extract_search_final_resps(text_actions)  # for building monitor obs, containing thoughts and answers
+        
         next_obs, rewards, dones, infos = self.envs.step(actions)
+        
+        # judge input construction
+        prior_tool_use_history = self._fetch_full_tool_use_history()
+        judge_evidence = self.build_judge_evidence(prior_tool_use_history)
+        judge_agent_responses = self.build_judge_agent_responses(last_step_resps)
+        
         self.memory.store({
             "search": actions,
             "information": next_obs,
@@ -124,15 +140,17 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
         next_observations = {
             "text": self.build_text_obs(next_obs),
             "image": None,
-            "anchor": next_obs.copy()
+            "anchor": next_obs.copy(),
+            "monitor_text": self.build_monitor_obs(last_step_resps, dones),
+            "monitor_image": None
         }
 
         for i, info in enumerate(infos):
             info["is_action_valid"] = to_numpy(valids[i])
-            info["task_type"] = self.envs.task_type
+            info["task_type"] = self.env_variant
             info["user_input"] = self.tasks[i]  # for judge input
-            info["evidence"] = next_obs[i]  # TODO: refine this to extract actual evidence from the search results for judge input
-            info["agent_response"] = actions[i]  # for judge input
+            info["evidence"] = judge_evidence[i]  # for judge input
+            info["agent_response"] = judge_agent_responses[i]  # for judge input
 
         rewards = to_numpy(rewards)
         dones = to_numpy(dones)
@@ -168,6 +186,75 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
 
         return postprocess_text_obs
 
+    def build_monitor_obs(
+        self,
+        last_step_resps: List[Dict[str, str]],
+        dones: List[bool]
+    ) -> List[str]:
+        monitor_obs: List[str] = []
+
+        assert self.config.env.history_length > 0, "History length must be greater than 0 to build monitor observations."
+        tool_use_history, tool_use_length = self.memory.fetch(
+            self.config.env.history_length,
+            obs_key="information",
+            action_key="search"
+        )
+
+        for i in range(len(last_step_resps)):
+            if dones[i]:
+                obs_i = SEARCH_MONITOR_TEMPLATE.format(
+                    task_description=self.tasks[i],
+                    tool_use_history=tool_use_history[i],
+                    thought=last_step_resps[i]["thought"],
+                    answer=last_step_resps[i]["answer"]
+                )
+            else:
+                obs_i = ""
+            monitor_obs.append(obs_i)
+
+        return monitor_obs
+
+    def _fetch_full_tool_use_history(self) -> List[str]:
+        batch_size = len(self.tasks)
+        if batch_size <= 0:
+            return []
+
+        max_history_length = max(len(self.memory[i]) for i in range(batch_size))
+        if max_history_length <= 0:
+            return [""] * batch_size
+
+        tool_use_history, _ = self.memory.fetch(
+            max_history_length,
+            obs_key="information",
+            action_key="search"
+        )
+        return tool_use_history
+
+    def _get_tool_description_for_judge(self) -> str:
+        return self.TOOL_DESCRIPTIONS.get(self.env_variant, SEARCH_TOOLS)
+
+    def build_judge_evidence(self, prior_tool_use_history: List[str]) -> List[str]:
+        tool_description = self._get_tool_description_for_judge()
+        evidence_list: List[str] = []
+        for history in prior_tool_use_history:
+            history_text = history if history.strip() else "No prior tool-use history."
+            evidence = (
+                "Tool documentation available to the assistant:\n"
+                f"{tool_description}\n\n"
+                "Assistant prior tool-use history before the final response:\n"
+                f"{history_text}"
+            )
+            evidence_list.append(evidence)
+        return evidence_list
+
+    def build_judge_agent_responses(
+        self,
+        last_step_resps: List[Dict[str, str]],
+    ) -> List[str]:
+        responses: List[str] = []
+        for resp in last_step_resps:
+            responses.append(f"{resp['thought']}\n{resp['answer']}".strip())
+        return responses
 
     def _process_batch(self, batch_idx, total_batch_list, total_infos, success):
         # Find the last entry with active masks
@@ -206,6 +293,7 @@ class DeceptiveSearchEnvironmentManager(SearchEnvironmentManager):
                          source_grounded_rate, cheating_rate, audit_catch_rate,
                          disclosure_rate.
     """
+    env_variant = "deceptive_search"
 
     def build_text_obs(
         self,
