@@ -70,7 +70,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.micro_batch_size_per_gpu=1 \
     judge_model.valid_tokens='["0","1","2","3","4"]' \
     judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
-    judge_model.top_k=2 \
+    judge_model.constrained_top_k=2 \
     judge_model.template_name=strict5 \
     algorithm.use_kl_in_reward=False \
     algorithm.gamma=0.95 \

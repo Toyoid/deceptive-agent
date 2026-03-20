@@ -104,7 +104,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.micro_batch_size_per_gpu=64 \
     judge_model.valid_tokens='["0","1","2","3"]' \
     judge_model.token_weights='[0.0,0.33,0.66,1.0]' \
-    judge_model.top_k=2 \
+    judge_model.constrained_top_k=2 \
     algorithm.use_kl_in_reward=False \
     env.env_name=ReasonChat \
     env.seed=0 \
