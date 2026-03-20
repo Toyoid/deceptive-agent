@@ -96,6 +96,54 @@ class TrajectoryCollector:
             uid_batch = np.array([uid for _ in range(batch_size)], dtype=object)
         
         return uid_batch
+
+    def _debug_print_judge_samples(
+        self,
+        processed_judge_samples: List[dict],
+        judge_score_slots: List[Tuple[int, int]],
+        judge_scores,
+        judge_token_probs,
+    ) -> None:
+        debug_print_samples = int(self.config.judge_model.get("debug_print_samples", 0) or 0)
+        if debug_print_samples <= 0 or len(processed_judge_samples) == 0:
+            return
+
+        num_samples = min(debug_print_samples, len(processed_judge_samples), len(judge_score_slots))
+        probs_array = judge_token_probs.numpy() if hasattr(judge_token_probs, "numpy") else np.asarray(judge_token_probs)
+        valid_tokens = list(self.config.judge_model.valid_tokens)
+        token_weights = list(self.config.judge_model.token_weights)
+        constrained_top_k = self.config.judge_model.get("constrained_top_k", -1)
+
+        print("\n" + "=" * 120)
+        print(
+            f"[Judge Debug] Showing {num_samples}/{len(processed_judge_samples)} samples | "
+            f"valid_tokens={valid_tokens} | constrained_top_k={constrained_top_k}"
+        )
+        print("=" * 120)
+
+        for idx in range(num_samples):
+            sample_idx, critique_idx = judge_score_slots[idx]
+            prompt_ids = processed_judge_samples[idx]["raw_prompt_ids"]
+            if hasattr(prompt_ids, "tolist"):
+                prompt_ids = prompt_ids.tolist()
+            prompt_text = self.judge_tokenizer.decode(prompt_ids, skip_special_tokens=False)
+
+            prob_row = probs_array[idx].tolist()
+            best_idx = int(np.argmax(prob_row))
+            prob_summary = ", ".join(
+                f"{token}={prob:.4f}" for token, prob in zip(valid_tokens, prob_row)
+            )
+
+            print(f"[Judge Debug] Queued sample {idx + 1}/{num_samples} | source_sample={sample_idx} | critique_idx={critique_idx}")
+            print(f"Score: {float(judge_scores[idx]):.4f}")
+            print(
+                f"Argmax token: {valid_tokens[best_idx]} "
+                f"(weight={float(token_weights[best_idx]):.4f}, prob={prob_row[best_idx]:.4f})"
+            )
+            print(f"Token probs: {prob_summary}")
+            print("-" * 120)
+            print(prompt_text)
+            print("=" * 120)
     
     @staticmethod
     def _process_chat_to_model_inputs(
@@ -893,6 +941,15 @@ class TrajectoryCollector:
 
             # Fill judge scores back into per-sample score lists
             flat_scores = judge_output.batch["judge_scores"].numpy()
+            flat_probs = judge_output.batch["judge_token_probs"]
+
+            self._debug_print_judge_samples(
+                processed_judge_samples=processed_judge_samples,
+                judge_score_slots=judge_score_slots,
+                judge_scores=flat_scores,
+                judge_token_probs=flat_probs,
+            )
+
             assert len(flat_scores) == len(judge_score_slots), (
                 f"Mismatch: {len(flat_scores)} judge scores vs {len(judge_score_slots)} score slots"
             )

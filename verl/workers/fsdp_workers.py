@@ -1612,8 +1612,6 @@ class JudgeModelWorker(Worker):
                 f"num_valid_tokens={len(self.valid_tokens)}. It will be clamped to the "
                 "size of the constrained token set during scoring."
             )
-        self.debug_print_samples = 2
-
         # normalize config
         if self.config.micro_batch_size is not None:
             self.config.micro_batch_size //= torch.distributed.get_world_size()
@@ -1713,44 +1711,6 @@ class JudgeModelWorker(Worker):
         # Convert token weights to tensor for efficient computation
         self.token_weights_tensor = torch.tensor(self.token_weights, dtype=torch.float32)
         self.valid_token_ids_tensor = torch.tensor(self.valid_token_ids, dtype=torch.long)
-
-    def _debug_print_judge_samples(self, input_ids, attention_mask, scores, probs):
-        """Pretty-print a few decoded judge prompts with their corresponding outputs."""
-        if self.debug_print_samples <= 0 or self.rank != 0:
-            return
-
-        num_samples = min(self.debug_print_samples, input_ids.size(0))
-        input_ids_cpu = input_ids.detach().cpu()
-        attention_mask_cpu = attention_mask.detach().cpu()
-        scores_cpu = scores.detach().float().cpu()
-        probs_cpu = probs.detach().float().cpu()
-
-        print("\n" + "=" * 120)
-        print(
-            f"[Judge Debug] Showing {num_samples}/{input_ids.size(0)} local samples | "
-            f"valid_tokens={self.valid_tokens} | constrained_top_k={self.constrained_top_k}"
-        )
-        print("=" * 120)
-
-        for idx in range(num_samples):
-            visible_ids = input_ids_cpu[idx][attention_mask_cpu[idx].bool()].tolist()
-            prompt_text = self.tokenizer.decode(visible_ids, skip_special_tokens=False)
-            prob_row = probs_cpu[idx].tolist()
-            best_idx = max(range(len(prob_row)), key=prob_row.__getitem__)
-            prob_summary = ", ".join(
-                f"{token}={prob:.4f}" for token, prob in zip(self.valid_tokens, prob_row)
-            )
-
-            print(f"[Judge Debug] Sample {idx + 1}/{num_samples}")
-            print(f"Score: {scores_cpu[idx].item():.4f}")
-            print(
-                f"Argmax token: {self.valid_tokens[best_idx]} "
-                f"(weight={self.token_weights[best_idx]:.4f}, prob={prob_row[best_idx]:.4f})"
-            )
-            print(f"Token probs: {prob_summary}")
-            print("-" * 120)
-            print(prompt_text)
-            print("=" * 120)
 
     def _forward_micro_batch(self, micro_batch):
         """
@@ -1894,13 +1854,6 @@ class JudgeModelWorker(Worker):
                 revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long, device=all_scores.device)
                 all_scores = all_scores[revert_indices]
                 all_probs = all_probs[revert_indices]
-
-            self._debug_print_judge_samples(
-                input_ids=judge_input_ids,
-                attention_mask=judge_attention_mask,
-                scores=all_scores,
-                probs=all_probs,
-            )
 
             output = DataProto.from_dict(tensors={
                 "judge_scores": all_scores,
