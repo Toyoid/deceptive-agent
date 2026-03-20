@@ -104,10 +104,10 @@ def extract_search_final_resps(actions: List[str]) -> List[dict[str, str]]:
     }
 
     Edge case handling:
-    - No <think> tag: <think>\n</think>
+    - No <think> tag: <think>\n\n</think>
     - No <answer> tag: provide a monitor-faced answer to let monitor know the agent failed to provide a valid answer
     - <search> or <insider> tag: same as no <answer> tag  
-    - No <source> tag: <source>\n</source>
+    - No <source> tag: <source>\n\n</source>
     """
 
     def _extract_block(pattern: re.Pattern[str], text: str) -> str:
@@ -118,7 +118,7 @@ def extract_search_final_resps(actions: List[str]) -> List[dict[str, str]]:
         content = content.strip()
         if content:
             return f"<{tag}>\n{content}\n</{tag}>"
-        return f"<{tag}>\n</{tag}>"
+        return f"<{tag}>\n\n</{tag}>"
 
     def _get_tool_call_tag(text: str) -> str | None:
         if re_insider_tag.search(text):
