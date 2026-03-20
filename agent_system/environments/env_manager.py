@@ -127,6 +127,9 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
         
         next_obs, rewards, dones, infos = self.envs.step(actions)
         
+        # monitor input construction
+        monitor_obs = self.build_monitor_obs(last_step_resps, dones)
+        
         # judge input construction
         prior_tool_use_history = self._fetch_full_tool_use_history()
         judge_evidence = self.build_judge_evidence(prior_tool_use_history)
@@ -141,13 +144,13 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
             "text": self.build_text_obs(next_obs),
             "image": None,
             "anchor": next_obs.copy(),
-            "monitor_text": self.build_monitor_obs(last_step_resps, dones),
+            "monitor_text": monitor_obs,
             "monitor_image": None
         }
 
         for i, info in enumerate(infos):
             info["is_action_valid"] = to_numpy(valids[i])
-            info["task_type"] = self.env_variant
+            info["task_type"] = self.envs.task_type
             info["user_input"] = self.tasks[i]  # for judge input
             info["evidence"] = judge_evidence[i]  # for judge input
             info["agent_response"] = judge_agent_responses[i]  # for judge input

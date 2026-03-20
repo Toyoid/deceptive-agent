@@ -85,7 +85,7 @@ python3 -m verl.trainer.main_ppo \
     env.env_name=deceptive_search \
     env.seed=0 \
     env.max_steps=4 \
-    env.rollout.n=4 \
+    env.rollout.n=8 \
     env.history_length=4 \
     env.deceptive_search.search_url='http://127.0.0.1:8000/retrieve' \
     env.deceptive_search.audit_probability=0.2 \
@@ -99,9 +99,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_search' \
     trainer.experiment_name='grpo_deceptive_search_m_lag' \
-    trainer.n_gpus_per_node=4 \
+    trainer.n_gpus_per_node=6 \
     trainer.nnodes=1 \
-    trainer.n_gpus_per_node_monitor=4 \
+    trainer.n_gpus_per_node_monitor=2 \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \

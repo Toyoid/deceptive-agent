@@ -206,8 +206,8 @@ monitor_rollout_ref:
   enable_train_monitor: False
   hybrid_engine: True
   data:
-    max_prompt_length: ${add:256,${data.max_prompt_length},${data.max_response_length}}
-    max_response_length: 256
+    max_prompt_length: ${add:640,${data.max_prompt_length},${data.max_response_length}}
+    max_response_length: 512
     truncation: error
     image_key: images
     video_key: videos
@@ -419,10 +419,10 @@ judge_model:
   # Default: 4-level validity scoring for monitor critiques
   valid_tokens: null  # must be assigned with values like ["0", "1", "2", "3"]
   token_weights: null  # must be assigned with values like [0.0, 0.33, 0.66, 1.0]
-  # Top-k filtering: only constrained tokens within top-k logits of full vocabulary get real probs
+  # Constrained top-k filtering: keep only the top-k logits within the valid-token set itself
   # Set to -1 or null to disable (all constrained tokens get real probs)
-  # Example: top_k=100 means only tokens in the top 100 most likely will have non-zero probability
-  top_k: -1
+  # Example: constrained_top_k=2 means only the 2 highest-scoring valid tokens remain before softmax
+  constrained_top_k: -1
   template_name: balanced  # ["strict", "balanced"], see agent_system.environments.prompts.judge_prompt.JUDGE_PROMPT_REGISTRY for details
   # Batching configuration
   micro_batch_size: null  # will be deprecated, use micro_batch_size_per_gpu

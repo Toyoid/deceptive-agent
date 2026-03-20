@@ -1602,12 +1602,16 @@ class JudgeModelWorker(Worker):
                 "must have the same length"
             )
 
-        # Top-k filtering: only constrained tokens within top-k logits get real probs
-        # Set to -1 or None to disable (all constrained tokens get real probs)
-        self.top_k = self.config.get("top_k", -1)
-        if self.top_k is not None and self.top_k > 0:
-            if self.top_k >= len(self.valid_tokens):
-                raise Warning(f"[JudgeModelWorker] top_k={self.top_k} >= num_valid_tokens={len(self.valid_tokens)}, this may lead to non-accurate scoring.")
+        # Constrained top-k filtering: keep only the top-k logits within the
+        # valid-token subset. This preserves a pure label-space classifier view
+        # and guarantees at least one valid token survives when k >= 1.
+        self.constrained_top_k = self.config.get("constrained_top_k", -1)
+        if self.constrained_top_k is not None and self.constrained_top_k > len(self.valid_tokens):
+            print(
+                f"[JudgeModelWorker] constrained_top_k={self.constrained_top_k} exceeds "
+                f"num_valid_tokens={len(self.valid_tokens)}. It will be clamped to the "
+                "size of the constrained token set during scoring."
+            )
 
         # normalize config
         if self.config.micro_batch_size is not None:
@@ -1763,18 +1767,21 @@ class JudgeModelWorker(Worker):
 
             # Extract logits for constrained token set only
             valid_token_ids = self.valid_token_ids_tensor.to(last_logits.device)
-            constrained_logits = last_logits[:, valid_token_ids]  # (batch_size, num_valid_tokens)
+            raw_constrained_logits = last_logits[:, valid_token_ids]  # (batch_size, num_valid_tokens)
+            # Clone before masking so the unfiltered constrained logits remain available for debugging.
+            constrained_logits = raw_constrained_logits.clone()
 
-            # top_k filtering: only constrained tokens that are within top_k of the full vocabulary get real probs
-            if self.top_k is not None and self.top_k > 0:
-                # Get the top_k logit values from the full vocabulary
-                topk_values, topk_indices = torch.topk(last_logits, k=self.top_k, dim=-1)  # (batch_size, top_k)
-                topk_threshold = topk_values[:, -1:]  # (batch_size, 1) - the k-th largest value
-                
-                # Select the tokens that are within the top_k of the vocabulary
+            # constrained_top_k filtering: keep only the top-k logits within the
+            # constrained label set itself
+            if self.constrained_top_k is not None and self.constrained_top_k > 0:
+                k = min(self.constrained_top_k, constrained_logits.size(-1))
+                topk_values, _ = torch.topk(constrained_logits, k=k, dim=-1)  # (batch_size, k)
+                topk_threshold = topk_values[:, -1:]  # (batch_size, 1)
+
+                # Select the tokens that are within the constrained top-k
                 in_topk_mask = constrained_logits >= topk_threshold  # (batch_size, num_valid_tokens)
-                
-                # Apply mask: set logits of tokens outside top_k to -inf before softmax
+
+                # Apply mask: set logits of tokens outside constrained top-k to -inf before softmax
                 constrained_logits = torch.where(
                     in_topk_mask,
                     constrained_logits,
@@ -1783,18 +1790,6 @@ class JudgeModelWorker(Worker):
 
             # Compute probabilities via softmax over constrained tokens
             constrained_probs = torch.nn.functional.softmax(constrained_logits, dim=-1)  # (batch_size, num_valid_tokens)
-            
-            # Handle case where all constrained tokens are masked (all -inf -> NaN after softmax)
-            # use .any() because after Softmax, if a sample is "bad", all its probs will be NaN anyway.
-            nan_mask = torch.isnan(constrained_probs).any(dim=-1)  # (batch_size,)
-            if nan_mask.any():
-                print(f"[Warning]: JudgeModelWorker found {nan_mask.sum().item()} samples with all constrained tokens masked (outside top_k). Setting their scores to 0.")
-                # Set all probs to 0 (score will be 0)
-                constrained_probs = torch.where(
-                    nan_mask.unsqueeze(-1).expand_as(constrained_probs),
-                    torch.zeros_like(constrained_probs),
-                    constrained_probs
-                )
 
             # Compute weighted score: sum(prob_i * weight_i)
             weights = self.token_weights_tensor.to(constrained_probs.device)
@@ -1812,7 +1807,7 @@ class JudgeModelWorker(Worker):
         
         Returns:
             DataProto with:
-            - "judge_scores": (batch_size,) weighted validity scores in [0, 1]
+            - "judge_scores": (batch_size,) weighted validity scores induced by token_weights
             - "judge_token_probs": (batch_size, num_tokens) probabilities for debugging
         """
         import itertools

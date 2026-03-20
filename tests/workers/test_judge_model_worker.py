@@ -91,12 +91,12 @@ def setup_distributed():
     print(f"Distributed initialized: rank={dist.get_rank()}, world_size={dist.get_world_size()}")
 
 
-def create_test_config(model_path: str = "Qwen/Qwen2.5-0.5B-Instruct", top_k: int = -1):
+def create_test_config(model_path: str = "Qwen/Qwen2.5-0.5B-Instruct", constrained_top_k: int = -1):
     """Create test configuration for JudgeModelWorker.
     
     Args:
         model_path: Path to the model
-        top_k: Top-k filtering for constrained tokens. -1 to disable.
+        constrained_top_k: Top-k filtering within constrained tokens. -1 to disable.
     """
     config = OmegaConf.create({
         "model": {
@@ -113,7 +113,7 @@ def create_test_config(model_path: str = "Qwen/Qwen2.5-0.5B-Instruct", top_k: in
         "strategy": "fsdp",
         "valid_tokens": ["0", "1", "2", "3"],
         "token_weights": [0.0, 0.33, 0.66, 1.0],
-        "top_k": top_k,  # Top-k filtering for constrained tokens
+        "constrained_top_k": constrained_top_k,  # Top-k filtering within constrained tokens
         "micro_batch_size": None,
         "micro_batch_size_per_gpu": 2,
         "use_dynamic_bsz": False,
@@ -323,9 +323,9 @@ def test_compute_judge_score_detailed(worker, tokenizer):
 
 def test_top_k_filtering(worker_no_topk, worker_with_topk, tokenizer):
     """
-    Test top_k filtering by comparing results with and without top_k.
+    Test constrained top-k filtering by comparing results with and without it.
     """
-    print_separator("Testing top_k Filtering Feature")
+    print_separator("Testing Constrained Top-k Filtering Feature")
     
     # Create test prompts
     test_prompts = [
@@ -335,8 +335,8 @@ def test_top_k_filtering(worker_no_topk, worker_with_topk, tokenizer):
     ]
     
     print(f">>> Testing with {len(test_prompts)} prompts")
-    print(f"    Worker without top_k: top_k={worker_no_topk.top_k}")
-    print(f"    Worker with top_k: top_k={worker_with_topk.top_k}")
+    print(f"    Worker without constrained_top_k: constrained_top_k={worker_no_topk.constrained_top_k}")
+    print(f"    Worker with constrained_top_k: constrained_top_k={worker_with_topk.constrained_top_k}")
     
     # Tokenize
     encoded = tokenizer(
@@ -356,10 +356,10 @@ def test_top_k_filtering(worker_no_topk, worker_with_topk, tokenizer):
     })
     
     # Run both workers
-    print("\n>>> Running worker WITHOUT top_k filtering...")
+    print("\n>>> Running worker WITHOUT constrained_top_k filtering...")
     output_no_topk = worker_no_topk.compute_judge_score(data)
     
-    print(">>> Running worker WITH top_k filtering...")
+    print(">>> Running worker WITH constrained_top_k filtering...")
     output_with_topk = worker_with_topk.compute_judge_score(data)
     
     # Compare results
@@ -370,23 +370,23 @@ def test_top_k_filtering(worker_no_topk, worker_with_topk, tokenizer):
     probs_no_topk = output_no_topk.batch["judge_token_probs"]
     probs_with_topk = output_with_topk.batch["judge_token_probs"]
     
-    print_tensor_info("scores (no top_k)", scores_no_topk)
-    print_tensor_info("scores (with top_k)", scores_with_topk)
-    print_tensor_info("probs (no top_k)", probs_no_topk)
-    print_tensor_info("probs (with top_k)", probs_with_topk)
+    print_tensor_info("scores (no constrained_top_k)", scores_no_topk)
+    print_tensor_info("scores (with constrained_top_k)", scores_with_topk)
+    print_tensor_info("probs (no constrained_top_k)", probs_no_topk)
+    print_tensor_info("probs (with constrained_top_k)", probs_with_topk)
     
     # Show per-sample comparison
     tokens = worker_no_topk.valid_tokens
     print("\n>>> PER-SAMPLE COMPARISON:")
     for i in range(len(test_prompts)):
         print(f"\n  Sample {i}: {test_prompts[i][:50]}...")
-        print(f"    {'Token':<8} {'No top_k prob':<15} {'With top_k prob':<15} {'Diff':<10}")
+        print(f"    {'Token':<8} {'No c_top_k prob':<15} {'With c_top_k prob':<15} {'Diff':<10}")
         print(f"    {'-'*48}")
         for j, token in enumerate(tokens):
             p_no = probs_no_topk[i, j].item()
             p_with = probs_with_topk[i, j].item()
             diff = p_with - p_no
-            # Mark tokens that were zeroed out by top_k
+            # Mark tokens that were zeroed out by constrained_top_k
             marker = " (masked)" if p_with == 0 and p_no > 0 else ""
             print(f"    '{token}'      {p_no:<15.4f} {p_with:<15.4f} {diff:+.4f}{marker}")
         print(f"    Score: {scores_no_topk[i].item():.4f} -> {scores_with_topk[i].item():.4f}")
@@ -397,8 +397,8 @@ def test_top_k_filtering(worker_no_topk, worker_with_topk, tokenizer):
     # Both should have probs summing to 1
     probs_sum_no_topk = probs_no_topk.sum(dim=-1)
     probs_sum_with_topk = probs_with_topk.sum(dim=-1)
-    print(f"  Probs sum (no top_k): {probs_sum_no_topk.tolist()}")
-    print(f"  Probs sum (with top_k): {probs_sum_with_topk.tolist()}")
+    print(f"  Probs sum (no constrained_top_k): {probs_sum_no_topk.tolist()}")
+    print(f"  Probs sum (with constrained_top_k): {probs_sum_with_topk.tolist()}")
     
     # Check if top_k actually changed the distribution (it should in most cases)
     distributions_differ = not torch.allclose(probs_no_topk, probs_with_topk, atol=1e-4)
@@ -547,7 +547,7 @@ def main():
     # Create config (without top_k)
     model_path = "Qwen/Qwen2.5-0.5B-Instruct"
     print(f"\n>>> MODEL: {model_path}")
-    config = create_test_config(model_path, top_k=-1)
+    config = create_test_config(model_path, constrained_top_k=-1)
     print(f">>> CONFIG (no top_k):")
     print(OmegaConf.to_yaml(config))
     
@@ -559,7 +559,7 @@ def main():
     print(">>> Worker created successfully")
     print(f"    valid_tokens: {worker.valid_tokens}")
     print(f"    token_weights: {worker.token_weights}")
-    print(f"    top_k: {worker.top_k}")
+    print(f"    constrained_top_k: {worker.constrained_top_k}")
     
     # Initialize model
     print("\n>>> Initializing model (this may take a moment)...")
@@ -597,58 +597,38 @@ def main():
     print_separator("Test 2: compute_judge_score")
     output = test_compute_judge_score_detailed(worker, tokenizer)
     
-    # Test 3: top_k filtering
-    print_separator("Test 3: top_k Filtering")
+    # Test 3: constrained top-k filtering
+    print_separator("Test 3: Constrained Top-k Filtering")
     
-    # Create a second worker with top_k enabled
-    print(">>> Creating second worker with top_k=100...")
-    config_with_topk = create_test_config(model_path, top_k=100)
+    # Create a second worker with constrained_top_k enabled
+    print(">>> Creating second worker with constrained_top_k=100...")
+    config_with_topk = create_test_config(model_path, constrained_top_k=100)
     worker_with_topk = JudgeModelWorker(config_with_topk)
     worker_with_topk.init_model()
-    print(f"    top_k: {worker_with_topk.top_k}")
+    print(f"    constrained_top_k: {worker_with_topk.constrained_top_k}")
     
-    # Run top_k comparison test
+    # Run constrained_top_k comparison test
     test_top_k_filtering(worker, worker_with_topk, tokenizer)
     
-    # Test 4: Extreme top_k (very small, to force some tokens outside)
-    print_separator("Test 4: Extreme top_k Filtering (top_k=10)")
+    # Test 4: Extreme constrained top-k
+    print_separator("Test 4: Extreme Constrained Top-k Filtering (constrained_top_k=10)")
     
-    config_extreme_topk = create_test_config(model_path, top_k=10)
+    config_extreme_topk = create_test_config(model_path, constrained_top_k=10)
     worker_extreme_topk = JudgeModelWorker(config_extreme_topk)
     worker_extreme_topk.init_model()
-    print(f"    top_k: {worker_extreme_topk.top_k}")
+    print(f"    constrained_top_k: {worker_extreme_topk.constrained_top_k}")
     
     test_top_k_filtering(worker, worker_extreme_topk, tokenizer)
-    
-    # Test 5: top_k fallback strategies comparison
-    print_separator("Test 5: top_k Fallback Strategies (uniform vs zero)")
-    
-    # Create workers with extreme top_k and different fallback strategies
-    # Use top_k=5 to ensure all constrained tokens are likely outside top-k
-    print(">>> Creating workers with top_k=5 and different fallback strategies...")
-    config_uniform = create_test_config(model_path, top_k=5, top_k_fallback_strategy="uniform")
-    config_zero = create_test_config(model_path, top_k=5, top_k_fallback_strategy="zero")
-    
-    worker_uniform = JudgeModelWorker(config_uniform)
-    worker_uniform.init_model()
-    print(f"    Worker (uniform): top_k={worker_uniform.top_k}, fallback='{worker_uniform.top_k_fallback_strategy}'")
-    
-    worker_zero = JudgeModelWorker(config_zero)
-    worker_zero.init_model()
-    print(f"    Worker (zero): top_k={worker_zero.top_k}, fallback='{worker_zero.top_k_fallback_strategy}'")
-    
-    test_top_k_fallback_strategies(worker_uniform, worker_zero, tokenizer)
     
     # Summary
     print_separator("TEST SUMMARY", "=", 80)
     print("✓ All tests completed successfully!")
     print(f"  - Test 1: _forward_micro_batch tensor transformations verified")
     print(f"  - Test 2: compute_judge_score end-to-end pipeline verified")
-    print(f"  - Test 3: top_k=100 filtering tested")
-    print(f"  - Test 4: top_k=10 extreme filtering tested")
-    print(f"  - Test 5: top_k fallback strategies (uniform vs zero) tested")
+    print(f"  - Test 3: constrained_top_k=100 filtering tested")
+    print(f"  - Test 4: constrained_top_k=10 extreme filtering tested")
     print(f"  - Token mapping: {dict(zip(worker.valid_tokens, worker.valid_token_ids))}")
-    print(f"  - Score range (no top_k): [{output.batch['judge_scores'].min():.4f}, {output.batch['judge_scores'].max():.4f}]")
+    print(f"  - Score range (no constrained_top_k): [{output.batch['judge_scores'].min():.4f}, {output.batch['judge_scores'].max():.4f}]")
     
     # Cleanup
     dist.destroy_process_group()

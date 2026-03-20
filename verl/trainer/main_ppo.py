@@ -277,7 +277,7 @@ class TaskRunner:
                 assert config.algorithm.lagrangian.enable, "Constrained RL is required with 'episode' as reward manager when monitor_rollout_ref is enabled, please set algorithm.lagrangian.enable as True in the config"
                 from agent_system.reward_manager import MonitorRewardManager
 
-                monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=4, normalize_by_length=False)
+                monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=2, normalize_by_length=False)
                 monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
             else:
                 monitor_reward_fn = None

@@ -108,7 +108,7 @@ def create_judge_worker_config(model_path: str = "Qwen/Qwen2.5-0.5B-Instruct"):
             "strategy": "fsdp",
             "valid_tokens": ["0", "1", "2", "3"],
             "token_weights": [0.0, 0.33, 0.66, 1.0],
-            "top_k": 4,
+            "constrained_top_k": 4,
             "micro_batch_size": None,
             "micro_batch_size_per_gpu": 2,
             "use_dynamic_bsz": False,
