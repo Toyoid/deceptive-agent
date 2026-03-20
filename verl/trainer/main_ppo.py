@@ -110,7 +110,7 @@ class TaskRunner:
             if config.monitor_rollout_ref.model.get("lora_rank", 0) > 0:
                 if not is_version_ge(pkg="vllm", minver="0.7.3"):
                     raise NotImplementedError("PPO LoRA is not supported before vllm 0.7.3")
-                
+
         # define worker classes
         if config.actor_rollout_ref.actor.strategy in ["fsdp", "fsdp2"]:
             assert config.critic.strategy in ["fsdp", "fsdp2"]
@@ -247,7 +247,7 @@ class TaskRunner:
             assert config.actor_rollout_ref.actor.strategy == config.monitor_rollout_ref.monitor.strategy
             if config.monitor_rollout_ref.enable_train_monitor:
                 role_worker_mapping[Role.MonitorRollout] = ray.remote(ActorRolloutRefWorker)
-                mapping[Role.MonitorRollout] = monitor_pool_id  
+                mapping[Role.MonitorRollout] = monitor_pool_id
 
                 # use reference model for monitor training
                 if config.monitor_rollout_ref.algorithm.use_kl_in_reward or config.monitor_rollout_ref.monitor.use_kl_loss:
@@ -309,14 +309,14 @@ class TaskRunner:
         if reward_manager_name == 'episode':
             from agent_system.reward_manager import EpisodeRewardManager
 
-            reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=2, normalize_by_length=False)
+            reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
             val_reward_fn = EpisodeRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
 
             if config.monitor_rollout_ref.enable:
                 assert config.algorithm.lagrangian.enable, "Constrained RL is required with 'episode' as reward manager when monitor_rollout_ref is enabled, please set algorithm.lagrangian.enable as True in the config"
                 from agent_system.reward_manager import MonitorRewardManager
 
-                monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=2, normalize_by_length=False)
+                monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, normalize_by_length=False)
                 monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
             else:
                 monitor_reward_fn = None
@@ -337,8 +337,8 @@ class TaskRunner:
 
         from agent_system.multi_turn_rollout import TrajectoryCollector
         traj_collector = TrajectoryCollector(
-            config=config, 
-            tokenizer=tokenizer, 
+            config=config,
+            tokenizer=tokenizer,
             processor=processor,
             monitor_tokenizer=monitor_tokenizer,
             monitor_processor=monitor_processor,
