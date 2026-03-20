@@ -39,6 +39,8 @@ actor_rollout_ref:
     use_liger: False
     use_fused_kernels: False
     trust_remote_code: False
+    chat_template_kwargs:
+      enable_thinking: False
   actor:
     strategy: fsdp  # [fsdp, fsdp2], This is for backward-compatibility
     ppo_mini_batch_size: 256
@@ -226,6 +228,8 @@ monitor_rollout_ref:
     use_liger: False
     use_fused_kernels: False
     trust_remote_code: False
+    chat_template_kwargs:
+      enable_thinking: False
   monitor:
     strategy: ${actor_rollout_ref.actor.strategy}  # [fsdp, fsdp2], This is for backward-compatibility
     ppo_mini_batch_size: 256
@@ -409,6 +413,8 @@ judge_model:
     external_lib: ${actor_rollout_ref.model.external_lib}
     use_remove_padding: False
     trust_remote_code: False
+    chat_template_kwargs:
+      enable_thinking: False
     fsdp_config:
       wrap_policy:
         min_num_params: 0

@@ -77,8 +77,21 @@ class TaskRunner:
         from verl.utils import hf_processor, hf_tokenizer
 
         trust_remote_code = config.data.get("trust_remote_code", False)
-        tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
-        processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True)  # used for multimodal LLM, could be none
+        actor_chat_template_kwargs = config.actor_rollout_ref.model.get(
+            "chat_template_kwargs",
+            {"enable_thinking": False},
+        )
+        tokenizer = hf_tokenizer(
+            local_path,
+            trust_remote_code=trust_remote_code,
+            apply_chat_template_default_kwargs=actor_chat_template_kwargs,
+        )
+        processor = hf_processor(
+            local_path,
+            trust_remote_code=trust_remote_code,
+            use_fast=True,
+            apply_chat_template_default_kwargs=actor_chat_template_kwargs,
+        )  # used for multimodal LLM, could be none
 
         from agent_system.environments import make_envs
         envs, val_envs = make_envs(config)
@@ -215,8 +228,21 @@ class TaskRunner:
         if config.monitor_rollout_ref.enable:
             assert monitor_pool_id is not None, "monitor_pool_id should be initialized when monitor rollout is enabled"
             monitor_local_path = copy_to_local(config.monitor_rollout_ref.model.path, use_shm=config.monitor_rollout_ref.model.get("use_shm", False))
-            monitor_tokenizer = hf_tokenizer(monitor_local_path, trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False))
-            monitor_processor = hf_processor(monitor_local_path, trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False), use_fast=True)  # used for multimodal LLM, could be none
+            monitor_chat_template_kwargs = config.monitor_rollout_ref.model.get(
+                "chat_template_kwargs",
+                {"enable_thinking": False},
+            )
+            monitor_tokenizer = hf_tokenizer(
+                monitor_local_path,
+                trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False),
+                apply_chat_template_default_kwargs=monitor_chat_template_kwargs,
+            )
+            monitor_processor = hf_processor(
+                monitor_local_path,
+                trust_remote_code=config.monitor_rollout_ref.data.get("trust_remote_code", False),
+                use_fast=True,
+                apply_chat_template_default_kwargs=monitor_chat_template_kwargs,
+            )  # used for multimodal LLM, could be none
             
             assert config.actor_rollout_ref.actor.strategy == config.monitor_rollout_ref.monitor.strategy
             if config.monitor_rollout_ref.enable_train_monitor:
@@ -260,8 +286,21 @@ class TaskRunner:
             
             # Load judge tokenizer for critique preprocessing in TrajectoryCollector
             judge_local_path = copy_to_local(config.judge_model.model.path, use_shm=config.judge_model.model.get("use_shm", False))
-            judge_tokenizer = hf_tokenizer(judge_local_path, trust_remote_code=config.judge_model.get("trust_remote_code", False))
-            judge_processor = hf_processor(judge_local_path, trust_remote_code=config.judge_model.get("trust_remote_code", False), use_fast=True)  # used for multimodal LLM, could be none
+            judge_chat_template_kwargs = config.judge_model.model.get(
+                "chat_template_kwargs",
+                {"enable_thinking": False},
+            )
+            judge_tokenizer = hf_tokenizer(
+                judge_local_path,
+                trust_remote_code=config.judge_model.get("trust_remote_code", False),
+                apply_chat_template_default_kwargs=judge_chat_template_kwargs,
+            )
+            judge_processor = hf_processor(
+                judge_local_path,
+                trust_remote_code=config.judge_model.get("trust_remote_code", False),
+                use_fast=True,
+                apply_chat_template_default_kwargs=judge_chat_template_kwargs,
+            )  # used for multimodal LLM, could be none
         else:
             judge_tokenizer = None
             judge_processor = None

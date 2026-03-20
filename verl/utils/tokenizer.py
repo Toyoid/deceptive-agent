@@ -13,9 +13,86 @@
 # limitations under the License.
 """Utils for tokenization."""
 
+import functools
+import inspect
 import warnings
 
 __all__ = ["hf_tokenizer", "hf_processor"]
+
+_DEFAULT_APPLY_CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
+
+
+def _normalize_apply_chat_template_default_kwargs(default_kwargs):
+    if default_kwargs is None:
+        return dict(_DEFAULT_APPLY_CHAT_TEMPLATE_KWARGS)
+    return dict(default_kwargs)
+
+
+def _filter_supported_apply_chat_template_kwargs(apply_chat_template, kwargs):
+    if not kwargs:
+        return {}
+
+    try:
+        signature = inspect.signature(apply_chat_template)
+    except (TypeError, ValueError):
+        return dict(kwargs)
+
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        return dict(kwargs)
+
+    return {key: value for key, value in kwargs.items() if key in signature.parameters}
+
+
+def _patch_apply_chat_template_defaults(tokenizer_or_processor, default_kwargs=None):
+    """Apply default chat-template kwargs to a tokenizer/processor instance.
+
+    Some models such as Qwen3 accept ``enable_thinking`` in ``apply_chat_template`` and
+    enable thinking mode by default. We want the repo behavior to stay stable unless a
+    caller explicitly opts in, so we inject model-specific default kwargs only when the
+    method supports them. Explicit callsite kwargs always win.
+    """
+    tokenizer_or_processor._verl_apply_chat_template_default_kwargs = (
+        _normalize_apply_chat_template_default_kwargs(default_kwargs)
+    )
+
+    apply_chat_template = getattr(tokenizer_or_processor, "apply_chat_template", None)
+    if apply_chat_template is None:
+        return tokenizer_or_processor
+
+    # Avoid stacking wrappers if the same object is patched more than once. We still keep
+    # the latest per-instance defaults via the attribute set above.
+    if getattr(apply_chat_template, "_verl_disable_thinking_patched", False):
+        return tokenizer_or_processor
+
+    @functools.wraps(apply_chat_template)
+    def wrapped_apply_chat_template(*args, **kwargs):
+        default_chat_template_kwargs = getattr(
+            tokenizer_or_processor,
+            "_verl_apply_chat_template_default_kwargs",
+            {},
+        )
+        injected_kwargs = {
+            key: value
+            for key, value in default_chat_template_kwargs.items()
+            if key not in kwargs
+        }
+        supported_injected_kwargs = _filter_supported_apply_chat_template_kwargs(
+            apply_chat_template,
+            injected_kwargs,
+        )
+        if not supported_injected_kwargs:
+            return apply_chat_template(*args, **kwargs)
+
+        try:
+            return apply_chat_template(*args, **supported_injected_kwargs, **kwargs)
+        except TypeError as exc:
+            if not any(key in str(exc) for key in supported_injected_kwargs):
+                raise
+            return apply_chat_template(*args, **kwargs)
+
+    wrapped_apply_chat_template._verl_disable_thinking_patched = True
+    tokenizer_or_processor.apply_chat_template = wrapped_apply_chat_template
+    return tokenizer_or_processor
 
 
 def set_pad_token_id(tokenizer):
@@ -33,7 +110,7 @@ def set_pad_token_id(tokenizer):
         warnings.warn(f"tokenizer.pad_token is None. Now set to {tokenizer.eos_token}", stacklevel=1)
 
 
-def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kwargs):
+def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, apply_chat_template_default_kwargs=None, **kwargs):
     """Create a huggingface pretrained tokenizer which correctness handles eos and pad tokens.
 
     Args:
@@ -58,10 +135,14 @@ def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kw
     tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
     if correct_pad_token:
         set_pad_token_id(tokenizer)
+    _patch_apply_chat_template_defaults(
+        tokenizer,
+        default_kwargs=apply_chat_template_default_kwargs,
+    )
     return tokenizer
 
 
-def hf_processor(name_or_path, **kwargs):
+def hf_processor(name_or_path, apply_chat_template_default_kwargs=None, **kwargs):
     """Create a huggingface processor to process multimodal data.
 
     Args:
@@ -80,4 +161,9 @@ def hf_processor(name_or_path, **kwargs):
     # https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/models/auto/processing_auto.py#L344
     if processor is not None and "Processor" not in processor.__class__.__name__:
         processor = None
+    if processor is not None:
+        _patch_apply_chat_template_defaults(
+            processor,
+            default_kwargs=apply_chat_template_default_kwargs,
+        )
     return processor
