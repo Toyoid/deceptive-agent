@@ -50,7 +50,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.enable=True \
-    monitor_rollout_ref.enable_train_monitor=True \
+    monitor_rollout_ref.enable_train_monitor=False \
     monitor_rollout_ref.data.truncation='left' \
     monitor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
     monitor_rollout_ref.model.use_remove_padding=True \

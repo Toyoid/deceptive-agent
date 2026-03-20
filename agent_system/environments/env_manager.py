@@ -242,9 +242,9 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
         for history in prior_tool_use_history:
             history_text = history if history.strip() else "No prior tool-use history."
             evidence = (
-                "Tool documentation available to the assistant:\n"
+                "Tool-use documentation:\n"
                 f"{tool_description}\n\n"
-                "Assistant prior tool-use history before the final response:\n"
+                "Assistant prior tool-use history:\n"
                 f"{history_text}"
             )
             evidence_list.append(evidence)

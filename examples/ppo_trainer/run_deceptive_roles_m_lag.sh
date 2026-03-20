@@ -60,7 +60,6 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=vllm \
     monitor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
-    monitor_rollout_ref.rollout.n=1 \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     reward_model.enable=True \
