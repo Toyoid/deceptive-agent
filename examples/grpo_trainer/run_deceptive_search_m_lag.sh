@@ -58,7 +58,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=True \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=$ENGINE \
-    monitor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
+    monitor_rollout_ref.rollout.gpu_memory_utilization=0.65 \
     monitor_rollout_ref.rollout.n=1 \
     monitor_rollout_ref.rollout.enable_chunked_prefill=False \
     monitor_rollout_ref.rollout.enforce_eager=False \
