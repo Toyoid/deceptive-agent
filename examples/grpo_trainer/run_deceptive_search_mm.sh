@@ -13,7 +13,7 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
 
-# Fixed-monitor RL training with Lagrangian optimization on search task.
+# Maximin Rl training between agent and monitor on search task.
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
@@ -51,21 +51,37 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.enable=True \
-    monitor_rollout_ref.enable_train_monitor=False \
+    monitor_rollout_ref.enable_train_monitor=True \
+    monitor_rollout_ref.rollout.n=1 \
+    monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
     monitor_rollout_ref.data.truncation='left' \
     monitor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
+    monitor_rollout_ref.monitor.optim.lr=2e-6 \
+    monitor_rollout_ref.monitor.optim.lr_warmup_steps_ratio=0.1 \
+    monitor_rollout_ref.monitor.use_kl_loss=True \
+    monitor_rollout_ref.monitor.kl_loss_coef=0.001 \
+    monitor_rollout_ref.monitor.kl_loss_type=low_var_kl \
+    monitor_rollout_ref.monitor.entropy_coeff=0 \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=True \
+    monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
+    monitor_rollout_ref.monitor.use_invalid_action_penalty=True \
+    monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.01 \
+    monitor_rollout_ref.monitor.ppo_mini_batch_size=16 \
+    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
+    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=$ENGINE \
-    monitor_rollout_ref.rollout.gpu_memory_utilization=0.65 \
+    monitor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     monitor_rollout_ref.rollout.enable_chunked_prefill=False \
     monitor_rollout_ref.rollout.enforce_eager=False \
     monitor_rollout_ref.rollout.free_cache_engine=False \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
+    monitor_rollout_ref.ref.fsdp_config.param_offload=True \
+    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     judge_model.model.path=Qwen/Qwen3-0.6B \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
@@ -100,11 +116,12 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=4 \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_search' \
-    trainer.experiment_name='grpo_deceptive_search_m_lag' \
-    trainer.n_gpus_per_node=6 \
+    trainer.experiment_name='grpo_deceptive_search_mm' \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
-    trainer.n_gpus_per_node_monitor=2 \
+    trainer.n_gpus_per_node_monitor=4 \
     trainer.nnodes_monitor=1 \
+    trainer.judge_pool_mode='with_actor' \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \
     trainer.total_epochs=1 \

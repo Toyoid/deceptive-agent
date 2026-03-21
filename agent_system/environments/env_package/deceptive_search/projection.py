@@ -115,9 +115,8 @@ def extract_search_final_resps(actions: List[str]) -> List[dict[str, str]]:
         return match.group(1).strip() if match else ""
 
     def _format_block(tag: str, content: str) -> str:
-        content = content.strip()
-        if content:
-            return f"<{tag}>\n{content}\n</{tag}>"
+        if content.strip():
+            return f"<{tag}>{content}</{tag}>"
         return f"<{tag}>\n\n</{tag}>"
 
     def _get_tool_call_tag(text: str) -> str | None:
@@ -130,7 +129,7 @@ def extract_search_final_resps(actions: List[str]) -> List[dict[str, str]]:
     final_resps: List[dict[str, str]] = []
 
     for action in actions:
-        thought = _format_block("think", _extract_block(re_think, action))
+        thought = _format_block("think", f"\n{_extract_block(re_think, action).strip()}\n")
         tool_call_tag = _get_tool_call_tag(action)
         has_tool_call = tool_call_tag is not None
         answer_text = (
