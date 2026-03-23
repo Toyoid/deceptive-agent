@@ -342,9 +342,9 @@ class TrajectoryCollector:
         Returns:
             DataProto: Contains processed batch data with preserved metadata
         """
-        # if the env is vanilla chat task and is the start of the episode, simply add anchor_obs and return
-        if infos[0]['task_type'] == 'chat' and infos[0]['step'] == 0:
-            print("Vanilla chat task at the start of the episode, skipping preprocessing...")
+        # If the environment provides no step-0 observation, reuse the dataset prompt directly.
+        if infos[0]['step'] == 0 and obs.get('text', None) is None and obs.get('image', None) is None:
+            print("Chat-style task at the start of the episode, skipping preprocessing...")
             
             return gen_batch.clone()
 

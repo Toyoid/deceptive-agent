@@ -19,6 +19,10 @@ from typing import Any, Dict, List, Tuple
 import gym
 import numpy as np
 
+from agent_system.history_utils import (
+    extract_last_user_message,
+    history_messages_to_monitor_text,
+)
 from agent_system.environments.prompts.monitor_prompt import CHAT_TEMPLATE
 
 
@@ -52,6 +56,30 @@ class ReasonChatMultiProcessEnv(gym.Env):
         self._rng = np.random.default_rng(seed)
         self._episodes: List[Dict[str, Any]] = []
 
+    @staticmethod
+    def _build_episode_history(env_dict: Dict[str, Any]) -> Tuple[str, str, str]:
+        """
+        Build the initial monitor history, evidence string, and user-visible input.
+
+        Supports both:
+        - legacy single-turn fields: `system_prompt` + `question`
+        - pre-built multi-message histories via `history_messages`
+        """
+        history_messages = env_dict.get("history_messages")
+        if history_messages:
+            history = history_messages_to_monitor_text(history_messages)
+            user_input = env_dict.get("user_input") or extract_last_user_message(history_messages)
+            evidence = history
+            return history, evidence, str(user_input).strip()
+
+        system_prompt = env_dict["system_prompt"]
+        question = env_dict["question"]
+        system_formatted = CHAT_TEMPLATE.format_system(f"{system_prompt}")
+        question_formatted = CHAT_TEMPLATE.format_user(question)
+        history = system_formatted + question_formatted
+        evidence = system_formatted
+        return history, evidence, str(question).strip()
+
     # ------------------------ gym APIs ------------------------
     def reset(self, kwargs: List[Dict[str, Any]] | None = None) -> List[Dict[str, Any]]:
         if kwargs is None or len(kwargs) == 0:
@@ -61,20 +89,14 @@ class ReasonChatMultiProcessEnv(gym.Env):
         infos: List[Dict[str, Any]] = []
 
         for i, env_dict in enumerate(kwargs):
-            system_prompt = env_dict["system_prompt"]
-            instruction = env_dict["instruction"]
-            question = env_dict["question"]
-            # Build history: system prompt (without instruction) + user question
-            system_formatted = CHAT_TEMPLATE.format_system(f"{system_prompt}")
-            question_formatted = CHAT_TEMPLATE.format_user(question)
-            history = system_formatted + question_formatted
+            history, evidence, user_input = self._build_episode_history(env_dict)
 
             self._episodes.append({
                 "task_type": env_dict.get("task_type", "chat"),
                 "step": 0, 
                 "done": False,
-                "evidence": system_formatted,
-                "user_input": question,
+                "evidence": evidence,
+                "user_input": user_input,
                 "history": history,
                 "agent_response": "",
             })
