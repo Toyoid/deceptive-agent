@@ -208,7 +208,7 @@ monitor_rollout_ref:
   enable_train_monitor: False
   hybrid_engine: True
   data:
-    max_prompt_length: ${add:640,${data.max_prompt_length},${data.max_response_length}}
+    max_prompt_length: ${add:800,${data.max_prompt_length},${data.max_response_length}}
     max_response_length: 512
     truncation: error
     image_key: images
@@ -401,7 +401,7 @@ reward_model:
 
 judge_model:
   enable: ${monitor_rollout_ref.enable}
-  max_prompt_length: ${add:${monitor_rollout_ref.data.max_prompt_length},${monitor_rollout_ref.data.max_response_length}}
+  max_prompt_length: ${add:100,${monitor_rollout_ref.data.max_prompt_length},${monitor_rollout_ref.data.max_response_length}}
   truncation: error
   image_key: images
   video_key: videos

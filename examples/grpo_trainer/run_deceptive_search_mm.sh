@@ -83,6 +83,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
     monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     judge_model.model.path=Qwen/Qwen3-0.6B \
+    judge_model.truncation='left' \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
     judge_model.micro_batch_size_per_gpu=1 \
