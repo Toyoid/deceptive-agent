@@ -551,6 +551,14 @@ env:
   webshop:
     use_small: True
     human_goals: False
+  cheatshop:
+    require_self_report: False
+    enable_log_edit: False
+    monitor_obs_level: action_plus_obs
+    self_report_cot_visibility: hidden
+    shopping_max_steps: ${env.max_steps}
+    oracle_top_n: 5
+    tamper_max_deletes: 1
 
 hydra:
   run:

@@ -337,18 +337,17 @@ class TrajectoryCollector:
         infos: Optional[List[Dict]] = None,
     ) -> dict:
         # Get observation components
-        monitor_texts = obs['monitor_text']
+        monitor_background = obs['monitor_background'][item]
+        agent_trajectory = obs['agent_trajectory'][item]
         monitor_images = obs.get('monitor_image', None)
         task_type = obs['task_type']  # NOTE: assume task_type is the same for all in the batch
-        monitor_text = monitor_texts[item] if monitor_texts is not None else None
         monitor_image = monitor_images[item] if monitor_images is not None else None
         # TODO: the multi-modal processing for monitor has not been tested yet
-        
-        # Format the user message with placeholders filled
-        # monitor_text can be conversation history or action history + final answer
+
         user_content = MONITOR_PROMPT.format_user_message(
             task_type=task_type,
-            history=monitor_text
+            background=monitor_background,
+            behavior_under_review=agent_trajectory,
         )
         
         chat = [
@@ -543,7 +542,8 @@ class TrajectoryCollector:
         tool_callings = np.zeros(batch_size, dtype=np.float32)
 
         # Trajectory collection loop
-        for _step in range(self.config.env.max_steps):
+        rollout_max_steps = envs.get_rollout_max_steps()
+        for _step in range(rollout_max_steps):
             active_masks = np.logical_not(is_done)
 
             batch = self.preprocess_batch(
@@ -611,8 +611,8 @@ class TrajectoryCollector:
             batch.non_tensor_batch['system_infos'] = np.array([info['evidence'] for info in infos], dtype=object)
             
             if self.config.monitor_rollout_ref.enable:
-                assert 'monitor_text' in next_obs, "'monitor_text' should be contained from the environment obs for monitor rollout"
-                batch.non_tensor_batch['monitor_text'] = np.array(next_obs['monitor_text'])
+                batch.non_tensor_batch['monitor_background'] = np.array(next_obs['monitor_background'])
+                batch.non_tensor_batch['agent_trajectory'] = np.array(next_obs['agent_trajectory'])
                 if next_obs.get('monitor_image', None) is not None:
                     batch.non_tensor_batch['monitor_image'] = np.array(next_obs['monitor_image'])
                 if self.config.judge_model.enable:
@@ -725,13 +725,12 @@ class TrajectoryCollector:
         )
 
         # build monitor input
-        # len(obs['monitor_text']) and len(infos) should be equal to batch_size
         monitor_obs = {
             'task_type': infos[0]['task_type'],  # NOTE: assume all in the batch are from the same task_type
-            'monitor_text': monitor_gen_batch.non_tensor_batch['monitor_text'],
+            'monitor_background': monitor_gen_batch.non_tensor_batch['monitor_background'],
+            'agent_trajectory': monitor_gen_batch.non_tensor_batch['agent_trajectory'],
             'monitor_image': monitor_gen_batch.non_tensor_batch.get('monitor_image', None),
         }
-        assert len(monitor_obs['monitor_text']) == batch_size, f"Length of monitor_obs['monitor_text'] does not match batch_size, got {len(monitor_obs['monitor_text'])} but expected {batch_size}"
         batch = self.preprocess_batch(
             gen_batch=monitor_gen_batch, 
             obs=monitor_obs, 
@@ -831,7 +830,7 @@ class TrajectoryCollector:
 
         Args:
             monitor_batch: DataProto containing monitor outputs
-            obs: Observation dict containing evidence (monitor_text, etc.)
+            obs: Observation dict containing judge evidence and agent behavior
             judge_wg: Judge worker group for inference
 
         Returns:

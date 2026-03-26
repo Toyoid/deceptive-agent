@@ -13,4 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from agent_system.environments.env_manager import EnvironmentManagerBase, make_envs
+try:
+    from agent_system.environments.env_manager import EnvironmentManagerBase, make_envs
+except ModuleNotFoundError as exc:
+    if exc.name != "torch":
+        raise
+    EnvironmentManagerBase = None
+    make_envs = None

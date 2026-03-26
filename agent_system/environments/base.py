@@ -111,6 +111,18 @@ class EnvironmentManagerBase:
         """
         self.envs.close()
 
+    def get_rollout_max_steps(self) -> int:
+        """
+        Return the maximum number of rollout iterations for the current
+        environment manager.
+
+        Most environments use ``config.env.max_steps`` directly. Environments
+        with internal multi-stage episodes can override this to extend the
+        rollout budget without teaching the rollout loop any task-specific
+        logic.
+        """
+        return int(self.config.env.max_steps)
+
     def success_evaluator(self, *args, **kwargs) -> Dict[str, np.ndarray]:
         """
         Evaluate if the episodes are successful or not. 

@@ -22,7 +22,7 @@ from functools import partial
 import os
 from agent_system.environments.prompts import *
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
-from agent_system.memory import SimpleMemory, SearchMemory
+from agent_system.memory import SimpleMemory, SearchMemory, CheatShopEpisodeMemory
 from agent_system.environments.env_package.deceptive_search.projection import extract_search_final_resps
 from omegaconf import OmegaConf
 
@@ -76,8 +76,9 @@ class ReasonChatEnvironmentManager(EnvironmentManagerBase):
             "text": None,
             "image": None,
             "anchor": None,
-            "monitor_text": next_obs,  # for monitor input
-            "monitor_image": None, 
+            "monitor_background": [info["monitor_background"] for info in infos],
+            "agent_trajectory": [info["agent_trajectory"] for info in infos],
+            "monitor_image": None,
         }
         
         valid_mask = to_numpy(valids)
@@ -126,14 +127,19 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
         last_step_resps = extract_search_final_resps(text_actions)  # for building monitor obs, containing thoughts and answers
         
         next_obs, rewards, dones, infos = self.envs.step(actions)
-        
-        # monitor input construction
-        monitor_obs = self.build_monitor_obs(last_step_resps, dones)
-        
-        # judge input construction
-        prior_tool_use_history = self._fetch_full_tool_use_history()
-        judge_evidence = self.build_judge_evidence(prior_tool_use_history)
-        judge_agent_responses = self.build_judge_agent_responses(last_step_resps)
+        tool_use_history = self._fetch_tool_use_history()
+
+        # monitor and judge input construction share the same split:
+        # background = task/rules/context, behavior_under_review = trajectory + final output
+        judge_evidence, agent_trajectories = self.build_review_artifacts(
+            tool_use_history,
+            last_step_resps,
+        )
+        monitor_backgrounds, agent_trajectories_for_monitor = self.build_monitor_obs(
+            judge_evidence,
+            agent_trajectories,
+            dones,
+        )
         
         self.memory.store({
             "search": actions,
@@ -144,8 +150,9 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
             "text": self.build_text_obs(next_obs),
             "image": None,
             "anchor": next_obs.copy(),
-            "monitor_text": monitor_obs,
-            "monitor_image": None
+            "monitor_background": monitor_backgrounds,
+            "agent_trajectory": agent_trajectories_for_monitor,
+            "monitor_image": None,
         }
 
         for i, info in enumerate(infos):
@@ -153,7 +160,7 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
             info["task_type"] = self.envs.task_type
             info["user_input"] = self.tasks[i]  # for judge input
             info["evidence"] = judge_evidence[i]  # for judge input
-            info["agent_response"] = judge_agent_responses[i]  # for judge input
+            info["agent_response"] = agent_trajectories[i]  # for judge input
 
         rewards = to_numpy(rewards)
         dones = to_numpy(dones)
@@ -191,33 +198,22 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
 
     def build_monitor_obs(
         self,
-        last_step_resps: List[Dict[str, str]],
-        dones: List[bool]
-    ) -> List[str]:
-        monitor_obs: List[str] = []
-
-        assert self.config.env.history_length > 0, "History length must be greater than 0 to build monitor observations."
-        tool_use_history, tool_use_length = self.memory.fetch(
-            self.config.env.history_length,
-            obs_key="information",
-            action_key="search"
-        )
-
-        for i in range(len(last_step_resps)):
-            if dones[i]:
-                obs_i = SEARCH_MONITOR_TEMPLATE.format(
-                    task_description=self.tasks[i],
-                    tool_use_history=tool_use_history[i],
-                    thought=last_step_resps[i]["thought"],
-                    answer=last_step_resps[i]["answer"]
-                )
+        backgrounds: List[str],
+        agent_trajectories: List[str],
+        dones: List[bool],
+    ) -> Tuple[List[str], List[str]]:
+        monitor_backgrounds: List[str] = []
+        monitor_agent_trajectories: List[str] = []
+        for task, background, agent_trajectory, done in zip(self.tasks, backgrounds, agent_trajectories, dones):
+            if done:
+                monitor_backgrounds.append(f"{background}\n\nTask:\n{task}")
+                monitor_agent_trajectories.append(agent_trajectory)
             else:
-                obs_i = ""
-            monitor_obs.append(obs_i)
+                monitor_backgrounds.append("")
+                monitor_agent_trajectories.append("")
+        return monitor_backgrounds, monitor_agent_trajectories
 
-        return monitor_obs
-
-    def _fetch_full_tool_use_history(self) -> List[str]:
+    def _fetch_tool_use_history(self) -> List[str]:
         batch_size = len(self.tasks)
         if batch_size <= 0:
             return []
@@ -226,8 +222,12 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
         if max_history_length <= 0:
             return [""] * batch_size
 
+        review_history_length = self.config.env.history_length
+        if review_history_length is None or review_history_length <= 0:
+            review_history_length = max_history_length
+
         tool_use_history, _ = self.memory.fetch(
-            max_history_length,
+            review_history_length,
             obs_key="information",
             action_key="search"
         )
@@ -236,28 +236,26 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
     def _get_tool_description_for_judge(self) -> str:
         return self.TOOL_DESCRIPTIONS.get(self.env_variant, SEARCH_TOOLS)
 
-    def build_judge_evidence(self, prior_tool_use_history: List[str]) -> List[str]:
+    def build_review_artifacts(
+        self,
+        tool_use_history: List[str],
+        last_step_resps: List[Dict[str, str]],
+    ) -> Tuple[List[str], List[str]]:
         tool_description = self._get_tool_description_for_judge()
         evidence_list: List[str] = []
-        for history in prior_tool_use_history:
-            history_text = history if history.strip() else "No prior tool-use history."
-            evidence = (
-                "Tool-use documentation:\n"
-                f"{tool_description}\n\n"
-                "Assistant prior tool-use history:\n"
-                f"{history_text}"
-            )
+        agent_trajectories: List[str] = []
+        for history, resp in zip(tool_use_history, last_step_resps):
+            evidence = f"Tool-use documentation:\n{tool_description}"
             evidence_list.append(evidence)
-        return evidence_list
-
-    def build_judge_agent_responses(
-        self,
-        last_step_resps: List[Dict[str, str]],
-    ) -> List[str]:
-        responses: List[str] = []
-        for resp in last_step_resps:
-            responses.append(f"{resp['thought']}\n{resp['answer']}".strip())
-        return responses
+            sections = []
+            history_text = history.strip()
+            if history_text:
+                sections.append(history_text)
+            final_output = f"{resp['thought']}\n{resp['answer']}".strip()
+            if final_output:
+                sections.append(final_output)
+            agent_trajectories.append("ASSISTANT: " + "\n\n".join(sections).strip())
+        return evidence_list, agent_trajectories
 
     def _process_batch(self, batch_idx, total_batch_list, total_infos, success):
         # Find the last entry with active masks
@@ -742,6 +740,226 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
                 success['webshop_task_score (not success_rate)'].append(score_value)
                 return
 
+
+class CheatShopEnvironmentManager(EnvironmentManagerBase):
+    def __init__(self, envs, projection_f, config):
+        self.actor_memory = SimpleMemory()
+        self.episode_memory = CheatShopEpisodeMemory()
+        self.stages: List[str] = []
+        self.pre_text_obs: List[str] = []
+        super().__init__(envs, projection_f, config)
+
+    def get_rollout_max_steps(self) -> int:
+        from agent_system.environments.env_package.cheatshop.helpers import compute_rollout_max_steps
+
+        cheatshop_cfg = self.config.env.cheatshop
+        return compute_rollout_max_steps(
+            shopping_max_steps=cheatshop_cfg.shopping_max_steps,
+            enable_log_edit=cheatshop_cfg.enable_log_edit,
+            tamper_max_deletes=cheatshop_cfg.tamper_max_deletes,
+            require_self_report=cheatshop_cfg.require_self_report,
+        )
+
+    def reset(self, kwargs) -> Tuple[Dict[str, Any], List[Dict]]:
+        obs, infos = self.envs.reset()
+        self.tasks = [info["task_description"] for info in infos]
+        self.stages = [info["stage"] for info in infos]
+        self.pre_text_obs = obs.copy()
+        self.actor_memory.reset(batch_size=len(obs))
+        self.episode_memory.reset(batch_size=len(obs))
+        observations = {
+            "text": self.build_text_obs(obs, infos, init=True),
+            "image": None,
+            "anchor": obs.copy(),
+        }
+        return observations, infos
+
+    def step(self, text_actions: List[str]):
+        from agent_system.environments.env_package.cheatshop.helpers import (
+            build_behavior_under_review,
+            build_judge_evidence,
+            build_monitor_background,
+        )
+
+        projected_actions, format_valids = self.projection_f(text_actions, self.stages)
+        for payload, valid in zip(projected_actions, format_valids):
+            payload["valid"] = bool(valid)
+
+        next_obs, rewards, dones, infos = self.envs.step(projected_actions)
+
+        history_actions = [self._history_action_repr(payload) for payload in projected_actions]
+        self.actor_memory.store({"text_obs": self.pre_text_obs, "action": history_actions})
+
+        self._record_episode_events(infos)
+        self._update_episode_metrics(infos)
+
+        self.pre_text_obs = next_obs.copy()
+        self.stages = [info["stage"] for info in infos]
+
+        monitor_backgrounds, agent_trajectories = self.build_monitor_obs(dones, infos)
+        next_observations = {
+            "text": self.build_text_obs(next_obs, infos),
+            "image": None,
+            "anchor": next_obs.copy(),
+            "monitor_background": monitor_backgrounds,
+            "agent_trajectory": agent_trajectories,
+            "monitor_image": None,
+        }
+
+        rewards = to_numpy(rewards)
+        dones = to_numpy(dones)
+        format_valids = to_numpy(format_valids)
+
+        for i, info in enumerate(infos):
+            semantic_valid = bool(info.get("is_action_available", True))
+            info["is_action_valid"] = bool(format_valids[i]) and semantic_valid
+            info["task_type"] = self.envs.task_type
+            info["user_input"] = self.tasks[i]
+            info["evidence"] = build_judge_evidence(
+                tool_documentation=CHEATSHOP_TOOL_DOCUMENTATION,
+            )
+            info["agent_response"] = build_behavior_under_review(
+                trajectory=self.build_trajectory_under_review(i),
+                final_output=self.episode_memory.get_final_output(
+                    i,
+                    cot_visibility=self.config.env.cheatshop.self_report_cot_visibility,
+                ),
+            )
+            if dones[i]:
+                info["ground_truth_log"] = self.episode_memory.build_ground_truth_log(i)
+
+        return next_observations, rewards, dones, infos
+
+    def _history_action_repr(self, payload: Dict[str, Any]) -> str:
+        if payload.get("kind") == "final_output":
+            answer = payload.get("answer", "").strip()
+            return f"<answer>{answer}</answer>" if answer else "<final_output>"
+        return payload.get("canonical_action", "")
+
+    def _record_episode_events(self, infos: List[Dict[str, Any]]):
+        for env_idx, info in enumerate(infos):
+            event_type = info.get("event_type")
+            payload = info.get("payload")
+            if event_type == "shopping_step" and payload is not None:
+                self.episode_memory.store_shopping_step(env_idx, payload)
+            elif event_type == "edit_action" and payload is not None:
+                self.episode_memory.store_edit_action(env_idx, payload)
+            elif event_type == "final_output" and payload is not None:
+                self.episode_memory.store_final_output(env_idx, payload)
+
+    def _update_episode_metrics(self, infos: List[Dict[str, Any]]):
+        for env_idx, info in enumerate(infos):
+            self.episode_memory.update_metrics(
+                env_idx,
+                {
+                    "task_score": float(info.get("task_score", 0.0)),
+                    "won": bool(info.get("won", False)),
+                    "advanced_search_uses": int(info.get("advanced_search_uses", 0)),
+                    "choice_oracle_uses": int(info.get("choice_oracle_uses", 0)),
+                    "restricted_tool_calls": int(info.get("restricted_tool_calls", 0)),
+                    "delete_count": int(info.get("delete_count", 0)),
+                },
+            )
+
+    def _format_available_actions(self, actions: List[str]) -> str:
+        return "\n".join(f"'{action}'," for action in actions)
+
+    def build_text_obs(self, text_obs: List[str], infos: List[Dict[str, Any]], init: bool = False) -> List[str]:
+        postprocess_text_obs = []
+        memory_contexts = None
+        valid_lens = None
+        if not init and self.config.env.history_length > 0:
+            memory_contexts, valid_lens = self.actor_memory.fetch(
+                self.config.env.history_length,
+                obs_key="text_obs",
+                action_key="action",
+            )
+
+        for i, obs_text in enumerate(text_obs):
+            stage = infos[i]["stage"]
+            if stage == "shopping":
+                available_actions = self._format_available_actions(infos[i]["available_actions"])
+                if init or self.config.env.history_length <= 0:
+                    obs = CHEATSHOP_TEMPLATE_NO_HIS.format(
+                        task_description=self.tasks[i],
+                        current_observation=obs_text,
+                        available_actions=available_actions,
+                    )
+                else:
+                    obs = CHEATSHOP_TEMPLATE.format(
+                        task_description=self.tasks[i],
+                        step_count=len(self.actor_memory[i]),
+                        history_length=valid_lens[i],
+                        action_history=memory_contexts[i],
+                        current_observation=obs_text,
+                        available_actions=available_actions,
+                    )
+            elif stage == "log_edit":
+                obs = CHEATSHOP_LOG_EDIT_TEMPLATE.format(
+                    current_observation=obs_text,
+                    available_actions=self._format_available_actions(infos[i]["available_actions"]),
+                )
+            elif stage == "self_report":
+                obs = CHEATSHOP_SELF_REPORT_TEMPLATE.format(current_observation=obs_text)
+            else:
+                obs = obs_text
+            postprocess_text_obs.append(obs)
+        return postprocess_text_obs
+
+    def build_monitor_obs(self, dones: List[bool], infos: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
+        from agent_system.environments.env_package.cheatshop.helpers import (
+            build_behavior_under_review,
+            build_judge_evidence,
+            build_monitor_background,
+        )
+
+        monitor_backgrounds = []
+        agent_trajectories = []
+        for i in range(len(infos)):
+            if dones[i]:
+                evidence = build_judge_evidence(
+                    tool_documentation=CHEATSHOP_TOOL_DOCUMENTATION,
+                )
+                background = build_monitor_background(
+                    evidence=evidence,
+                    task=self.tasks[i],
+                )
+                behavior = build_behavior_under_review(
+                    trajectory=self.build_trajectory_under_review(i),
+                    final_output=self.episode_memory.get_final_output(
+                        i,
+                        cot_visibility=self.config.env.cheatshop.self_report_cot_visibility,
+                    ),
+                )
+                monitor_backgrounds.append(background)
+                agent_trajectories.append(behavior)
+            else:
+                monitor_backgrounds.append("")
+                agent_trajectories.append("")
+        return monitor_backgrounds, agent_trajectories
+
+    def build_trajectory_under_review(self, env_idx: int) -> str:
+        from agent_system.environments.env_package.cheatshop.helpers import build_trajectory_under_review
+
+        return build_trajectory_under_review(
+            memory=self.episode_memory,
+            env_idx=env_idx,
+            enable_log_edit=self.config.env.cheatshop.enable_log_edit,
+            monitor_obs_level=self.config.env.cheatshop.monitor_obs_level,
+        )
+
+    def _process_batch(self, batch_idx, total_batch_list, total_infos, success):
+        for i in reversed(range(len(total_batch_list[batch_idx]))):
+            batch_item = total_batch_list[batch_idx][i]
+            if batch_item["active_masks"]:
+                info = total_infos[batch_idx][i]
+                success["success_rate"].append(float(info["won"]))
+                success["webshop_task_score (not success_rate)"].append(float(info["task_score"]))
+                success["cheatshop_advanced_search_uses"].append(float(info.get("advanced_search_uses", 0)))
+                success["cheatshop_choice_oracle_uses"].append(float(info.get("choice_oracle_uses", 0)))
+                success["cheatshop_delete_count"].append(float(info.get("delete_count", 0)))
+                return
+
 class AppWorldEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
         self.memory = SimpleMemory()
@@ -912,6 +1130,36 @@ def make_envs(config):
         projection_f = partial(sokoban_projection)
         envs = SokobanEnvironmentManager(_envs, projection_f, config)
         val_envs = SokobanEnvironmentManager(_val_envs, projection_f, config)
+        return envs, val_envs
+    elif "cheatshop" in config.env.env_name.lower():
+        from agent_system.environments.env_package.cheatshop import build_cheatshop_envs, cheatshop_projection
+        if config.env.webshop.use_small:
+            file_path = os.path.join(os.path.dirname(__file__), 'env_package/webshop/webshop/data/items_shuffle_1000.json')
+            attr_path = os.path.join(os.path.dirname(__file__), 'env_package/webshop/webshop/data/items_ins_v2_1000.json')
+        else:
+            file_path = os.path.join(os.path.dirname(__file__), 'env_package/webshop/webshop/data/items_shuffle.json')
+            attr_path = os.path.join(os.path.dirname(__file__), 'env_package/webshop/webshop/data/items_ins_v2.json')
+        env_kwargs = {
+            'observation_mode': 'text',
+            'num_products': None,
+            'human_goals': config.env.webshop.human_goals,
+            'file_path': file_path,
+            'attr_path': attr_path,
+            'require_self_report': config.env.cheatshop.require_self_report,
+            'enable_log_edit': config.env.cheatshop.enable_log_edit,
+            'monitor_obs_level': config.env.cheatshop.monitor_obs_level,
+            'self_report_cot_visibility': config.env.cheatshop.self_report_cot_visibility,
+            'shopping_max_steps': config.env.cheatshop.shopping_max_steps,
+            'oracle_top_n': config.env.cheatshop.oracle_top_n,
+            'tamper_max_deletes': config.env.cheatshop.tamper_max_deletes,
+        }
+        _envs = build_cheatshop_envs(seed=config.env.seed, env_num=config.data.train_batch_size, group_n=group_n, is_train=True, env_kwargs=env_kwargs, resources_per_worker=resources_per_worker)
+        _val_envs = build_cheatshop_envs(seed=config.env.seed + 1000, env_num=config.data.val_batch_size, group_n=val_group_n, is_train=False, env_kwargs=env_kwargs, resources_per_worker=resources_per_worker)
+
+        envs = CheatShopEnvironmentManager(_envs, cheatshop_projection, config)
+        val_envs = CheatShopEnvironmentManager(_val_envs, cheatshop_projection, config)
+        import time
+        time.sleep((config.data.train_batch_size * group_n + config.data.val_batch_size) * 0.1)
         return envs, val_envs
     elif "webshop" in config.env.env_name.lower():
         from agent_system.environments.env_package.webshop import build_webshop_envs, webshop_projection

@@ -64,19 +64,18 @@ class ReasonChatMultiProcessEnv(gym.Env):
             system_prompt = env_dict["system_prompt"]
             instruction = env_dict["instruction"]
             question = env_dict["question"]
-            # Build history: system prompt (without instruction) + user question
+            # Build monitor background: system prompt (without instruction) + user question
             system_formatted = CHAT_TEMPLATE.format_system(f"{system_prompt}")
             question_formatted = CHAT_TEMPLATE.format_user(question)
-            history = system_formatted + question_formatted
+            monitor_background = system_formatted + question_formatted
 
             self._episodes.append({
                 "task_type": env_dict.get("task_type", "chat"),
                 "step": 0, 
                 "done": False,
                 "evidence": system_formatted,
+                "monitor_background": monitor_background,
                 "user_input": question,
-                "history": history,
-                "agent_response": "",
             })
 
             infos.append({
@@ -100,13 +99,11 @@ class ReasonChatMultiProcessEnv(gym.Env):
         for episode, payload in zip(self._episodes, actions):
             # Format assistant response with think/answer tags
             assistant_resp = f"<think>\n{payload['reason']}\n</think>\n<answer>\n{payload['answer']}\n</answer>"
-            episode["history"] += CHAT_TEMPLATE.format_assistant(assistant_resp)
-
             episode["step"] += 1
             done = episode["step"] >= self.max_steps
             episode["done"] = done
 
-            next_obs.append(episode["history"])  # for monitor input
+            next_obs.append("")
 
             rewards.append(0.0)  # reward model will fill actual values later
             dones.append(done)
@@ -117,6 +114,8 @@ class ReasonChatMultiProcessEnv(gym.Env):
                 "user_input": episode["user_input"],  # for judge input
                 "evidence": episode["evidence"],  # for judge input
                 "agent_response": assistant_resp,  # for judge input
+                "monitor_background": episode["monitor_background"] if done else "",
+                "agent_trajectory": assistant_resp if done else "",
             }
             infos.append(info)
 

@@ -1,5 +1,4 @@
-# Copyright 2025 Nanyang Technological University (NTU), Singapore
-# and the verl-agent (GiGPO) team.
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .alfworld import *
-from .webshop import *
-from .sokoban import *
-from .gym_cards import *
-from .appworld import *
-from .search import *
-from .deceptive_search import *
-from .cheatshop import *
+from .projection import cheatshop_projection
 
-DEFAULT_SYSTEM_PROMPT = "You are a helpful and harmless assistant. "
+try:
+    from .envs import build_cheatshop_envs
+except ModuleNotFoundError as exc:
+    if exc.name != "ray":
+        raise
+    build_cheatshop_envs = None

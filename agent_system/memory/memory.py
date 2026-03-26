@@ -182,3 +182,180 @@ class SearchMemory(BaseMemory):
             valid_lengths.append(valid_len)
 
         return memory_contexts, valid_lengths
+
+
+class CheatShopEpisodeMemory(BaseMemory):
+    """
+    Typed episode memory for CheatShop.
+
+    This memory is the canonical source for reconstructing:
+    - original action log
+    - edited action log
+    - compact observation log
+    - ground-truth audit artifact
+    """
+
+    def __init__(self):
+        self._data = None
+        self.batch_size = 0
+
+    def __len__(self):
+        return len(self._data)
+
+    def __getitem__(self, idx):
+        return self._data[idx]
+
+    def reset(self, batch_size: int):
+        self._data = [self._new_episode_state() for _ in range(batch_size)]
+        self.batch_size = batch_size
+
+    def _new_episode_state(self) -> Dict[str, Any]:
+        return {
+            "shopping_steps": [],
+            "edit_actions": [],
+            "deleted_step_ids": set(),
+            "final_output": {
+                "answer": "",
+                "cot": "",
+                "visible_text": "",
+                "raw_action": "",
+            },
+            "metrics": {},
+        }
+
+    def store(self, record: Dict[str, List[Any]]):
+        """
+        Generic batch store used by environment managers.
+
+        Expected keys:
+        - event_type: one of "shopping_step", "edit_action", "final_output", "metrics"
+        - payload: batch-aligned payloads for the event
+        """
+        event_types = record.get("event_type")
+        payloads = record.get("payload")
+        if event_types is None or payloads is None:
+            raise ValueError("CheatShopEpisodeMemory.store requires 'event_type' and 'payload'.")
+        if len(event_types) != self.batch_size or len(payloads) != self.batch_size:
+            raise ValueError("Batch size mismatch in CheatShopEpisodeMemory.store.")
+
+        for env_idx in range(self.batch_size):
+            event_type = event_types[env_idx]
+            payload = payloads[env_idx]
+            if payload is None or event_type is None:
+                continue
+            if event_type == "shopping_step":
+                self.store_shopping_step(env_idx, payload)
+            elif event_type == "edit_action":
+                self.store_edit_action(env_idx, payload)
+            elif event_type == "final_output":
+                self.store_final_output(env_idx, payload)
+            elif event_type == "metrics":
+                self.update_metrics(env_idx, payload)
+            else:
+                raise ValueError(f"Unsupported CheatShop memory event_type: {event_type}")
+
+    def fetch(self, step: int):
+        """
+        Return the shopping-step record at the given step for each environment,
+        or ``None`` if the episode is shorter than the requested step.
+        """
+        fetched = []
+        for env_idx in range(self.batch_size):
+            steps = self._data[env_idx]["shopping_steps"]
+            fetched.append(steps[step] if 0 <= step < len(steps) else None)
+        return fetched
+
+    def store_shopping_step(self, env_idx: int, record: Dict[str, Any]):
+        self._data[env_idx]["shopping_steps"].append(record)
+
+    def store_edit_action(self, env_idx: int, record: Dict[str, Any]):
+        self._data[env_idx]["edit_actions"].append(record)
+        deleted_step_id = record.get("deleted_step_id")
+        if deleted_step_id is not None:
+            self._data[env_idx]["deleted_step_ids"].add(int(deleted_step_id))
+
+    def store_final_output(self, env_idx: int, record: Dict[str, Any]):
+        self._data[env_idx]["final_output"].update(record)
+
+    def update_metrics(self, env_idx: int, metrics: Dict[str, Any]):
+        self._data[env_idx]["metrics"].update(metrics)
+
+    def render_original_action_log(self, env_idx: int) -> str:
+        lines = []
+        for step in self._data[env_idx]["shopping_steps"]:
+            lines.append(f"[{step['step_id']}] {step['canonical_action']}")
+        return "\n".join(lines)
+
+    def render_edited_action_log(self, env_idx: int) -> str:
+        deleted_step_ids = self._data[env_idx]["deleted_step_ids"]
+        lines = []
+        for step in self._data[env_idx]["shopping_steps"]:
+            if step["step_id"] in deleted_step_ids:
+                continue
+            lines.append(f"[{step['step_id']}] {step['canonical_action']}")
+        return "\n".join(lines)
+
+    def render_compact_observation_log(self, env_idx: int) -> str:
+        lines = []
+        prev_signature = None
+        prev_summary = None
+        for step in self._data[env_idx]["shopping_steps"]:
+            summary = step["compact_obs_summary"]
+            if step.get("page_signature") == prev_signature and summary == prev_summary:
+                summary = "visible state unchanged"
+            lines.append(f"[{step['step_id']}] {summary}")
+            prev_signature = step.get("page_signature")
+            prev_summary = step.get("compact_obs_summary")
+        return "\n".join(lines)
+
+    def get_final_output(self, env_idx: int, cot_visibility: str = "hidden") -> str:
+        final_output = self._data[env_idx]["final_output"]
+        answer = final_output.get("answer", "").strip()
+        cot = final_output.get("cot", "").strip()
+
+        if cot_visibility == "visible" and cot:
+            if answer:
+                return f"<think>{cot}</think>\n<answer>{answer}</answer>"
+            return f"<think>{cot}</think>"
+        return answer
+
+    def build_ground_truth_log(self, env_idx: int) -> str:
+        episode = self._data[env_idx]
+        final_output = episode["final_output"]
+        metrics = episode["metrics"]
+        tool_stats = {
+            "advanced_search_uses": metrics.get("advanced_search_uses", 0),
+            "choice_oracle_uses": metrics.get("choice_oracle_uses", 0),
+            "restricted_tool_calls": metrics.get("restricted_tool_calls", 0),
+            "delete_count": metrics.get("delete_count", 0),
+        }
+        sections = [
+            "ORIGINAL ACTION LOG:",
+            self.render_original_action_log(env_idx) or "<empty>",
+            "",
+            "COMPACT OBSERVATION LOG:",
+            self.render_compact_observation_log(env_idx) or "<empty>",
+            "",
+            "EDITED ACTION LOG:",
+            self.render_edited_action_log(env_idx) or "<empty>",
+            "",
+            "EDIT ACTIONS:",
+            "\n".join(
+                action.get("canonical_action", "")
+                for action in episode["edit_actions"]
+            ) or "<empty>",
+            "",
+            "SELF-REPORT:",
+            final_output.get("answer", "") or "<empty>",
+            "",
+            "SELF-REPORT COT:",
+            final_output.get("cot", "") or "<empty>",
+            "",
+            "METRICS:",
+            str({
+                "task_score": metrics.get("task_score", 0.0),
+                "won": metrics.get("won", False),
+                **tool_stats,
+            }),
+        ]
+        return "\n".join(sections)
