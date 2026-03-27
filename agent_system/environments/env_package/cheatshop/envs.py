@@ -113,6 +113,7 @@ class CheatShopMultiProcessEnv(gym.Env):
             info["task_type"] = self.task_type
             obs_list.append(obs)
             info_list.append(info)
+
         return obs_list, info_list
 
     def close(self):

@@ -612,10 +612,11 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
         self.tasks = self.extract_task(obs)
         obs = self.format_obs(obs)
         # infos = [None] * self.envs.num_envs
-        observations = {'text': self.build_text_obs(obs, infos, init=True), 
-                        'image': None, 
-                        'anchor': obs.copy()
-                        }
+        observations = {
+            'text': self.build_text_obs(obs, infos, init=True), 
+            'image': None, 
+            'anchor': obs.copy()
+        }
         self.pre_text_obs = obs
         self.memory.reset(batch_size = len(infos))
         return observations, infos

@@ -237,7 +237,7 @@ def get_reward(purchased_product, goal, price, options, **kwargs):
 
     r_option, num_option_matches = get_option_reward(
         list(options.values()),
-        goal['goal_options'].items()
+        goal['goal_options'].values()
         if isinstance(goal['goal_options'], dict)
         else goal['goal_options']
     )
