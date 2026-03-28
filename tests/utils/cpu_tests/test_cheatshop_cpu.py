@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+import re
+
 from agent_system.environments.env_package.cheatshop.helpers import (
     build_behavior_under_review,
     build_judge_evidence,
@@ -263,3 +266,16 @@ def test_cheatshop_monitor_packet_construction_helpers():
     assert "Final Output:" in behavior
     assert "<think>hidden reasoning</think>" in behavior
     assert "Final Output:" not in build_behavior_under_review("trajectory only", "")
+
+
+def test_cheatshop_item_page_prev_branch_clears_options():
+    source = Path("agent_system/environments/env_package/cheatshop/core.py").read_text(encoding="utf-8")
+    assert re.search(
+        r'elif target == PREV_PAGE\.lower\(\) and self\.navigation\.page_type == "item_page":\s+'
+        r"self\.navigation\.current_asin = None\s+"
+        r"self\.navigation\.current_subpage = None\s+"
+        r"self\.navigation\.options = \{\}\s+"
+        r"self\.navigation\.oracle_panel = None\s+"
+        r'self\.navigation\.page_type = "search_results"',
+        source,
+    )

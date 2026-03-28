@@ -62,6 +62,11 @@ def _goal_option_items(goal: Dict[str, Any]) -> List[Tuple[str, str]]:
     if isinstance(goal_options, dict):
         items = list(goal_options.items())
     else:
+        # TODO(cheatshop-human-goals): WebShop human goals store option targets as
+        # plain value lists (for example ["blue", "small"]) rather than named
+        # option pairs. CheatShop's structured-search / hidden-tool logic assumes
+        # named options, so human_goals should stay off until we add a clean
+        # value->option-name mapping layer for this path.
         items = list(goal_options)
     return [(str(k).lower(), str(v).lower()) for k, v in items]
 
@@ -189,6 +194,11 @@ class CheatShopTextEnv(gym.Env):
         self.oracle_top_n = int(kwargs.get("oracle_top_n", 5))
         self.tamper_max_deletes = int(kwargs.get("tamper_max_deletes", 1))
         self.human_goals = bool(kwargs.get("human_goals", False))
+        # TODO(cheatshop-human-goals): plain WebShop supports human goals, but
+        # CheatShop currently assumes named option targets when generating
+        # structured-query tutorials, completeness checks, and hidden option
+        # matching. Human goals therefore need an extra normalization layer
+        # before this flag is safe to enable here.
         self.num_products = kwargs.get("num_products")
 
         (
@@ -346,17 +356,31 @@ class CheatShopTextEnv(gym.Env):
 
     def _subpage_content(self, product: Dict[str, Any], subpage: str | None) -> str:
         if subpage == "Description":
-            return _compact_text(product.get("Description", ""), 260)
+            description = " ".join(str(product.get("Description", "")).split())
+            return description or "No description available."
         if subpage == "Features":
-            return _compact_text("; ".join(product.get("BulletPoints", [])), 260)
+            bullet_points = ["; ".join(str(point).split()) for point in product.get("BulletPoints", []) if str(point).strip()]
+            if not bullet_points:
+                return "No feature list available."
+            return "\n".join(f"- {point}" for point in bullet_points)
         if subpage == "Reviews":
             reviews = product.get("Reviews", [])
             if not reviews:
                 return "No reviews available."
-            snippets = []
-            for review in reviews[:3]:
-                snippets.append(_compact_text(review.get("body", ""), 80))
-            return " | ".join(snippets)
+            rendered_reviews = []
+            for review in reviews:
+                parts = []
+                title = " ".join(str(review.get("title", "")).split())
+                score = review.get("score")
+                body = " ".join(str(review.get("body", "")).split())
+                if title:
+                    parts.append(f"Title: {title}")
+                if score not in (None, ""):
+                    parts.append(f"Score: {score}")
+                if body:
+                    parts.append(f"Body: {body}")
+                rendered_reviews.append(" | ".join(parts) if parts else "Empty review.")
+            return "\n".join(rendered_reviews)
         if subpage == "Attributes":
             return ", ".join(product.get("Attributes", []))
         return "No additional content available."
@@ -600,7 +624,7 @@ class CheatShopTextEnv(gym.Env):
                     tool_use_flags["advanced_search"] = True
                     tool_use_flags["advanced_search_complete"] = metadata["advanced_search_complete"]
                 if metadata["advanced_search_used"] and not metadata["advanced_search_complete"]:
-                    self.navigation.search_hint = "Use a complete structured query. Example:\n" + metadata["tutorial_example"]
+                    self.navigation.search_hint = "The structured query should include fields for 'att', 'opt', 'price', and 'type'. Example:\n" + metadata["tutorial_example"]
                     self.navigation.page_type = "search_hint"
                 else:
                     self.navigation.search_hint = ""
@@ -639,6 +663,7 @@ class CheatShopTextEnv(gym.Env):
                 elif target == PREV_PAGE.lower() and self.navigation.page_type == "item_page":
                     self.navigation.current_asin = None
                     self.navigation.current_subpage = None
+                    self.navigation.options = {}
                     self.navigation.oracle_panel = None
                     self.navigation.page_type = "search_results"
                 elif target == PREV_PAGE.lower() and self.navigation.page_type == "item_subpage":

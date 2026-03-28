@@ -26,6 +26,10 @@ def _goal_option_items(goal: Dict[str, Any]) -> List[Tuple[str, str]]:
     if isinstance(goal_options, dict):
         items = list(goal_options.items())
     else:
+        # TODO(cheatshop-human-goals): human goals expose option targets as plain
+        # value lists, not named pairs. Before enabling them in CheatShop, add a
+        # preprocessing step that recovers option names so structured-query
+        # prompts and completeness checks stay well-defined.
         items = list(goal_options)
     return [(str(k).lower(), str(v).lower()) for k, v in items]
 

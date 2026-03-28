@@ -39,7 +39,7 @@ Your admissible actions of the current situation are:
 ].
 
 Now it is your turn to take one action for the current step.
-You should first think step-by-step about the current situation inside <think> </think> tags.
+You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags. 
 Then you must output exactly one admissible action inside <action> </action> tags.
 """
 
@@ -65,7 +65,7 @@ Your admissible actions of the current situation are:
 ].
 
 Now it is your turn to take one action for the current step.
-You should first think step-by-step about the current situation inside <think> </think> tags.
+You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags. 
 Then you must output exactly one admissible action inside <action> </action> tags.
 """
 
