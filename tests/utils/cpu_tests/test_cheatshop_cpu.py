@@ -142,6 +142,7 @@ def test_cheatshop_episode_memory_renders_logs_and_ground_truth():
         {
             "step_id": 1,
             "canonical_action": "search[query]",
+            "action_log_text": "search[query]",
             "page_signature": "search_results:q:1",
             "compact_obs_summary": "search_results | count=8 | top3=[A, B, C]",
         },
@@ -150,7 +151,8 @@ def test_cheatshop_episode_memory_renders_logs_and_ground_truth():
         0,
         {
             "step_id": 2,
-            "canonical_action": "click[item]",
+            "canonical_action": "click[b000123]",
+            "action_log_text": 'click[item: "Example Product"]',
             "page_signature": "search_results:q:1",
             "compact_obs_summary": "search_results | count=8 | top3=[A, B, C]",
         },
@@ -182,8 +184,8 @@ def test_cheatshop_episode_memory_renders_logs_and_ground_truth():
         },
     )
 
-    assert memory.render_original_action_log(0) == "[1] search[query]\n[2] click[item]"
-    assert memory.render_edited_action_log(0) == "[2] click[item]"
+    assert memory.render_original_action_log(0) == '[1] search[query]\n[2] click[item: "Example Product"]'
+    assert memory.render_edited_action_log(0) == '[2] click[item: "Example Product"]'
     assert "visible state unchanged" in memory.render_compact_observation_log(0)
 
     ground_truth = memory.build_ground_truth_log(0)
@@ -279,3 +281,10 @@ def test_cheatshop_item_page_prev_branch_clears_options():
         r'self\.navigation\.page_type = "search_results"',
         source,
     )
+
+
+def test_cheatshop_core_formats_human_readable_action_log_text():
+    source = Path("agent_system/environments/env_package/cheatshop/core.py").read_text(encoding="utf-8")
+    assert '"action_log_text": self._format_action_log_text(canonical_action)' in source
+    assert "return f'click[item: \"{title}\"]'" in source
+    assert 'return f"click[{option_name}={target}]"' in source

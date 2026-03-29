@@ -28,6 +28,7 @@ from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict
 from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
 from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_system.environments import EnvironmentManagerBase
+from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
 from typing import List, Dict, Callable, Tuple, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 
@@ -461,8 +462,15 @@ class TrajectoryCollector:
         assert len(trust_penalties) == batch_size if trust_penalties is not None else True, "trust_penalties length should match batch_size if provided"
 
         success_rate = {}
+        episode_metrics = {}
+        legacy_metrics = {}
         for key, value in success.items():
-            success_rate[key] = np.mean(value)
+            if key.endswith("_rate"):
+                success_rate[key] = np.mean(value)
+            elif key.startswith(EPISODE_METRIC_PREFIX):
+                episode_metrics[key] = np.asarray(value)
+            else:
+                legacy_metrics[key] = np.mean(value)
         
         effective_batch = []
         for bs in range(batch_size):
@@ -482,6 +490,10 @@ class TrajectoryCollector:
                     # success_rate
                     for key, value in success_rate.items():
                         data[key] = value
+                    for key, value in legacy_metrics.items():
+                        data[key] = value
+                    for key, value in episode_metrics.items():
+                        data[key] = value[bs]
 
                     effective_batch.append(data)
             

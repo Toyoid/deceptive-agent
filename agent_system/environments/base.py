@@ -127,6 +127,13 @@ class EnvironmentManagerBase:
         """
         Evaluate if the episodes are successful or not. 
         (Default) implementation is to check info['won'] of the last step.
+
+        Env managers can append extra rollout-level metrics inside ``_process_batch``
+        using the shared logging contract from
+        ``agent_system.environments.metric_contract``:
+        - ``*_rate`` -> logged as scalar env behavioral metrics
+        - ``episode_metric/<name>`` -> reduced to
+          ``episode/<name>/{mean,max,min}`` by the unified trainer metrics path
         
         Returns:
         - success (np.ndarray or torch.Tensor): 1 if the episode is successful, 0 otherwise.

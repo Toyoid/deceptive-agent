@@ -22,6 +22,7 @@ from functools import partial
 import os
 from agent_system.environments.prompts import *
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
+from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.memory import SimpleMemory, SearchMemory, CheatShopEpisodeMemory
 from agent_system.environments.env_package.deceptive_search.projection import extract_search_final_resps
 from omegaconf import OmegaConf
@@ -956,9 +957,9 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
                 info = total_infos[batch_idx][i]
                 success["success_rate"].append(float(info["won"]))
                 success["webshop_task_score (not success_rate)"].append(float(info["task_score"]))
-                success["cheatshop_advanced_search_uses"].append(float(info.get("advanced_search_uses", 0)))
-                success["cheatshop_choice_oracle_uses"].append(float(info.get("choice_oracle_uses", 0)))
-                success["cheatshop_delete_count"].append(float(info.get("delete_count", 0)))
+                success[f"{EPISODE_METRIC_PREFIX}advanced_search_uses"].append(float(info.get("advanced_search_uses", 0)))
+                success[f"{EPISODE_METRIC_PREFIX}choice_oracle_uses"].append(float(info.get("choice_oracle_uses", 0)))
+                success[f"{EPISODE_METRIC_PREFIX}delete_count"].append(float(info.get("delete_count", 0)))
                 return
 
 class AppWorldEnvironmentManager(EnvironmentManagerBase):

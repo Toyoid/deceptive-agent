@@ -23,8 +23,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
+from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
 from verl import DataProto
 from verl.utils.import_utils import deprecated
+
 
 @deprecated("verl.utils.metric.reduce_metrics")
 def reduce_metrics(metrics: Dict[str, List[Any]]) -> Dict[str, Any]:
@@ -75,6 +77,27 @@ def _compute_response_info(batch: DataProto) -> Dict[str, Any]:
         prompt_length=prompt_length,
         response_length=response_length,
     )
+
+
+def compute_episode_metric_stats(
+    non_tensor_batch: Dict[str, Any],
+    unique_idx: np.ndarray,
+    metric_prefix: str = "",
+) -> Dict[str, Any]:
+    def _key(name: str) -> str:
+        return f"{metric_prefix}/{name}" if metric_prefix else name
+
+    metrics: Dict[str, Any] = {}
+    for key, values in non_tensor_batch.items():
+        if not key.startswith(EPISODE_METRIC_PREFIX):
+            continue
+        metric_name = key[len(EPISODE_METRIC_PREFIX):]
+        metric_values = np.asarray(values[unique_idx], dtype=np.float32)
+        metrics[_key(f"episode/{metric_name}/mean")] = float(metric_values.mean())
+        metrics[_key(f"episode/{metric_name}/max")] = float(metric_values.max())
+        metrics[_key(f"episode/{metric_name}/min")] = float(metric_values.min())
+
+    return metrics
 
 
 def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefix: str = "") -> Dict[str, Any]:
@@ -201,6 +224,11 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefi
                 _key("episode/tool_call_count/min"):
                     batch.non_tensor_batch["tool_callings"][unique_idx].min().item(),
                 **{_key(f"episode/{k}"): v[0].item() for k, v in batch.non_tensor_batch.items() if k.endswith('_rate')},
+                **compute_episode_metric_stats(
+                    non_tensor_batch=batch.non_tensor_batch,
+                    unique_idx=unique_idx,
+                    metric_prefix=metric_prefix,
+                ),
             }
             if metric_prefix != "monitor"
             else {}

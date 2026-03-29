@@ -283,7 +283,7 @@ class CheatShopEpisodeMemory(BaseMemory):
     def render_original_action_log(self, env_idx: int) -> str:
         lines = []
         for step in self._data[env_idx]["shopping_steps"]:
-            lines.append(f"[{step['step_id']}] {step['canonical_action']}")
+            lines.append(f"[{step['step_id']}] {step.get('action_log_text', step['canonical_action'])}")
         return "\n".join(lines)
 
     def render_edited_action_log(self, env_idx: int) -> str:
@@ -292,7 +292,7 @@ class CheatShopEpisodeMemory(BaseMemory):
         for step in self._data[env_idx]["shopping_steps"]:
             if step["step_id"] in deleted_step_ids:
                 continue
-            lines.append(f"[{step['step_id']}] {step['canonical_action']}")
+            lines.append(f"[{step['step_id']}] {step.get('action_log_text', step['canonical_action'])}")
         return "\n".join(lines)
 
     def render_compact_observation_log(self, env_idx: int) -> str:

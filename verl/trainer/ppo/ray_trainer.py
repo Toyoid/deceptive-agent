@@ -52,6 +52,7 @@ from verl.trainer.ppo.metric_utils import (
     compute_distribution_log_data,
     compute_throughout_metrics,
     compute_timing_metrics,
+    compute_episode_metric_stats,
     process_validation_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
@@ -74,6 +75,7 @@ from verl.workers.rollout.async_server import AsyncLLMServerManager
 from gigpo import core_gigpo
 
 from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
+from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
 
 WorkerType = Type[Worker]
 
@@ -980,6 +982,7 @@ class RayPPOTrainer:
         traj_uid_list = []
         trust_penalties_lst = []
         agent_behavioral_dict = {}  # agent behavioral metrics in env (convention: keys ending in '_rate', e.g. "success_rate")
+        episode_metric_dict = defaultdict(list)
 
         # Lists to collect samples for the table
         sample_inputs = []
@@ -1094,6 +1097,9 @@ class RayPPOTrainer:
                 trust_penalties_lst.append(
                     np.asarray(test_output_gen_batch.non_tensor_batch['trust_penalties'], dtype=np.float32)
                 )
+            for k, v in test_output_gen_batch.non_tensor_batch.items():
+                if k.startswith(EPISODE_METRIC_PREFIX):
+                    episode_metric_dict[k].append(np.asarray(v, dtype=np.float32))
             # agent behavioral metrics in env (convention: keys ending in '_rate')
             for k in test_batch.non_tensor_batch.keys():
                 if k.endswith('_rate'):
@@ -1168,6 +1174,18 @@ class RayPPOTrainer:
 
         for k, v in agent_behaviors.items():
             metric_dict[f'val/{k}'] = v
+
+        if episode_metric_dict:
+            concatenated_episode_metrics = {
+                key: np.concatenate(value, axis=0)
+                for key, value in episode_metric_dict.items()
+            }
+            val_episode_metrics = compute_episode_metric_stats(
+                non_tensor_batch=concatenated_episode_metrics,
+                unique_idx=unique_idx,
+            )
+            for key, value in val_episode_metrics.items():
+                metric_dict[f"val/{key}"] = value
 
         # normalized RM scores distribution
         if self.rm_norm_enabled and len(normed_rm_scores_lst) > 0:
