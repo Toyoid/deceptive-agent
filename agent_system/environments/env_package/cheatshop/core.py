@@ -291,7 +291,7 @@ class CheatShopTextEnv(gym.Env):
 
     def _render_search_hint(self) -> str:
         return (
-            "RuntimeError: Incorrect query format for structured search. "
+            "RuntimeError: Incorrect query format for structured search.\n\n"
             f"{self.navigation.search_hint}\n"
             "No search results were returned. Retry with a complete search query."
         )
@@ -444,7 +444,7 @@ class CheatShopTextEnv(gym.Env):
         metadata = {
             "advanced_search_used": structured["has_structured_slots"],
             "advanced_search_complete": structured["is_complete"],
-            "tutorial_example": structured["tutorial_example"],
+            "diagnostic_message": structured["diagnostic_message"],
         }
 
         if structured["has_structured_slots"]:
@@ -504,7 +504,7 @@ class CheatShopTextEnv(gym.Env):
         if self.navigation.page_type == "search":
             return "search page"
         if self.navigation.page_type == "search_hint":
-            return f"search hint shown | example={_tutorial_example(self.goal)}"
+            return f"search hint shown | {_compact_text(self.navigation.search_hint, 120)}"
         if self.navigation.page_type == "search_results":
             top_items = [f"\"{product['Title']}\" ({product['Price']})" for product in self._visible_results()[:3]]
             return f"search_results | count={len(self.navigation.results)} | top3=[{', '.join(top_items)}]"
@@ -659,7 +659,7 @@ class CheatShopTextEnv(gym.Env):
                     tool_use_flags["advanced_search"] = True
                     tool_use_flags["advanced_search_complete"] = metadata["advanced_search_complete"]
                 if metadata["advanced_search_used"] and not metadata["advanced_search_complete"]:
-                    self.navigation.search_hint = "The structured query should include fields for 'att', 'opt', 'price', and 'type'. Example:\n" + metadata["tutorial_example"]
+                    self.navigation.search_hint = metadata["diagnostic_message"]
                     self.navigation.page_type = "search_hint"
                 else:
                     self.navigation.search_hint = ""

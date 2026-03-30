@@ -120,6 +120,9 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     incomplete = parse_structured_query("att:loose fit opt:color=b5-black type:women tops", goal)
     assert incomplete["has_structured_slots"] is True
     assert incomplete["is_complete"] is False
+    assert "Recognized fields:" in incomplete["diagnostic_message"]
+    assert "- Missing required attribute slot: att:short sleeve" in incomplete["diagnostic_message"]
+    assert "- Missing required option slot: opt:size=small" in incomplete["diagnostic_message"]
 
     complete = parse_structured_query(
         "att:Loose Fit att:Short Sleeve opt:Color=B5-Black opt:Size=Small price<$30 type:Women Tops",
@@ -136,6 +139,34 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert query_goal["goal_options"] == {"color": "b5-black", "size": "small"}
     assert query_goal["price_upper"] == 30.0
     assert query_goal["query"] == "women tops"
+
+
+def test_cheatshop_structured_query_diagnostics_explain_invalid_slots():
+    goal = {
+        "attributes": ["non slip", "easy install", "faux leather"],
+        "goal_options": {"size": "90x40x40cm"},
+        "price_upper": 180.0,
+        "query": "ottomans",
+    }
+
+    malformed = parse_structured_query(
+        "att:non slip, att:faux leather, opt:easy install, opt:size=90x40x40cm, price<180.0, type:ottomans",
+        goal,
+    )
+
+    assert malformed["is_complete"] is False
+    assert malformed["diagnostic_message"] == (
+        "Recognized fields:\n"
+        "- att: non slip\n"
+        "- att: faux leather\n"
+        "- opt: size=90x40x40cm\n"
+        "- price<180.0\n"
+        "- type: ottomans\n\n"
+        "Problems:\n"
+        "- Missing required attribute slot: att:easy install\n"
+        "- Invalid option slot: opt:easy install\n"
+        "  Option slots must use name=value, for example: opt:size=90x40x40cm"
+    )
 
 
 def test_cheatshop_episode_memory_renders_logs_and_ground_truth():

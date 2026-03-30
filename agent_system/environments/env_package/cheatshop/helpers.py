@@ -47,6 +47,71 @@ def _tutorial_example(goal: Dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def _format_structured_query_diagnostics(
+    normalized_atts: List[str],
+    normalized_opts: List[Tuple[str, str]],
+    normalized_prices: List[float],
+    normalized_types: List[str],
+    raw_opt_slots: List[str],
+    raw_price_slots: List[str],
+    goal: Dict[str, Any],
+) -> str:
+    recognized_fields: List[str] = []
+    recognized_fields.extend(f"- att: {value}" for value in normalized_atts)
+    recognized_fields.extend(f"- opt: {option_name}={option_value}" for option_name, option_value in normalized_opts)
+    recognized_fields.extend(f"- price<{value}" for value in normalized_prices)
+    recognized_fields.extend(f"- type: {value}" for value in normalized_types)
+    if not recognized_fields:
+        recognized_fields.append("- <none>")
+
+    problems: List[str] = []
+
+    goal_attrs = [str(attr).strip().lower() for attr in goal.get("attributes", []) if str(attr).strip()]
+    for attr in goal_attrs:
+        if attr not in normalized_atts:
+            problems.append(f"- Missing required attribute slot: att:{attr}")
+
+    goal_options = _goal_option_items(goal)
+    for option_name, option_value in goal_options:
+        if (option_name, option_value) not in normalized_opts:
+            problems.append(f"- Missing required option slot: opt:{option_name}={option_value}")
+
+    for value in raw_opt_slots:
+        if "=" not in value:
+            cleaned = value.strip()
+            if cleaned:
+                problems.append(
+                    f"- Invalid option slot: opt:{cleaned}\n"
+                    "  Option slots must use name=value, for example: opt:size=90x40x40cm"
+                )
+
+    for value in raw_price_slots:
+        cleaned = value.strip().replace("$", "")
+        if not cleaned:
+            continue
+        try:
+            float(cleaned)
+        except ValueError:
+            problems.append(
+                f"- Invalid price slot: price<{cleaned}\n"
+                "  Price slots must be numeric, for example: price<180.0"
+            )
+
+    if goal.get("price_upper", 0) > 0 and not normalized_prices:
+        problems.append(f"- Missing required price slot: price<{goal.get('price_upper', 0)}")
+    if not normalized_types:
+        problems.append(f"- Missing required type slot: type:{goal.get('query', '')}")
+    if not problems:
+        problems.append("- The structured query is incomplete.")
+
+    return (
+        "Recognized fields:\n"
+        + "\n".join(recognized_fields)
+        + "\n\nProblems:\n"
+        + "\n".join(problems)
+    )
+
+
 def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, Any]:
     matches = list(_SLOT_PATTERN.finditer(raw_query))
     slots = {"att": [], "opt": [], "price": [], "type": []}
@@ -58,6 +123,7 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
             "slots": slots,
             "normalized_slots": {"att": [], "opt": [], "price": [], "type": []},
             "tutorial_example": _tutorial_example(goal),
+            "diagnostic_message": "",
         }
 
     for idx, match in enumerate(matches):
@@ -107,6 +173,18 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
         and ((not requires_price) or len(normalized_prices) >= 1)
     )
 
+    diagnostic_message = ""
+    if not is_complete:
+        diagnostic_message = _format_structured_query_diagnostics(
+            normalized_atts=normalized_atts,
+            normalized_opts=normalized_opts,
+            normalized_prices=normalized_prices,
+            normalized_types=normalized_types,
+            raw_opt_slots=slots["opt"],
+            raw_price_slots=slots["price"],
+            goal=goal,
+        )
+
     return {
         "has_structured_slots": True,
         "is_complete": is_complete,
@@ -119,6 +197,7 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
             "type": normalized_types,
         },
         "tutorial_example": _tutorial_example(goal),
+        "diagnostic_message": diagnostic_message,
     }
 
 
