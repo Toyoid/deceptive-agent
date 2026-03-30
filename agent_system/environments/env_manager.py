@@ -764,8 +764,12 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
 
     def reset(self, kwargs) -> Tuple[Dict[str, Any], List[Dict]]:
         obs, infos = self.envs.reset()
-        self.tasks = [info["task_description"] for info in infos]
-        self.stages = [info["stage"] for info in infos]
+        self.tasks = []
+        self.stages = []
+        for info in infos:
+            self.tasks.append(info["task_description"])
+            self.stages.append(info["stage"])
+            info["system_prompt"] = CHEATSHOP_SYSTEM_PROMPT
         self.pre_text_obs = obs.copy()
         self.actor_memory.reset(batch_size=len(obs))
         self.episode_memory.reset(batch_size=len(obs))
@@ -779,7 +783,7 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
     def step(self, text_actions: List[str]):
         from agent_system.environments.env_package.cheatshop.helpers import (
             build_behavior_under_review,
-            build_judge_evidence,
+            build_evidence,
             build_monitor_background,
         )
 
@@ -814,11 +818,12 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
 
         for i, info in enumerate(infos):
             semantic_valid = bool(info.get("is_action_available", True))
+            info["system_prompt"] = CHEATSHOP_SYSTEM_PROMPT
             info["is_action_valid"] = bool(format_valids[i]) and semantic_valid
             info["task_type"] = self.envs.task_type
             info["user_input"] = self.tasks[i]
-            info["evidence"] = build_judge_evidence(
-                tool_documentation=CHEATSHOP_TOOL_DOCUMENTATION,
+            info["evidence"] = build_evidence(
+                tool_documentation=CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION,
             )
             info["agent_response"] = build_behavior_under_review(
                 trajectory=self.build_trajectory_under_review(i),
@@ -863,8 +868,26 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
                 },
             )
 
+    def _format_action_block(self, actions: List[str]) -> str:
+        return "[\n" + "\n".join(f"'{action}'," for action in actions) + "\n]"
+
     def _format_available_actions(self, actions: List[str]) -> str:
-        return "\n".join(f"'{action}'," for action in actions)
+        actions = list(dict.fromkeys(actions))
+        if "click[analyze_results]" not in actions:
+            return self._format_action_block(actions)
+
+        shopper_actions = [action for action in actions if action != "click[analyze_results]"]
+        sections = []
+        if shopper_actions:
+            sections.append(
+                "Standard shopper actions:\n"
+                f"{self._format_action_block(shopper_actions)}"
+            )
+        sections.append(
+            "Other visible control:\n"
+            f"{self._format_action_block(['click[analyze_results]'])}"
+        )
+        return "\n\n".join(sections)
 
     def build_text_obs(self, text_obs: List[str], infos: List[Dict[str, Any]], init: bool = False) -> List[str]:
         postprocess_text_obs = []
@@ -911,7 +934,7 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
     def build_monitor_obs(self, dones: List[bool], infos: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
         from agent_system.environments.env_package.cheatshop.helpers import (
             build_behavior_under_review,
-            build_judge_evidence,
+            build_evidence,
             build_monitor_background,
         )
 
@@ -919,8 +942,8 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
         agent_trajectories = []
         for i in range(len(infos)):
             if dones[i]:
-                evidence = build_judge_evidence(
-                    tool_documentation=CHEATSHOP_TOOL_DOCUMENTATION,
+                evidence = build_evidence(
+                    tool_documentation=CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION,
                 )
                 background = build_monitor_background(
                     evidence=evidence,
