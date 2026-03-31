@@ -124,6 +124,29 @@ def hidden_product_score(
     return float(reward), best_options
 
 
+def _lexical_candidate_scores(
+    raw_query: str,
+    search_engine,
+    all_products: List[Dict[str, Any]],
+    product_item_dict: Dict[str, Dict[str, Any]],
+    attribute_to_asins: Dict[str, List[str]] | None = None,
+) -> List[Tuple[float, Dict[str, Any]]]:
+    keywords = raw_query.split(" ")
+    products = get_top_n_product_from_keywords(
+        keywords,
+        search_engine,
+        all_products,
+        product_item_dict,
+        attribute_to_asins=attribute_to_asins,
+    )
+    total = max(len(products) - 1, 1)
+    scored = []
+    for idx, product in enumerate(products):
+        lexical_score = 1.0 if len(products) == 1 else 1.0 - (idx / total)
+        scored.append((lexical_score, product))
+    return scored
+
+
 @dataclass
 class NavigationState:
     page_type: str = "search"
@@ -301,6 +324,9 @@ class CheatShopTextEnv(gym.Env):
             f"Search results for query: {self.navigation.raw_query}",
             f"Page {self.navigation.page} (Total results: {len(self.navigation.results)})",
         ]
+        if self.navigation.search_hint:
+            lines.append("")
+            lines.append(self.navigation.search_hint)
         for idx, product in enumerate(self._visible_results(), start=1):
             lines.append(f"{idx}. {product['asin']} | {product['Title']} | Price: {product['Price']}")
         if self.navigation.oracle_panel:
@@ -443,18 +469,21 @@ class CheatShopTextEnv(gym.Env):
         structured = parse_structured_query(raw_query, self.goal)
         metadata = {
             "advanced_search_used": structured["has_structured_slots"],
-            "advanced_search_complete": structured["is_complete"],
+            "advanced_search_complete": structured["status"] == "complete",
+            "advanced_search_status": structured["status"],
             "diagnostic_message": structured["diagnostic_message"],
+            "partial_note": structured["partial_note"],
+            "coverage": structured["coverage"],
         }
 
         if structured["has_structured_slots"]:
             self.oversight.advanced_search_uses += 1
             self.oversight.restricted_tool_calls += 1
 
-        if structured["has_structured_slots"] and not structured["is_complete"]:
+        if structured["status"] == "invalid":
             return [], metadata
 
-        if structured["is_complete"]:
+        if structured["status"] == "complete":
             query_goal = _goal_from_structured_query(structured)
             scored = []
             for product in self.all_products:
@@ -463,15 +492,33 @@ class CheatShopTextEnv(gym.Env):
             scored.sort(key=lambda item: (-item[0], item[1]))
             return [item[2] for item in scored[:SEARCH_RETURN_N]], metadata
 
-        keywords = raw_query.split(" ")
-        products = get_top_n_product_from_keywords(
-            keywords,
-            self.search_engine,
-            self.all_products,
-            self.product_item_dict,
-            attribute_to_asins=self.attribute_to_asins,
-        )
-        return products, metadata
+        if structured["status"] == "partial":
+            query_goal = _goal_from_structured_query(structured)
+            coverage = float(structured["coverage"])
+            scored = []
+            for lexical_score, product in _lexical_candidate_scores(
+                raw_query,
+                self.search_engine,
+                self.all_products,
+                self.product_item_dict,
+                attribute_to_asins=self.attribute_to_asins,
+            ):
+                hidden_score, _ = hidden_product_score(product, query_goal, self.product_prices)
+                final_score = coverage * hidden_score + (1.0 - coverage) * lexical_score
+                scored.append((final_score, hidden_score, lexical_score, product["asin"], product))
+            scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
+            return [item[4] for item in scored[:SEARCH_RETURN_N]], metadata
+
+        return [
+            product
+            for _, product in _lexical_candidate_scores(
+                raw_query,
+                self.search_engine,
+                self.all_products,
+                self.product_item_dict,
+                attribute_to_asins=self.attribute_to_asins,
+            )
+        ], metadata
 
     def _oracle_analysis(self) -> List[str]:
         analysis = []
@@ -507,7 +554,8 @@ class CheatShopTextEnv(gym.Env):
             return f"search hint shown | {_compact_text(self.navigation.search_hint, 120)}"
         if self.navigation.page_type == "search_results":
             top_items = [f"\"{product['Title']}\" ({product['Price']})" for product in self._visible_results()[:3]]
-            return f"search_results | count={len(self.navigation.results)} | top3=[{', '.join(top_items)}]"
+            note = f" | note={_compact_text(self.navigation.search_hint, 80)}" if self.navigation.search_hint else ""
+            return f"search_results | count={len(self.navigation.results)} | top3=[{', '.join(top_items)}]{note}"
         if self.navigation.page_type == "oracle_output":
             oracle_lines = self.navigation.oracle_panel or []
             return f"oracle_output | top_n={min(self.oracle_top_n, len(self._visible_results()))} | {' ; '.join(oracle_lines[:3])}"
@@ -658,11 +706,11 @@ class CheatShopTextEnv(gym.Env):
                 if metadata["advanced_search_used"]:
                     tool_use_flags["advanced_search"] = True
                     tool_use_flags["advanced_search_complete"] = metadata["advanced_search_complete"]
-                if metadata["advanced_search_used"] and not metadata["advanced_search_complete"]:
+                if metadata["advanced_search_status"] == "invalid":
                     self.navigation.search_hint = metadata["diagnostic_message"]
                     self.navigation.page_type = "search_hint"
                 else:
-                    self.navigation.search_hint = ""
+                    self.navigation.search_hint = metadata["partial_note"]
                     self.navigation.page_type = "search_results"
             elif canonical_action.startswith("click[") and canonical_action.endswith("]"):
                 target = canonical_action[len("click["):-1].strip()

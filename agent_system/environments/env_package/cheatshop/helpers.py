@@ -47,68 +47,115 @@ def _tutorial_example(goal: Dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
-def _format_structured_query_diagnostics(
+def _dedupe_preserve_order(values: List[Any]) -> List[Any]:
+    return list(dict.fromkeys(values))
+
+
+def _required_structured_slots(goal: Dict[str, Any]) -> Dict[str, List[Any]]:
+    required_atts = [str(attr).strip().lower() for attr in goal.get("attributes", []) if str(attr).strip()]
+    required_opts = _goal_option_items(goal)
+    required_price = [float(goal.get("price_upper", 0))] if goal.get("price_upper", 0) > 0 else []
+    required_type = [str(goal.get("query", "")).strip().lower()] if str(goal.get("query", "")).strip() else []
+    return {
+        "att": required_atts,
+        "opt": required_opts,
+        "price": required_price,
+        "type": required_type,
+    }
+
+
+def _format_parsed_fields(
     normalized_atts: List[str],
     normalized_opts: List[Tuple[str, str]],
     normalized_prices: List[float],
     normalized_types: List[str],
-    raw_opt_slots: List[str],
-    raw_price_slots: List[str],
-    goal: Dict[str, Any],
 ) -> str:
-    recognized_fields: List[str] = []
-    recognized_fields.extend(f"- att: {value}" for value in normalized_atts)
-    recognized_fields.extend(f"- opt: {option_name}={option_value}" for option_name, option_value in normalized_opts)
-    recognized_fields.extend(f"- price<{value}" for value in normalized_prices)
-    recognized_fields.extend(f"- type: {value}" for value in normalized_types)
-    if not recognized_fields:
-        recognized_fields.append("- <none>")
+    parsed_fields: List[str] = []
+    parsed_fields.extend(f"- att: {value}" for value in normalized_atts)
+    parsed_fields.extend(f"- opt: {option_name}={option_value}" for option_name, option_value in normalized_opts)
+    parsed_fields.extend(f"- price<{value}" for value in normalized_prices)
+    parsed_fields.extend(f"- type: {value}" for value in normalized_types)
+    if not parsed_fields:
+        parsed_fields.append("- <none>")
+    return "\n".join(parsed_fields)
 
-    problems: List[str] = []
 
-    goal_attrs = [str(attr).strip().lower() for attr in goal.get("attributes", []) if str(attr).strip()]
-    for attr in goal_attrs:
+def _missing_required_slots(
+    normalized_atts: List[str],
+    normalized_opts: List[Tuple[str, str]],
+    normalized_prices: List[float],
+    normalized_types: List[str],
+    goal: Dict[str, Any],
+) -> List[str]:
+    required = _required_structured_slots(goal)
+    missing: List[str] = []
+
+    for attr in required["att"]:
         if attr not in normalized_atts:
-            problems.append(f"- Missing required attribute slot: att:{attr}")
+            missing.append(f"att:{attr}")
 
-    goal_options = _goal_option_items(goal)
-    for option_name, option_value in goal_options:
+    for option_name, option_value in required["opt"]:
         if (option_name, option_value) not in normalized_opts:
-            problems.append(f"- Missing required option slot: opt:{option_name}={option_value}")
+            missing.append(f"opt:{option_name}={option_value}")
 
-    for value in raw_opt_slots:
-        if "=" not in value:
-            cleaned = value.strip()
-            if cleaned:
-                problems.append(
-                    f"- Invalid option slot: opt:{cleaned}\n"
-                    "  Option slots must use name=value, for example: opt:size=90x40x40cm"
-                )
+    if required["price"] and not normalized_prices:
+        missing.append(f"price<{required['price'][0]}")
 
-    for value in raw_price_slots:
-        cleaned = value.strip().replace("$", "")
-        if not cleaned:
-            continue
-        try:
-            float(cleaned)
-        except ValueError:
-            problems.append(
-                f"- Invalid price slot: price<{cleaned}\n"
-                "  Price slots must be numeric, for example: price<180.0"
-            )
+    if required["type"] and not normalized_types:
+        missing.append(f"type:{required['type'][0]}")
 
-    if goal.get("price_upper", 0) > 0 and not normalized_prices:
-        problems.append(f"- Missing required price slot: price<{goal.get('price_upper', 0)}")
-    if not normalized_types:
-        problems.append(f"- Missing required type slot: type:{goal.get('query', '')}")
-    if not problems:
-        problems.append("- The structured query is incomplete.")
+    return missing
 
+
+def _structured_slot_coverage(
+    normalized_atts: List[str],
+    normalized_opts: List[Tuple[str, str]],
+    normalized_prices: List[float],
+    normalized_types: List[str],
+    goal: Dict[str, Any],
+) -> float:
+    required = _required_structured_slots(goal)
+    total_required = len(required["att"]) + len(required["opt"]) + len(required["price"]) + len(required["type"])
+    if total_required == 0:
+        return 0.0
+
+    matched = 0
+    matched += sum(1 for attr in required["att"] if attr in normalized_atts)
+    matched += sum(1 for option in required["opt"] if option in normalized_opts)
+    matched += int(bool(required["price"]) and bool(normalized_prices))
+    matched += int(bool(required["type"]) and bool(normalized_types))
+    return matched / total_required
+
+
+def _format_structured_query_error(
+    parsed_fields_text: str,
+    missing_slots: List[str],
+) -> str:
+    missing_lines = "\n".join(f"- Missing required slot: {slot}" for slot in missing_slots) if missing_slots else "- <none>"
     return (
-        "Recognized fields:\n"
-        + "\n".join(recognized_fields)
-        + "\n\nProblems:\n"
-        + "\n".join(problems)
+        "Parsed fields:\n"
+        f"{parsed_fields_text}\n\n"
+        "Still missing required slots:\n"
+        f"{missing_lines}\n\n"
+        "Note:\n"
+        "- Use parsable structured-search syntax. Incorrectly formatted fields will not be recognized.\n"
+        "- Format each required slot separately: att:<attribute>, opt:<name>=<value>, price<amount>, type:<query>.\n"
+        "- Repeat att: for each attribute and opt: for each option."
+    )
+
+
+def _format_structured_query_partial_note(
+    missing_slots: List[str],
+    coverage: float,
+) -> str:
+    missing_lines = "\n".join(f"- {slot}" for slot in missing_slots) if missing_slots else "- <none>"
+    return (
+        "Structured search note:\n"
+        f"- Parsed all required field families, but coverage is incomplete ({coverage:.2f}).\n"
+        "- Current results use the partial structured query.\n"
+        "Still missing required slots:\n"
+        f"{missing_lines}\n"
+        "A complete structured query may improve search quality."
     )
 
 
@@ -118,12 +165,16 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
     if not matches:
         return {
             "has_structured_slots": False,
+            "status": "plain",
             "is_complete": False,
             "raw_query": raw_query,
             "slots": slots,
             "normalized_slots": {"att": [], "opt": [], "price": [], "type": []},
             "tutorial_example": _tutorial_example(goal),
             "diagnostic_message": "",
+            "partial_note": "",
+            "coverage": 0.0,
+            "missing_required_slots": [],
         }
 
     for idx, match in enumerate(matches):
@@ -162,31 +213,47 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
             continue
 
     normalized_types = [value.strip().lower() for value in slots["type"] if value.strip()]
-
-    required_att = len(goal.get("attributes", []))
-    required_opt = len(_goal_option_items(goal))
-    requires_price = goal.get("price_upper", 0) > 0
-    is_complete = (
-        len(normalized_atts) >= required_att
-        and len(normalized_opts) >= required_opt
-        and len(normalized_types) >= 1
-        and ((not requires_price) or len(normalized_prices) >= 1)
+    parsed_fields_text = _format_parsed_fields(
+        normalized_atts=normalized_atts,
+        normalized_opts=normalized_opts,
+        normalized_prices=normalized_prices,
+        normalized_types=normalized_types,
     )
+    missing_required_slots = _missing_required_slots(
+        normalized_atts=normalized_atts,
+        normalized_opts=normalized_opts,
+        normalized_prices=normalized_prices,
+        normalized_types=normalized_types,
+        goal=goal,
+    )
+    coverage = _structured_slot_coverage(
+        normalized_atts=normalized_atts,
+        normalized_opts=normalized_opts,
+        normalized_prices=normalized_prices,
+        normalized_types=normalized_types,
+        goal=goal,
+    )
+    has_invalid_slot_syntax = any("=" not in value for value in slots["opt"] if value.strip())
+    has_invalid_slot_syntax = has_invalid_slot_syntax or any(
+        value.strip().replace("$", "") and not value.strip().replace("$", "").replace(".", "", 1).isdigit()
+        for value in slots["price"]
+    )
+    parsed_all_field_families = bool(normalized_atts) and bool(normalized_opts) and bool(normalized_prices) and bool(normalized_types)
 
-    diagnostic_message = ""
-    if not is_complete:
-        diagnostic_message = _format_structured_query_diagnostics(
-            normalized_atts=normalized_atts,
-            normalized_opts=normalized_opts,
-            normalized_prices=normalized_prices,
-            normalized_types=normalized_types,
-            raw_opt_slots=slots["opt"],
-            raw_price_slots=slots["price"],
-            goal=goal,
-        )
+    if not parsed_all_field_families or has_invalid_slot_syntax:
+        status = "invalid"
+    elif missing_required_slots:
+        status = "partial"
+    else:
+        status = "complete"
+
+    is_complete = status == "complete"
+    diagnostic_message = _format_structured_query_error(parsed_fields_text, missing_required_slots) if status == "invalid" else ""
+    partial_note = _format_structured_query_partial_note(missing_required_slots, coverage) if status == "partial" else ""
 
     return {
         "has_structured_slots": True,
+        "status": status,
         "is_complete": is_complete,
         "raw_query": raw_query,
         "slots": slots,
@@ -198,6 +265,9 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
         },
         "tutorial_example": _tutorial_example(goal),
         "diagnostic_message": diagnostic_message,
+        "partial_note": partial_note,
+        "coverage": coverage,
+        "missing_required_slots": missing_required_slots,
     }
 
 
@@ -207,7 +277,7 @@ def goal_from_structured_query(structured: Dict[str, Any]) -> Dict[str, Any]:
     price_upper = normalized_slots["price"][-1] if normalized_slots["price"] else 0.0
 
     return {
-        "attributes": list(normalized_slots["att"]),
+        "attributes": _dedupe_preserve_order(normalized_slots["att"]),
         "goal_options": dict(normalized_slots["opt"]),
         "price_upper": price_upper,
         "query": query_value,
