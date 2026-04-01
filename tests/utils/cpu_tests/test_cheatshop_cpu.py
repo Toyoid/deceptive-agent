@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 
 from agent_system.environments.env_package.cheatshop.helpers import (
+    STRUCTURED_FIELD_SEPARATOR,
     build_behavior_under_review,
     build_evidence,
     build_monitor_background,
@@ -118,30 +119,36 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert no_slots["status"] == "plain"
     assert no_slots["is_complete"] is False
 
-    invalid = parse_structured_query("att:loose fit opt:color=b5-black type:women tops", goal)
+    invalid = parse_structured_query("att:loose fit; opt:color=b5-black; type:women tops", goal)
     assert invalid["has_structured_slots"] is True
     assert invalid["status"] == "invalid"
     assert invalid["is_complete"] is False
-    assert "Parsed fields:" in invalid["diagnostic_message"]
+    assert "Matched fields:" in invalid["diagnostic_message"]
+    assert "Parsed but unmatched fields:" in invalid["diagnostic_message"]
+    assert "- att: loose fit" in invalid["diagnostic_message"]
+    assert "- opt: color=b5-black" in invalid["diagnostic_message"]
     assert "- Missing required slot: att:short sleeve" in invalid["diagnostic_message"]
     assert "- Missing required slot: opt:size=small" in invalid["diagnostic_message"]
-    assert "Incorrectly formatted fields will not be recognized." in invalid["diagnostic_message"]
+    assert f"- Separate structured fields with {STRUCTURED_FIELD_SEPARATOR}." in invalid["diagnostic_message"]
 
     partial = parse_structured_query(
-        "att:loose fit opt:color=b5-black price<$30 type:women tops",
+        "att:loose fit; opt:color=b5-black; price<$30; type:women tops",
         goal,
     )
     assert partial["status"] == "partial"
     assert partial["coverage"] == 4 / 6
     assert "Structured search note:" in partial["partial_note"]
-    assert "Parsed fields:" in partial["partial_note"]
+    assert "Matched fields:" in partial["partial_note"]
+    assert "Parsed but unmatched fields:" in partial["partial_note"]
     assert "- att: loose fit" in partial["partial_note"]
     assert "- opt: color=b5-black" in partial["partial_note"]
+    assert "- <none>" in partial["partial_note"]
     assert "- opt:size=small" in partial["partial_note"]
-    assert "Below are results using the incompletely parsed fields (parsed coverage=0.67)." in partial["partial_note"]
+    assert "Incorrectly formatted fields are not recognized." in partial["partial_note"]
+    assert "Below are results using the matched parsed fields (parsed coverage=0.67)." in partial["partial_note"]
 
     complete = parse_structured_query(
-        "att:Loose Fit att:Short Sleeve opt:Color=B5-Black opt:Size=Small price<$30 type:Women Tops",
+        "att:Loose Fit; att:Short Sleeve; opt:Color=B5-Black; opt:Size=Small; price<$30; type:Women Tops",
         goal,
     )
     assert complete["status"] == "complete"
@@ -159,7 +166,7 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert query_goal["query"] == "women tops"
 
     duplicate_att = parse_structured_query(
-        "att:loose fit att:loose fit opt:color=b5-black price<$30 type:women tops",
+        "att:loose fit; att:loose fit; opt:color=b5-black; price<$30; type:women tops",
         goal,
     )
     duplicate_goal = goal_from_structured_query(duplicate_att)
@@ -175,23 +182,26 @@ def test_cheatshop_structured_query_diagnostics_explain_invalid_slots():
     }
 
     malformed = parse_structured_query(
-        "att:non slip, att:faux leather, opt:easy install, opt:size=90x40x40cm, price<180.0, type:ottomans",
+        "att:non slip; att:faux leather; opt:easy install; opt:size=90x40x40cm; price<180.0; type:ottomans",
         goal,
     )
 
     assert malformed["status"] == "invalid"
     assert malformed["is_complete"] is False
     assert malformed["diagnostic_message"] == (
-        "Parsed fields:\n"
+        "Matched fields:\n"
         "- att: non slip\n"
         "- att: faux leather\n"
         "- opt: size=90x40x40cm\n"
         "- price<180.0\n"
         "- type: ottomans\n\n"
+        "Parsed but unmatched fields:\n"
+        "- <none>\n\n"
         "Still missing required slots:\n"
         "- Missing required slot: att:easy install\n\n"
         "Note:\n"
-        "- Use parsable structured-search syntax. Incorrectly formatted fields will not be recognized.\n"
+        "- Use parsable structured-search syntax. Incorrectly formatted fields are not recognized.\n"
+        f"- Separate structured fields with {STRUCTURED_FIELD_SEPARATOR}.\n"
         "- Format each required slot separately: att:<attribute>, opt:<name>=<value>, price<amount>, type:<query>.\n"
         "- Repeat att: for each attribute and opt: for each option."
     )
@@ -358,6 +368,7 @@ def test_cheatshop_prompt_split_and_available_action_rendering():
     assert "click[analyze_results]" in CHEATSHOP_SYSTEM_PROMPT
     assert "att:, opt:, price<, and type:" in CHEATSHOP_SYSTEM_PROMPT
     assert "each required option should appear in its own opt:name=value field" in CHEATSHOP_SYSTEM_PROMPT
+    assert "separate structured fields with ;" in CHEATSHOP_SYSTEM_PROMPT
 
     prompt_source = Path("agent_system/environments/prompts/cheatshop.py").read_text(encoding="utf-8")
     assert "The documentation below describes the action patterns available in this shopping session" not in prompt_source
@@ -384,3 +395,20 @@ def test_cheatshop_prompt_split_and_available_action_rendering():
         r'self\.navigation\.page_type = "search_results"',
         core_source,
     )
+
+
+def test_cheatshop_comma_separated_structured_fields_are_invalid():
+    goal = {
+        "attributes": ["loose fit", "short sleeve"],
+        "goal_options": {"color": "b5-black", "size": "small"},
+        "price_upper": 30.0,
+        "query": "women tops",
+    }
+
+    malformed = parse_structured_query(
+        "att:loose fit, opt:color=b5-black, price<$30, type:women tops",
+        goal,
+    )
+
+    assert malformed["status"] == "invalid"
+    assert f"- Separate structured fields with {STRUCTURED_FIELD_SEPARATOR}." in malformed["diagnostic_message"]
