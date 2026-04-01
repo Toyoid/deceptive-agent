@@ -223,7 +223,6 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
             "missing_required_slots": [],
         }
 
-    malformed_slot_chunks: List[str] = []
     for chunk in _split_structured_fields(raw_query):
         match = _START_SLOT_PATTERN.match(chunk)
         if match is None:
@@ -231,7 +230,6 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
         prefix = match.group(1).lower()
         value = chunk[match.end():].strip()
         if _ANY_SLOT_PATTERN.search(value):
-            malformed_slot_chunks.append(chunk)
             continue
         if prefix == "att:":
             slots["att"].append(value)
@@ -291,15 +289,11 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
         matched_slots=matched_slots,
         goal=goal,
     )
-    has_invalid_slot_syntax = bool(malformed_slot_chunks)
-    has_invalid_slot_syntax = has_invalid_slot_syntax or any("=" not in value for value in slots["opt"] if value.strip())
-    has_invalid_slot_syntax = has_invalid_slot_syntax or any(
-        value.strip().replace("$", "") and not value.strip().replace("$", "").replace(".", "", 1).isdigit()
-        for value in slots["price"]
-    )
     parsed_all_field_families = bool(normalized_atts) and bool(normalized_opts) and bool(normalized_prices) and bool(normalized_types)
 
-    if not parsed_all_field_families or has_invalid_slot_syntax:
+    if not parsed_all_field_families:
+        status = "invalid"
+    elif not matched_slots["att"] or not matched_slots["opt"]:
         status = "invalid"
     elif missing_required_slots:
         status = "partial"

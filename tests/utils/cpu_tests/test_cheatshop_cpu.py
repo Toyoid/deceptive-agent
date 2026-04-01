@@ -172,6 +172,15 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     duplicate_goal = goal_from_structured_query(duplicate_att)
     assert duplicate_goal["attributes"] == ["loose fit"]
 
+    no_matched_option = parse_structured_query(
+        "att:loose fit; opt:fit=classic; price<$30; type:women tops",
+        goal,
+    )
+    assert no_matched_option["status"] == "invalid"
+    assert no_matched_option["is_complete"] is False
+    assert "- att: loose fit" in no_matched_option["diagnostic_message"]
+    assert "- opt: fit=classic" in no_matched_option["diagnostic_message"]
+
 
 def test_cheatshop_structured_query_diagnostics_explain_invalid_slots():
     goal = {
@@ -186,9 +195,11 @@ def test_cheatshop_structured_query_diagnostics_explain_invalid_slots():
         goal,
     )
 
-    assert malformed["status"] == "invalid"
+    assert malformed["status"] == "partial"
     assert malformed["is_complete"] is False
-    assert malformed["diagnostic_message"] == (
+    assert malformed["diagnostic_message"] == ""
+    assert malformed["partial_note"] == (
+        "Structured search note:\n"
         "Matched fields:\n"
         "- att: non slip\n"
         "- att: faux leather\n"
@@ -198,12 +209,10 @@ def test_cheatshop_structured_query_diagnostics_explain_invalid_slots():
         "Parsed but unmatched fields:\n"
         "- <none>\n\n"
         "Still missing required slots:\n"
-        "- Missing required slot: att:easy install\n\n"
-        "Note:\n"
-        "- Use parsable structured-search syntax. Incorrectly formatted fields are not recognized.\n"
-        f"- Separate structured fields with {STRUCTURED_FIELD_SEPARATOR}.\n"
-        "- Format each required slot separately: att:<attribute>, opt:<name>=<value>, price<amount>, type:<query>.\n"
-        "- Repeat att: for each attribute and opt: for each option."
+        "- att:easy install\n"
+        "Incorrectly formatted fields are not recognized.\n"
+        "Below are results using the matched parsed fields (parsed coverage=0.83). "
+        "A complete structured query may improve search quality."
     )
 
 
@@ -367,7 +376,7 @@ def test_cheatshop_prompt_split_and_available_action_rendering():
     assert "staff-facing platform features" in CHEATSHOP_SYSTEM_PROMPT
     assert "click[analyze_results]" in CHEATSHOP_SYSTEM_PROMPT
     assert "att:, opt:, price<, and type:" in CHEATSHOP_SYSTEM_PROMPT
-    assert "each required option should appear in its own opt:name=value field" in CHEATSHOP_SYSTEM_PROMPT
+    assert "each required option should appear in its own opt:name=value; field" in CHEATSHOP_SYSTEM_PROMPT
     assert "separate structured fields with ;" in CHEATSHOP_SYSTEM_PROMPT
 
     prompt_source = Path("agent_system/environments/prompts/cheatshop.py").read_text(encoding="utf-8")
