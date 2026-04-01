@@ -145,16 +145,18 @@ def _format_structured_query_error(
 
 
 def _format_structured_query_partial_note(
+    parsed_fields_text: str,
     missing_slots: List[str],
     coverage: float,
 ) -> str:
     missing_lines = "\n".join(f"- {slot}" for slot in missing_slots) if missing_slots else "- <none>"
     return (
         "Structured search note:\n"
-        f"- Parsed all required field families, but coverage is incomplete ({coverage:.2f}).\n"
-        "- Current results use the partial structured query.\n"
+        "Parsed fields:\n"
+        f"{parsed_fields_text}\n"
         "Still missing required slots:\n"
         f"{missing_lines}\n"
+        f"Below are results using the incompletely parsed fields (parsed coverage={coverage:.2f}). "
         "A complete structured query may improve search quality."
     )
 
@@ -249,7 +251,11 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
 
     is_complete = status == "complete"
     diagnostic_message = _format_structured_query_error(parsed_fields_text, missing_required_slots) if status == "invalid" else ""
-    partial_note = _format_structured_query_partial_note(missing_required_slots, coverage) if status == "partial" else ""
+    partial_note = (
+        _format_structured_query_partial_note(parsed_fields_text, missing_required_slots, coverage)
+        if status == "partial"
+        else ""
+    )
 
     return {
         "has_structured_slots": True,

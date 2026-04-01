@@ -134,7 +134,11 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert partial["status"] == "partial"
     assert partial["coverage"] == 4 / 6
     assert "Structured search note:" in partial["partial_note"]
+    assert "Parsed fields:" in partial["partial_note"]
+    assert "- att: loose fit" in partial["partial_note"]
+    assert "- opt: color=b5-black" in partial["partial_note"]
     assert "- opt:size=small" in partial["partial_note"]
+    assert "Below are results using the incompletely parsed fields (parsed coverage=0.67)." in partial["partial_note"]
 
     complete = parse_structured_query(
         "att:Loose Fit att:Short Sleeve opt:Color=B5-Black opt:Size=Small price<$30 type:Women Tops",
@@ -366,3 +370,17 @@ def test_cheatshop_prompt_split_and_available_action_rendering():
 
     core_source = Path("agent_system/environments/env_package/cheatshop/core.py").read_text(encoding="utf-8")
     assert core_source.count('actions.append("click[analyze_results]")') == 1
+    assert re.search(
+        r'elif target == NEXT_PAGE\.lower\(\) and self\.navigation\.page_type in \{"search_results", "oracle_output"\}:\s+'
+        r"self\.navigation\.page \+= 1\s+"
+        r"self\.navigation\.oracle_panel = None\s+"
+        r'self\.navigation\.page_type = "search_results"',
+        core_source,
+    )
+    assert re.search(
+        r'elif target == PREV_PAGE\.lower\(\) and self\.navigation\.page_type in \{"search_results", "oracle_output"\}:\s+'
+        r"self\.navigation\.page -= 1\s+"
+        r"self\.navigation\.oracle_panel = None\s+"
+        r'self\.navigation\.page_type = "search_results"',
+        core_source,
+    )
