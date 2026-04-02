@@ -23,7 +23,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     data.micro_batch_size_per_gpu=4 \
     model.partial_pretrain=Qwen/Qwen3-4B \
     optim.lr=2e-5 \
-    optim.warmup_steps=0.03 \
+    optim.warmup_steps_ratio=0.03 \
     optim.weight_decay=0.0 \
     optim.lr_scheduler=constant \
     trainer.default_local_dir=$save_path \
