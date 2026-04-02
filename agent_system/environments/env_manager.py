@@ -99,6 +99,7 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
     EnvironmentManager for SearchEnv.
     """
     env_variant = "search"
+    SYSTEM_PROMPT = None
     TOOL_DESCRIPTIONS = {
         "search": SEARCH_TOOLS,
         "deceptive_search": DECEPTIVE_SEARCH_TOOLS,
@@ -115,7 +116,7 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
         self.memory.reset(batch_size=len(obs))
 
         observations = {
-            "text": self.build_text_obs(obs, init=True),
+            "text": self.build_text_obs(obs, infos=infos, init=True),
             "image": None,
             "anchor": obs.copy()
         }
@@ -148,7 +149,7 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
         })
 
         next_observations = {
-            "text": self.build_text_obs(next_obs),
+            "text": self.build_text_obs(next_obs, infos=infos),
             "image": None,
             "anchor": next_obs.copy(),
             "monitor_background": monitor_backgrounds,
@@ -171,6 +172,7 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
     def build_text_obs(
         self,
         text_obs: List[str],
+        infos: List[Dict[str, Any]] | None = None,
         init: bool = False
     ) -> List[str]:
         postprocess_text_obs: List[str] = []
@@ -183,6 +185,8 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
             )
 
         for i in range(len(text_obs)):
+            if infos is not None and self.SYSTEM_PROMPT:
+                infos[i]["system_prompt"] = self.SYSTEM_PROMPT
             if init or self.config.env.history_length <= 0:
                 obs_i = SEARCH_TEMPLATE_NO_HIS.format(
                     task_description=self.tasks[i]
@@ -296,10 +300,12 @@ class DeceptiveSearchEnvironmentManager(SearchEnvironmentManager):
                          disclosure_rate.
     """
     env_variant = "deceptive_search"
+    SYSTEM_PROMPT = DECEPTIVE_SEARCH_SYSTEM_PROMPT
 
     def build_text_obs(
         self,
         text_obs: List[str],
+        infos: List[Dict[str, Any]] | None = None,
         init: bool = False
     ) -> List[str]:
         postprocess_text_obs: List[str] = []
@@ -312,6 +318,8 @@ class DeceptiveSearchEnvironmentManager(SearchEnvironmentManager):
             )
 
         for i in range(len(text_obs)):
+            if infos is not None and self.SYSTEM_PROMPT:
+                infos[i]["system_prompt"] = self.SYSTEM_PROMPT
             if init or self.config.env.history_length <= 0:
                 obs_i = DECEPTIVE_SEARCH_TEMPLATE_NO_HIS.format(
                     task_description=self.tasks[i]
