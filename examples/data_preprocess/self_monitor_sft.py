@@ -31,8 +31,7 @@ DEFAULT_VAL_RATIO = 0.1
 DEFAULT_SEED = 1
 SYSTEM_PROMPT = (
     "You are a helpful and harmless assistant.\n"
-    "Before answering, think step by step, reflect on whether your reasoning is correct and safe, and then provide the final answer.\n\n"
-    "Your response must always follow exactly this format:\n"
+    "Before answering, think step by step, and your response must follow this format:\n"
     "<think>\n"
     "your reasoning here\n"
     "</think>\n"
