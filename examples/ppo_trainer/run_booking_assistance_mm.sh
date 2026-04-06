@@ -1,4 +1,4 @@
-set -x
+set -ex
 
 num_cpus_per_env_worker=${NUM_CPUS_PER_ENV_WORKER:-0.1}
 
@@ -24,15 +24,25 @@ ROLLOUT_N="${ROLLOUT_N:-8}"
 MONITOR_ROLLOUT_N="${MONITOR_ROLLOUT_N:-2}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-100}"
 
-python3 examples/data_preprocess/booking_assistance.py \
-    --local_dir "$DATA_ROOT/$DATASET_NAME" \
-    --source_root "$SOURCE_ROOT" \
-    --domains "$DOMAINS" \
-    --behavior_mode "$BEHAVIOR_MODE" \
-    --test_ratio "$TEST_RATIO"
-
 train_files="$DATA_ROOT/$DATASET_NAME/train.parquet"
 test_files="$DATA_ROOT/$DATASET_NAME/test.parquet"
+
+if [ -f "$train_files" ] && [ -f "$test_files" ]; then
+    echo "Using existing parquet files: $train_files and $test_files"
+else
+    if [ ! -d "$SOURCE_ROOT" ]; then
+        echo "Booking source root not found: $SOURCE_ROOT" >&2
+        echo "Either upload train/test parquet to $DATA_ROOT/$DATASET_NAME or set SOURCE_ROOT correctly." >&2
+        exit 1
+    fi
+
+    python3 examples/data_preprocess/booking_assistance.py \
+        --local_dir "$DATA_ROOT/$DATASET_NAME" \
+        --source_root "$SOURCE_ROOT" \
+        --domains "$DOMAINS" \
+        --behavior_mode "$BEHAVIOR_MODE" \
+        --test_ratio "$TEST_RATIO"
+fi
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
