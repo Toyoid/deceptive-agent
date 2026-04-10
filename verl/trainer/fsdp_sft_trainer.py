@@ -26,7 +26,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 import logging
 import re
 from contextlib import nullcontext
-
+from pathlib import Path
 import hydra
 import torch
 import torch.distributed
@@ -75,6 +75,19 @@ elif is_npu_available:
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_SFT_LOGGING_LEVEL", "WARN"))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_repo_root_path(path: str | None) -> str | None:
+    """Resolve relative paths from the repo root instead of the launch cwd."""
+    if path is None:
+        return None
+
+    expanded_path = Path(path).expanduser()
+    if expanded_path.is_absolute():
+        return str(expanded_path)
+
+    return str((REPO_ROOT / expanded_path).resolve())
 
 
 def extract_step(path):
@@ -87,6 +100,7 @@ def extract_step(path):
 class FSDPSFTTrainer:
     def __init__(self, config, device_mesh: DeviceMesh, ulysses_device_mesh: DeviceMesh, tokenizer, train_dataset: Dataset, val_dataset: Dataset):
         self.config = config
+        self.config.trainer.default_local_dir = resolve_repo_root_path(self.config.trainer.default_local_dir)
         self.device_mesh = device_mesh
         self.ulysses_device_mesh = ulysses_device_mesh
         self.sharding_manager = FSDPUlyssesShardingManager(self.ulysses_device_mesh)

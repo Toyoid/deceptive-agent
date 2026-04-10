@@ -1,13 +1,20 @@
 #!/bin/bash
 set -x
 
-if [ "$#" -lt 2 ]; then
-    echo "Usage: run_qwen_4_sp2.sh <nproc_per_node> <save_path> [other_configs...]"
+if [ "$#" -lt 1 ]; then
+    echo "Usage: run_qwen_4_sp2.sh <nproc_per_node> [other_configs...]"
     exit 1
 fi
 
 nproc_per_node=$1
-save_path=$2
+
+export HF_ENDPOINT="https://hf-mirror.com"
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export HF_HUB_OFFLINE=1
+# export WANDB_MODE="offline"
+DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 shift 2
 
@@ -26,9 +33,8 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     optim.warmup_steps_ratio=0.03 \
     optim.weight_decay=0.0 \
     optim.lr_scheduler=constant \
-    trainer.default_local_dir=$save_path \
-    trainer.project_name=self-monitor-sft \
-    trainer.experiment_name=self-monitor-sft-qwen-3-4b-instruct-sp2 \
+    trainer.project_name=self_monitor_sft \
+    trainer.experiment_name=qwen3_4b_sp2 \
     trainer.logger=['console','wandb'] \
     trainer.total_epochs=3 \
     trainer.default_hdfs_dir=null $@ \

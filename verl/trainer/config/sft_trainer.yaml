@@ -47,7 +47,7 @@ optim:
 ulysses_sequence_parallel_size: 1
 use_remove_padding: False
 trainer:
-  default_local_dir: /tmp/sft_model
+  default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
   default_hdfs_dir: hdfs://tmp/experiments/gsm8k/gemma-1.1-7b-it/ # change the hdfs path here
   resume_path: null
   project_name: gsm8k-sft
