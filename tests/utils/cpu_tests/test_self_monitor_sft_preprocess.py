@@ -11,8 +11,17 @@ assert _SPEC is not None and _SPEC.loader is not None
 _SPEC.loader.exec_module(_MODULE)
 
 SYSTEM_PROMPT = _MODULE.SYSTEM_PROMPT
+filter_overlong_examples = _MODULE.filter_overlong_examples
 prepare_self_monitor_dataframe = _MODULE.prepare_self_monitor_dataframe
 split_processed_dataframe = _MODULE.split_processed_dataframe
+
+
+class _FakeTokenizer:
+    def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=False):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        serialized = "\n".join(f"{message['role']}:{message['content']}" for message in messages)
+        return list(range(len(serialized)))
 
 
 def test_prepare_self_monitor_dataframe_formats_and_drops_invalid_rows():
@@ -74,6 +83,45 @@ def test_prepare_self_monitor_dataframe_formats_and_drops_invalid_rows():
     assert row["system_prompt"] == SYSTEM_PROMPT
     assert row["target_text"] == expected_target
     assert row["messages"] == expected_messages
+
+
+def test_filter_overlong_examples_drops_rows_before_training():
+    raw_df = pd.DataFrame(
+        [
+            {
+                "question": "Short question",
+                "thinking_process": "Short reasoning",
+                "reflection": "Short reflection",
+                "assessment": "safe",
+                "revised_response": "Short answer",
+                "source": "model-a",
+            },
+            {
+                "question": "Long question " * 30,
+                "thinking_process": "Long reasoning " * 80,
+                "reflection": "Long reflection " * 40,
+                "assessment": "unsafe",
+                "revised_response": "Long answer " * 40,
+                "source": "model-b",
+            },
+        ]
+    )
+
+    processed_df, drop_reasons = prepare_self_monitor_dataframe(raw_df, system_prompt=SYSTEM_PROMPT)
+
+    assert not drop_reasons
+
+    filtered_df, length_drop_reasons = filter_overlong_examples(
+        processed_df,
+        tokenizer=_FakeTokenizer(),
+        max_length=400,
+    )
+
+    assert len(filtered_df) == 1
+    assert length_drop_reasons["over_max_length:400"] == 1
+    assert filtered_df.iloc[0]["question"] == "Short question"
+    assert isinstance(filtered_df.iloc[0]["sequence_length"], int)
+    assert filtered_df.iloc[0]["sequence_length"] <= 400
 
 
 def test_split_processed_dataframe_is_deterministic_and_falls_back_to_assessment():

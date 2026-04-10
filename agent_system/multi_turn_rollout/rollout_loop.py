@@ -302,7 +302,7 @@ class TrajectoryCollector:
             obs_content += obs_text
         else:
             print(f"Warning: No text observation found!")
-    
+
         chat = [
             {"content": system_prompt, "role": "system"},
             {"content": obs_content,   "role": "user"},

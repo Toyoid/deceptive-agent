@@ -15,6 +15,8 @@
 
 """
 Preprocess the PKU-Alignment/self-monitor dataset into multi-turn SFT parquet files.
+Optionally filter out overlong examples using the same chat-template tokenization
+path as training.
 """
 
 import argparse
@@ -120,6 +122,50 @@ def prepare_self_monitor_dataframe(df: pd.DataFrame, system_prompt: str = SYSTEM
 
     processed_df = pd.DataFrame(processed_rows)
     return processed_df, drop_reasons
+
+
+def load_chat_tokenizer(tokenizer_name_or_path: str):
+    from verl.utils.tokenizer import hf_tokenizer
+
+    return hf_tokenizer(tokenizer_name_or_path)
+
+
+def compute_message_sequence_length(messages: list[dict[str, str]], tokenizer) -> int:
+    token_ids = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=False,
+    )
+
+    if hasattr(token_ids, "tolist"):
+        token_ids = token_ids.tolist()
+
+    if isinstance(token_ids, list) and token_ids and isinstance(token_ids[0], list):
+        if len(token_ids) != 1:
+            raise ValueError("Expected a single tokenized conversation.")
+        token_ids = token_ids[0]
+
+    return len(token_ids)
+
+
+def filter_overlong_examples(df: pd.DataFrame, tokenizer, max_length: int) -> tuple[pd.DataFrame, Counter]:
+    if max_length <= 0:
+        raise ValueError(f"max_length must be positive, got {max_length}")
+
+    kept_rows = []
+    drop_reasons: Counter = Counter()
+
+    for row in df.to_dict(orient="records"):
+        sequence_length = compute_message_sequence_length(row["messages"], tokenizer)
+        if sequence_length > max_length:
+            drop_reasons[f"over_max_length:{max_length}"] += 1
+            continue
+
+        kept_row = dict(row)
+        kept_row["sequence_length"] = sequence_length
+        kept_rows.append(kept_row)
+
+    return pd.DataFrame(kept_rows), drop_reasons
 
 
 def _build_stratify_labels(df: pd.DataFrame, columns: Iterable[str]) -> Optional[pd.Series]:
@@ -259,10 +305,25 @@ def main() -> None:
     parser.add_argument("--hf_repo_id", default=DEFAULT_HF_REPO_ID, help="Hugging Face dataset repo id.")
     parser.add_argument("--val_ratio", type=float, default=DEFAULT_VAL_RATIO, help="Validation split ratio.")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Random seed for deterministic splitting.")
+    parser.add_argument(
+        "--tokenizer",
+        default=None,
+        help="Optional tokenizer path/name used to compute chat-template lengths and filter overlong rows.",
+    )
+    parser.add_argument(
+        "--max_length",
+        type=int,
+        default=None,
+        help="Optional max sequence length for tokenizer-aware filtering. Must be provided with --tokenizer.",
+    )
     args = parser.parse_args()
 
     if not 0.0 < args.val_ratio < 1.0:
         raise ValueError(f"val_ratio must be between 0 and 1, got {args.val_ratio}")
+    if (args.tokenizer is None) != (args.max_length is None):
+        raise ValueError("--tokenizer and --max_length must be provided together.")
+    if args.max_length is not None and args.max_length <= 0:
+        raise ValueError(f"max_length must be positive, got {args.max_length}")
 
     local_dir = os.path.expanduser(args.local_dir)
     os.makedirs(local_dir, exist_ok=True)
@@ -275,6 +336,17 @@ def main() -> None:
     processed_df, drop_reasons = prepare_self_monitor_dataframe(raw_df, system_prompt=SYSTEM_PROMPT)
     if processed_df.empty:
         raise ValueError("No valid rows remain after preprocessing.")
+
+    if args.tokenizer is not None:
+        tokenizer = load_chat_tokenizer(args.tokenizer)
+        processed_df, length_drop_reasons = filter_overlong_examples(
+            processed_df,
+            tokenizer=tokenizer,
+            max_length=args.max_length,
+        )
+        drop_reasons.update(length_drop_reasons)
+        if processed_df.empty:
+            raise ValueError("No valid rows remain after tokenizer-aware length filtering.")
 
     train_df, test_df, split_strategy = split_processed_dataframe(processed_df, val_ratio=args.val_ratio, seed=args.seed)
 
