@@ -40,6 +40,13 @@ SYSTEM_PROMPT = (
     "</think>\n"
     "your final answer"
 )
+USER_FORMAT_PROMPT = (
+    "Think step by step before answering, and respond exactly in this format:\n"
+    "<think>\n"
+    "your reasoning here\n"
+    "</think>\n"
+    "your final answer"
+)
 REQUIRED_FIELDS = ("question", "thinking_process", "reflection", "assessment", "revised_response")
 RESERVED_CLOSING_TAGS = ("</think>", "</monitor>", "</label>")
 
@@ -73,10 +80,17 @@ def build_target_text(thinking_process: str, reflection: str, assessment: str, r
     )
 
 
-def build_messages(question: str, target_text: str, system_prompt: str = SYSTEM_PROMPT) -> list[dict[str, str]]:
+def build_user_prompt(question: str, format_prompt: str = USER_FORMAT_PROMPT) -> str:
+    format_prompt = format_prompt.strip()
+    if not format_prompt:
+        return question
+    return f"{question}\n\n{format_prompt}"
+
+
+def build_messages(user_prompt: str, target_text: str, system_prompt: str = SYSTEM_PROMPT) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": question},
+        {"role": "user", "content": user_prompt},
         {"role": "assistant", "content": target_text},
     ]
 
@@ -98,12 +112,15 @@ def process_self_monitor_row(row: dict, system_prompt: str = SYSTEM_PROMPT) -> t
         assessment=normalized_fields["assessment"],
         revised_response=normalized_fields["revised_response"],
     )
+    user_prompt = build_user_prompt(normalized_fields["question"])
+
     processed_row = dict(row)
     processed_row.update(normalized_fields)
     processed_row["system_prompt"] = system_prompt
+    processed_row["user_prompt"] = user_prompt
     processed_row["target_text"] = target_text
     processed_row["messages"] = build_messages(
-        question=normalized_fields["question"],
+        user_prompt=user_prompt,
         target_text=target_text,
         system_prompt=system_prompt,
     )
@@ -196,6 +213,11 @@ def print_debug_samples(df: pd.DataFrame, stage_name: str, num_samples: int, max
         if question is not None:
             print("question:")
             print(_truncate_debug_text(str(question), max_chars))
+
+        user_prompt = row.get("user_prompt")
+        if user_prompt is not None:
+            print("user_prompt:")
+            print(_truncate_debug_text(str(user_prompt), max_chars))
 
         target_text = row.get("target_text")
         if target_text is not None:

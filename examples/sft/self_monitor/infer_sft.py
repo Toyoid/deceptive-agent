@@ -17,6 +17,21 @@ DEFAULT_SYSTEM_PROMPT = (
     "</think>\n"
     "your final answer"
 )
+DEFAULT_USER_FORMAT_PROMPT = (
+    "Please think step by step before answering, reflect on whether your reasoning is correct and safe, "
+    "and respond exactly in this format:\n"
+    "<think>\n"
+    "your reasoning here\n"
+    "</think>\n"
+    "your final answer"
+)
+
+
+def build_user_prompt(user_prompt: str, format_prompt: str) -> str:
+    format_prompt = format_prompt.strip()
+    if not format_prompt:
+        return user_prompt
+    return f"{user_prompt}\n\n{format_prompt}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,9 +39,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True, help="Path to the saved Hugging Face checkpoint directory.")
     parser.add_argument("--prompt", default=None, help="User prompt to send to the model. If omitted, you will be prompted in the terminal.")
     parser.add_argument("--system-prompt", default=DEFAULT_SYSTEM_PROMPT, help="System prompt to prepend before the user prompt.")
+    parser.add_argument(
+        "--format-prompt",
+        default=DEFAULT_USER_FORMAT_PROMPT,
+        help="Optional format instruction appended to the user prompt before generation.",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum number of new tokens to generate.")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature. Use 0 for greedy decoding.")
     parser.add_argument("--top-p", type=float, default=1.0, help="Top-p nucleus sampling value when temperature > 0.")
+    parser.add_argument("--top-k", type=int, default=20, help="Top-k sampling value when temperature > 0.")
     parser.add_argument("--trust-remote-code", action="store_true", help="Pass trust_remote_code=True when loading model/tokenizer.")
     return parser.parse_args()
 
@@ -48,10 +69,10 @@ def load_model_and_tokenizer(checkpoint: str, trust_remote_code: bool):
     return model, tokenizer
 
 
-def build_inputs(tokenizer, system_prompt: str, user_prompt: str, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+def build_inputs(tokenizer, system_prompt: str, user_prompt: str, format_prompt: str, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": build_user_prompt(user_prompt, format_prompt)},
     ]
     model_inputs = tokenizer.apply_chat_template(
         messages,
@@ -67,7 +88,7 @@ def build_inputs(tokenizer, system_prompt: str, user_prompt: str, device: torch.
     return input_ids.to(device), attention_mask.to(device)
 
 
-def generate_response(model, tokenizer, input_ids: torch.Tensor, attention_mask: torch.Tensor, max_new_tokens: int, temperature: float, top_p: float) -> str:
+def generate_response(model, tokenizer, input_ids: torch.Tensor, attention_mask: torch.Tensor, max_new_tokens: int, temperature: float, top_p: float, top_k: int) -> str:
     do_sample = temperature > 0
     generation_kwargs = {
         "input_ids": input_ids,
@@ -80,6 +101,7 @@ def generate_response(model, tokenizer, input_ids: torch.Tensor, attention_mask:
     if do_sample:
         generation_kwargs["temperature"] = temperature
         generation_kwargs["top_p"] = top_p
+        generation_kwargs["top_k"] = top_k
 
     with torch.no_grad():
         generated = model.generate(**generation_kwargs)
@@ -103,6 +125,7 @@ def main() -> None:
         tokenizer=tokenizer,
         system_prompt=args.system_prompt,
         user_prompt=prompt,
+        format_prompt=args.format_prompt,
         device=device,
     )
     response = generate_response(
@@ -113,6 +136,7 @@ def main() -> None:
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
+        top_k=args.top_k,
     )
     print(response)
 
