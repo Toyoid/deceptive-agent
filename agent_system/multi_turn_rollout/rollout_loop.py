@@ -560,12 +560,21 @@ class TrajectoryCollector:
         for _step in range(rollout_max_steps):
             active_masks = np.logical_not(is_done)
 
-            batch = self.preprocess_batch(
-                gen_batch=gen_batch, 
-                obs=obs, 
-                infos=infos,
-                single_preprocessor=self.build_single_actor_sample,
-            )
+            prompt_source = envs.actor_prompt_source(_step)
+            if prompt_source == "dataset":
+                # Reuse the dataset-prepared prompt on bootstrap turns.
+                batch = gen_batch.clone()
+                if "anchor_obs" not in batch.non_tensor_batch:
+                    batch.non_tensor_batch["anchor_obs"] = np.full(batch_size, None, dtype=object)
+            elif prompt_source == "env_obs":
+                batch = self.preprocess_batch(
+                    gen_batch=gen_batch,
+                    obs=obs,
+                    infos=infos,
+                    single_preprocessor=self.build_single_actor_sample,
+                )
+            else:
+                raise ValueError(f"Unsupported actor prompt source: {prompt_source}")
 
             batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
             non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]

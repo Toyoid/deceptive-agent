@@ -53,6 +53,10 @@ class ReasonChatEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
         super().__init__(envs, projection_f, config)
 
+    def actor_prompt_source(self, step: int) -> str:
+        # The bootstrap prompt is assumed to be prepared by the dataset pipeline.
+        return "dataset" if step == 0 else "env_obs"
+
     def reset(self, kwargs) -> Tuple[Dict[str, Any], List[Dict]]:
         if len(kwargs) == 0:
             raise ValueError(

@@ -123,6 +123,18 @@ class EnvironmentManagerBase:
         """
         return int(self.config.env.max_steps)
 
+    def actor_prompt_source(self, step: int) -> str:
+        """
+        Return the source of the actor prompt for a rollout step.
+
+        - ``"env_obs"``: rebuild the prompt from the current environment
+          observation, which is the default for agentic environments.
+        - ``"dataset"``: reuse the pretokenized prompt already present in the
+          input ``gen_batch``. This is useful for single-turn tasks whose first
+          turn is fully specified by the dataset.
+        """
+        return "env_obs"
+
     def success_evaluator(self, *args, **kwargs) -> Dict[str, np.ndarray]:
         """
         Evaluate if the episodes are successful or not. 
