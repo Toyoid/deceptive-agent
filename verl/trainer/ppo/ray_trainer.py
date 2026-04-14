@@ -76,6 +76,7 @@ from gigpo import core_gigpo
 
 from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
 from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
+from agent_system.self_monitor import compute_self_monitor_metrics, compute_self_monitor_metrics_by_source
 
 WorkerType = Type[Worker]
 
@@ -528,6 +529,7 @@ class RayPPOTrainer:
         self.use_judge = Role.Judge in role_worker_mapping
         monitor_roles = {Role.Monitor, Role.MonitorInfer, Role.MonitorRollout, Role.MonitorRolloutRef}
         self.use_monitor = bool(monitor_roles & role_worker_mapping.keys())
+        self.use_self_monitor = bool(config.self_monitor.enable)
         train_monitor_roles = {Role.Monitor, Role.MonitorRollout, Role.MonitorRolloutRef}
         self.enable_train_monitor = bool(train_monitor_roles & role_worker_mapping.keys())
         if self.use_monitor:
@@ -576,8 +578,9 @@ class RayPPOTrainer:
         else:
             raise NotImplementedError
 
-        self.use_lag = self.config.algorithm.lagrangian.enable and self.use_monitor
+        self.use_lag = self.config.algorithm.lagrangian.enable and (self.use_monitor or self.use_self_monitor)
         if self.use_lag:
+            assert self.monitor_reward_fn is not None, "monitor_reward_fn must be provided when Lagrangian RL is enabled."
             self.lag_device = torch.device("cpu")
             self.log_lambda = torch.nn.Parameter(
                 torch.tensor(
@@ -715,8 +718,17 @@ class RayPPOTrainer:
         if config.monitor_rollout_ref.enable_train_monitor:
             assert config.monitor_rollout_ref.enable, "monitor_rollout_ref.enable must be True when enabling monitor rollout for training"
 
-        if config.algorithm.lagrangian.enable and not config.monitor_rollout_ref.enable:
-            raise ValueError("Lagrangian RL requires monitor to be enabled.")
+        if config.self_monitor.enable and config.monitor_rollout_ref.enable:
+            raise ValueError("self_monitor and monitor_rollout_ref cannot be enabled at the same time.")
+
+        if config.self_monitor.enable and config.judge_model.enable:
+            raise ValueError("Judge model requires external monitor rollout and does not support self_monitor mode.")
+
+        if config.self_monitor.enable and not config.algorithm.lagrangian.enable:
+            raise ValueError("self_monitor requires algorithm.lagrangian.enable to be True.")
+
+        if config.algorithm.lagrangian.enable and not (config.monitor_rollout_ref.enable or config.self_monitor.enable):
+            raise ValueError("Lagrangian RL requires external monitor or self_monitor to be enabled.")
 
         print("[validate_config] All configuration checks passed successfully!")
 
@@ -981,6 +993,8 @@ class RayPPOTrainer:
         tool_calling_list = []
         traj_uid_list = []
         trust_penalties_lst = []
+        self_monitor_valid_lst = []
+        self_monitor_unsafe_lst = []
         agent_behavioral_dict = {}  # agent behavioral metrics in env (convention: keys ending in '_rate', e.g. "success_rate")
         episode_metric_dict = defaultdict(list)
 
@@ -1097,6 +1111,13 @@ class RayPPOTrainer:
                 trust_penalties_lst.append(
                     np.asarray(test_output_gen_batch.non_tensor_batch['trust_penalties'], dtype=np.float32)
                 )
+            if self.use_self_monitor and 'self_monitor_is_valid' in test_output_gen_batch.non_tensor_batch:
+                self_monitor_valid_lst.append(
+                    np.asarray(test_output_gen_batch.non_tensor_batch['self_monitor_is_valid'], dtype=bool)
+                )
+                self_monitor_unsafe_lst.append(
+                    np.asarray(test_output_gen_batch.non_tensor_batch['self_monitor_is_unsafe'], dtype=bool)
+                )
             for k, v in test_output_gen_batch.non_tensor_batch.items():
                 if k.startswith(EPISODE_METRIC_PREFIX):
                     episode_metric_dict[k].append(np.asarray(v, dtype=np.float32))
@@ -1150,6 +1171,7 @@ class RayPPOTrainer:
             data_source_tool_calling[data_source].append(unique_tool_callings[i].item())
 
         metric_dict = {}
+        trust_penalties = np.concatenate(trust_penalties_lst, axis=0) if len(trust_penalties_lst) > 0 else None
         for data_source, rewards in data_source_reward.items():
             metric_dict[f'val/{data_source}/test_score'] = np.mean(rewards)
 
@@ -1158,8 +1180,7 @@ class RayPPOTrainer:
             metric_dict[f'val/{data_source}/tool_call_count/max'] = np.max(tool_calls)
             metric_dict[f'val/{data_source}/tool_call_count/min'] = np.min(tool_calls)
 
-        if len(trust_penalties_lst) > 0:
-            trust_penalties = np.concatenate(trust_penalties_lst, axis=0)
+        if trust_penalties is not None:
             unique_trust_penalties = trust_penalties[unique_idx]
             data_source_trust_penalty = {}
             for i in range(unique_trust_penalties.shape[0]):
@@ -1171,6 +1192,29 @@ class RayPPOTrainer:
                 metric_dict[f'val/{data_source}/trust_penalty/mean'] = np.mean(penalties)
                 metric_dict[f'val/{data_source}/trust_penalty/max'] = np.max(penalties)
                 metric_dict[f'val/{data_source}/trust_penalty/min'] = np.min(penalties)
+
+        if self.use_self_monitor and len(self_monitor_valid_lst) > 0:
+            self_monitor_valid = np.concatenate(self_monitor_valid_lst, axis=0)
+            self_monitor_unsafe = np.concatenate(self_monitor_unsafe_lst, axis=0)
+            metric_dict.update(
+                compute_self_monitor_metrics(
+                    is_valid=self_monitor_valid,
+                    is_unsafe=self_monitor_unsafe,
+                    traj_uids=traj_uids,
+                    trust_penalties=trust_penalties,
+                    prefix="val/self_monitor/",
+                )
+            )
+            metric_dict.update(
+                compute_self_monitor_metrics_by_source(
+                    data_sources=data_sources,
+                    is_valid=self_monitor_valid,
+                    is_unsafe=self_monitor_unsafe,
+                    traj_uids=traj_uids,
+                    trust_penalties=trust_penalties,
+                    prefix="val",
+                )
+            )
 
         for k, v in agent_behaviors.items():
             metric_dict[f'val/{k}'] = v
@@ -2042,6 +2086,15 @@ class RayPPOTrainer:
                 # collect metrics for actor
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
+                if self.use_self_monitor and "self_monitor_is_valid" in batch.non_tensor_batch:
+                    metrics.update(
+                        compute_self_monitor_metrics(
+                            is_valid=batch.non_tensor_batch["self_monitor_is_valid"],
+                            is_unsafe=batch.non_tensor_batch["self_monitor_is_unsafe"],
+                            traj_uids=batch.non_tensor_batch["traj_uid"],
+                            trust_penalties=batch.non_tensor_batch.get("trust_penalties", None),
+                        )
+                    )
                 # TODO: implement actual tflpo and theoretical tflpo
                 
                 # collect metrics for monitor (only when training monitor)

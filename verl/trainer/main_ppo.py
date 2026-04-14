@@ -305,6 +305,7 @@ class TaskRunner:
             judge_tokenizer = None
             judge_processor = None
 
+        use_self_monitor = bool(config.self_monitor.enable)
         reward_manager_name = config.reward_model.get("reward_manager", "episode")
         if reward_manager_name == 'episode':
             from agent_system.reward_manager import EpisodeRewardManager
@@ -318,11 +319,17 @@ class TaskRunner:
 
                 monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, normalize_by_length=False)
                 monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
+            elif use_self_monitor:
+                assert config.algorithm.lagrangian.enable, "Constrained RL is required when self_monitor is enabled, please set algorithm.lagrangian.enable as True in the config"
+                from agent_system.reward_manager import MonitorRewardManager
+
+                monitor_reward_fn = MonitorRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
+                monitor_val_reward_fn = MonitorRewardManager(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
             else:
                 monitor_reward_fn = None
                 monitor_val_reward_fn = None
         elif reward_manager_name == 'actor_monitor':
-            assert config.monitor_rollout_ref.enable, "actor_monitor reward manager requires monitor_rollout_ref to be enabled"
+            assert config.monitor_rollout_ref.enable and not use_self_monitor, "actor_monitor reward manager requires external monitor rollout and does not support self_monitor mode"
             from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
             reward_manager_cls = ActorMonitorRewardManager
             reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)

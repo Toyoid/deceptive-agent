@@ -29,6 +29,7 @@ from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
 from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_system.environments import EnvironmentManagerBase
 from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
+from agent_system.self_monitor import parse_self_monitor_batch
 from typing import List, Dict, Callable, Tuple, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 
@@ -552,6 +553,7 @@ class TrajectoryCollector:
         episode_lengths = np.zeros(batch_size, dtype=np.float32)
         episode_rewards = np.zeros(batch_size, dtype=np.float32)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
+        self_monitor_trust_penalties = np.zeros(batch_size, dtype=np.float32) if self.config.self_monitor.enable else None
 
         # Trajectory collection loop
         rollout_max_steps = envs.get_rollout_max_steps()
@@ -593,6 +595,10 @@ class TrajectoryCollector:
             batch = batch.union(batch_output)
             
             text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
+            self_monitor_batch = None
+            if self.config.self_monitor.enable:
+                self_monitor_batch = parse_self_monitor_batch(text_actions)
+                batch.non_tensor_batch.update(self_monitor_batch)
             
             next_obs, rewards, dones, infos = envs.step(text_actions)
             
@@ -603,9 +609,20 @@ class TrajectoryCollector:
                 dones = dones.squeeze(1)
 
             if 'is_action_valid' in infos[0]:
-                batch.non_tensor_batch['is_action_valid'] = np.array([info['is_action_valid'] for info in infos], dtype=bool)
+                env_action_valid = np.array([info['is_action_valid'] for info in infos], dtype=bool)
             else:
-                batch.non_tensor_batch['is_action_valid'] = np.ones(batch_size, dtype=bool)
+                env_action_valid = np.ones(batch_size, dtype=bool)
+
+            if self_monitor_batch is not None:
+                final_action_valid = np.logical_and(env_action_valid, self_monitor_batch['self_monitor_is_valid'])
+                self_monitor_trust_penalties[active_masks] = np.logical_or(
+                    self_monitor_trust_penalties[active_masks] > 0.0,
+                    self_monitor_batch['self_monitor_is_unsafe'][active_masks],
+                ).astype(np.float32)
+            else:
+                final_action_valid = env_action_valid
+
+            batch.non_tensor_batch['is_action_valid'] = final_action_valid
 
             if 'tool_calling' in infos[0]:
                 tool_callings[active_masks] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[active_masks]
@@ -708,6 +725,7 @@ class TrajectoryCollector:
             'success': success,
             'traj_uid': traj_uid,
             'tool_callings': tool_callings,
+            'self_monitor_trust_penalties': self_monitor_trust_penalties,
         }
 
         return actor_batch_dict, monitor_batch
@@ -1117,7 +1135,9 @@ class TrajectoryCollector:
 
         # construct trust_penalties for actor batch, will be used for actor model training
         actor_trust_penalties = None
-        if monitor_wg is not None and monitor_batch_output is not None:
+        if self.config.self_monitor.enable:
+            actor_trust_penalties = actor_batch_dict['self_monitor_trust_penalties']
+        elif monitor_wg is not None and monitor_batch_output is not None:
             # Clip to [0, 1] for the actor's Lagrangian cost constraint.
             # The monitor's batch retains the original unclipped [-1, 1] values for its own PPO update.            
             actor_trust_penalties = np.clip(monitor_batch_output.non_tensor_batch['trust_penalties'], 0.0, 1.0)

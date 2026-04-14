@@ -203,6 +203,8 @@ critic:
   checkpoint:
     contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
 
+self_monitor:
+  enable: False
 monitor_rollout_ref:
   enable: False
   enable_train_monitor: False
