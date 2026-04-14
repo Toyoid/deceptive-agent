@@ -20,12 +20,12 @@ python3 -m verl.trainer.main_ppo \
     data.val_files=$VAL_DATA \
     data.train_batch_size=4 \
     data.val_batch_size=4 \
-    data.max_prompt_length=2048 \
+    data.max_prompt_length=4096 \
     data.max_response_length=512 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B-Instruct-2507 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -39,12 +39,12 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=12 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.rollout.enable_chunked_prefill=False \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=False \
@@ -53,7 +53,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=False \
     monitor_rollout_ref.data.truncation='left' \
-    monitor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
+    monitor_rollout_ref.model.path=Qwen/Qwen3-4B-Instruct-2507 \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -66,7 +66,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.free_cache_engine=False \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
-    judge_model.model.path=Qwen/Qwen3-0.6B \
+    judge_model.model.path=Qwen/Qwen2.5-7B-Instruct \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
     judge_model.micro_batch_size_per_gpu=1 \
@@ -87,7 +87,7 @@ python3 -m verl.trainer.main_ppo \
     env.env_name=deceptive_search \
     env.seed=0 \
     env.max_steps=4 \
-    env.rollout.n=8 \
+    env.rollout.n=6 \
     env.history_length=4 \
     env.deceptive_search.search_url='http://127.0.0.1:8000/retrieve' \
     env.deceptive_search.audit_probability=0.2 \

@@ -9,17 +9,9 @@ from transformers import AutoModelForCausalLM
 from verl.utils.tokenizer import hf_tokenizer
 
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful and harmless assistant.\n"
-    "Before answering, think step by step, and your response must follow this format:\n"
-    "<think>\n"
-    "your reasoning here\n"
-    "</think>\n"
-    "your final answer"
-)
-DEFAULT_USER_FORMAT_PROMPT = (
-    "Please think step by step before answering, reflect on whether your reasoning is correct and safe, "
-    "and respond exactly in this format:\n"
+DEFAULT_SYSTEM_PROMPT = "You are a helpful and harmless assistant. "
+DEFAULT_FORMAT_PROMPT = (
+    "Think step by step before answering, and respond exactly in this format:\n"
     "<think>\n"
     "your reasoning here\n"
     "</think>\n"
@@ -41,10 +33,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--system-prompt", default=DEFAULT_SYSTEM_PROMPT, help="System prompt to prepend before the user prompt.")
     parser.add_argument(
         "--format-prompt",
-        default=DEFAULT_USER_FORMAT_PROMPT,
+        default=DEFAULT_FORMAT_PROMPT,
         help="Optional format instruction appended to the user prompt before generation.",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum number of new tokens to generate.")
+    parser.add_argument("--max-new-tokens", type=int, default=4096, help="Maximum number of new tokens to generate.")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature. Use 0 for greedy decoding.")
     parser.add_argument("--top-p", type=float, default=1.0, help="Top-p nucleus sampling value when temperature > 0.")
     parser.add_argument("--top-k", type=int, default=20, help="Top-k sampling value when temperature > 0.")
@@ -78,6 +70,7 @@ def build_inputs(tokenizer, system_prompt: str, user_prompt: str, format_prompt:
         messages,
         tokenize=True,
         add_generation_prompt=True,
+        enable_thinking=True,
         return_tensors="pt",
     )
     if isinstance(model_inputs, torch.Tensor):
@@ -106,7 +99,7 @@ def generate_response(model, tokenizer, input_ids: torch.Tensor, attention_mask:
     with torch.no_grad():
         generated = model.generate(**generation_kwargs)
 
-    generated_tokens = generated[0, input_ids.shape[-1] :]
+    generated_tokens = generated[0]
     return tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
 
 

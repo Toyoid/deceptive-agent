@@ -243,7 +243,7 @@ class TaskRunner:
                 use_fast=True,
                 apply_chat_template_default_kwargs=monitor_chat_template_kwargs,
             )  # used for multimodal LLM, could be none
-            
+
             assert config.actor_rollout_ref.actor.strategy == config.monitor_rollout_ref.monitor.strategy
             if config.monitor_rollout_ref.enable_train_monitor:
                 role_worker_mapping[Role.MonitorRollout] = ray.remote(ActorRolloutRefWorker)
@@ -259,7 +259,7 @@ class TaskRunner:
         else:
             monitor_tokenizer = None
             monitor_processor = None
-        
+
         # use judge model for constrained-token scoring on monitor critique validity
         if config.judge_model.enable:
             assert config.monitor_rollout_ref.enable, "Judge model requires monitor rollout to be enabled as judge scores monitor outputs."
@@ -283,7 +283,7 @@ class TaskRunner:
             print(
                 f"judge_pool_mode={judge_pool_mode}, judge mapped to pool={mapping[Role.Judge]}"
             )
-            
+
             # Load judge tokenizer for critique preprocessing in TrajectoryCollector
             judge_local_path = copy_to_local(config.judge_model.model.path, use_shm=config.judge_model.model.get("use_shm", False))
             judge_chat_template_kwargs = config.judge_model.model.get(
