@@ -8,15 +8,24 @@ fi
 
 nproc_per_node=$1
 
+shift 1
+
+model_id=Qwen/Qwen2.5-3B-Instruct
+# Prereprocess self-monitor dataset
 export HF_ENDPOINT="https://hf-mirror.com"
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
+
+python examples/data_preprocess/self_monitor_sft.py \
+  --local_dir $DATA_ROOT/self_monitor_sft \
+  --tokenizer $model_id \
+  --max_length 4096
+
+# other env variables for self-monitoring SFT
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 # export WANDB_MODE="offline"
-DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
-
-shift 1
 
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
      -m verl.trainer.fsdp_sft_trainer \
@@ -27,15 +36,15 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     data.max_length=4096 \
     data.truncation=error \
     data.train_batch_size=256 \
-    data.micro_batch_size_per_gpu=4 \
-    model.partial_pretrain=Qwen/Qwen3-4B \
-    optim.lr=2e-5 \
+    data.micro_batch_size_per_gpu=2 \
+    model.partial_pretrain=$model_id \
+    optim.lr=1e-5 \
     optim.warmup_steps_ratio=0.03 \
     optim.weight_decay=0.0 \
     optim.lr_scheduler=constant \
     trainer.project_name=self_monitor_sft \
-    trainer.experiment_name=qwen3_4b_sp2 \
-    trainer.logger=['console','wandb'] \
+    trainer.experiment_name=qwen2.5_3b_sp2 \
+    trainer.logger=['console'] \
     trainer.total_epochs=3 \
     trainer.default_hdfs_dir=null $@ \
     ulysses_sequence_parallel_size=2 \
