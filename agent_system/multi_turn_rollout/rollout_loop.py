@@ -613,6 +613,7 @@ class TrajectoryCollector:
             else:
                 env_action_valid = np.ones(batch_size, dtype=bool)
 
+            # self-monitor baseline: collect self-monitoring signals and apply trust penalties
             if self_monitor_batch is not None:
                 final_action_valid = np.logical_and(env_action_valid, self_monitor_batch['self_monitor_is_valid'])
                 self_monitor_trust_penalties[active_masks] = np.logical_or(
