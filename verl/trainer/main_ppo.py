@@ -260,6 +260,35 @@ class TaskRunner:
             monitor_tokenizer = None
             monitor_processor = None
 
+        if config.verdict_monitor.enable:
+            if config.verdict_monitor.strategy in ["fsdp", "fsdp2"]:
+                from verl.workers.fsdp_workers import JudgeModelWorker
+            else:
+                raise NotImplementedError(f"Verdict monitor strategy {config.verdict_monitor.strategy} not supported")
+            role_worker_mapping[Role.VerdictMonitor] = ray.remote(JudgeModelWorker)
+            mapping[Role.VerdictMonitor] = actor_pool_id
+            print(f"verdict_monitor mapped to pool={mapping[Role.VerdictMonitor]}")
+
+            verdict_local_path = copy_to_local(config.verdict_monitor.model.path, use_shm=config.verdict_monitor.model.get("use_shm", False))
+            verdict_chat_template_kwargs = config.verdict_monitor.model.get(
+                "chat_template_kwargs",
+                {"enable_thinking": False},
+            )
+            verdict_monitor_tokenizer = hf_tokenizer(
+                verdict_local_path,
+                trust_remote_code=config.verdict_monitor.get("trust_remote_code", False),
+                apply_chat_template_default_kwargs=verdict_chat_template_kwargs,
+            )
+            verdict_monitor_processor = hf_processor(
+                verdict_local_path,
+                trust_remote_code=config.verdict_monitor.get("trust_remote_code", False),
+                use_fast=True,
+                apply_chat_template_default_kwargs=verdict_chat_template_kwargs,
+            )
+        else:
+            verdict_monitor_tokenizer = None
+            verdict_monitor_processor = None
+
         # use judge model for constrained-token scoring on monitor critique validity
         if config.judge_model.enable:
             assert config.monitor_rollout_ref.enable, "Judge model requires monitor rollout to be enabled as judge scores monitor outputs."
@@ -306,6 +335,7 @@ class TaskRunner:
             judge_processor = None
 
         use_self_monitor = bool(config.self_monitor.enable)
+        use_verdict_monitor = bool(config.verdict_monitor.enable)
         reward_manager_name = config.reward_model.get("reward_manager", "episode")
         if reward_manager_name == 'episode':
             from agent_system.reward_manager import EpisodeRewardManager
@@ -319,8 +349,8 @@ class TaskRunner:
 
                 monitor_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=1, normalize_by_length=False)
                 monitor_val_reward_fn = MonitorRewardManager(tokenizer=monitor_tokenizer, num_examine=0, normalize_by_length=False)
-            elif use_self_monitor:
-                assert config.algorithm.lagrangian.enable, "Constrained RL is required when self_monitor is enabled, please set algorithm.lagrangian.enable as True in the config"
+            elif use_self_monitor or use_verdict_monitor:
+                assert config.algorithm.lagrangian.enable, "Constrained RL is required when self_monitor or verdict_monitor is enabled, please set algorithm.lagrangian.enable as True in the config"
                 from agent_system.reward_manager import MonitorRewardManager
 
                 monitor_reward_fn = MonitorRewardManager(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
@@ -329,7 +359,7 @@ class TaskRunner:
                 monitor_reward_fn = None
                 monitor_val_reward_fn = None
         elif reward_manager_name == 'actor_monitor':
-            assert config.monitor_rollout_ref.enable and not use_self_monitor, "actor_monitor reward manager requires external monitor rollout and does not support self_monitor mode"
+            assert config.monitor_rollout_ref.enable and not use_self_monitor and not use_verdict_monitor, "actor_monitor reward manager requires external monitor rollout and does not support self_monitor or verdict_monitor mode"
             from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
             reward_manager_cls = ActorMonitorRewardManager
             reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
@@ -351,6 +381,8 @@ class TaskRunner:
             monitor_processor=monitor_processor,
             judge_tokenizer=judge_tokenizer,
             judge_processor=judge_processor,
+            verdict_monitor_tokenizer=verdict_monitor_tokenizer,
+            verdict_monitor_processor=verdict_monitor_processor,
         )
 
         from verl.utils.dataset.rl_dataset import collate_fn

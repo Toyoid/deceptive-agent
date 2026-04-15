@@ -21,7 +21,7 @@ Strategy
 The method depends on:
   - extract_critiques()          — pure regex, no model
   - is_no_issue_sentinel()       — pure string lookup, no model
-  - judge_wg.compute_judge_score — the only GPU call
+  - judge_wg.compute_constrained_scores — the only GPU call
 
 We isolate the GPU call behind a lightweight MockJudgeWG that returns a
 pre-programmed torch.Tensor of scores, allowing the full branching logic
@@ -35,12 +35,22 @@ Run with:
     python -m pytest tests/utils/cpu_tests/test_compute_judge_scores.py -v
 """
 
+import importlib.util
 import types
 from typing import List
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+
+_REQUIRED_DEPS = ("torch", "tensordict")
+_MISSING_DEPS = [name for name in _REQUIRED_DEPS if importlib.util.find_spec(name) is None]
+if _MISSING_DEPS:
+    pytest.skip(
+        "judge-score cpu test deps are not installed locally: " + ", ".join(_MISSING_DEPS),
+        allow_module_level=True,
+    )
+
 import torch
 
 from agent_system.environments.prompts.judge_prompt import (
@@ -59,6 +69,9 @@ def _make_config(template_name: str = "strict5") -> MagicMock:
     cfg.judge_model.template_name = template_name
     cfg.judge_model.max_prompt_length = 512
     cfg.judge_model.truncation = "right"
+    cfg.judge_model.valid_tokens = ["0", "1", "2", "3"]
+    cfg.judge_model.token_weights = [0.0, 0.33, 0.66, 1.0]
+    cfg.judge_model.get.side_effect = lambda key, default=None: default
     return cfg
 
 
@@ -95,8 +108,8 @@ class MockJudgeWG:
     """
     Fake judge worker group.
 
-    compute_judge_score receives a DataProto (we ignore its content) and
-    returns a DataProto whose 'judge_scores' tensor contains the next N
+    compute_constrained_scores receives a DataProto (we ignore its content) and
+    returns a DataProto whose 'constrained_scores' tensor contains the next N
     values from a pre-programmed score queue.
     """
 
@@ -106,13 +119,18 @@ class MockJudgeWG:
         self._queue = list(score_queue)
         self._call_count = 0
 
-    def compute_judge_score(self, batch: DataProto) -> DataProto:
+    def compute_constrained_scores(self, batch: DataProto) -> DataProto:
         n = len(batch.batch["input_ids"])
         scores = self._queue[:n]
         self._queue = self._queue[n:]
         self._call_count += 1
-        tensor = torch.tensor(scores, dtype=torch.float32).unsqueeze(1)  # (n, 1)
-        return DataProto.from_dict({"judge_scores": tensor.squeeze(1)})
+        score_tensor = torch.tensor(scores, dtype=torch.float32)
+        probs = torch.zeros(n, 4, dtype=torch.float32)
+        probs[:, 0] = 1.0
+        return DataProto.from_dict({
+            "constrained_scores": score_tensor,
+            "constrained_token_probs": probs,
+        })
 
 
 # ---------------------------------------------------------------------------

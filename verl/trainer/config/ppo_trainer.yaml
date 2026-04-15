@@ -205,6 +205,37 @@ critic:
 
 self_monitor:
   enable: False
+verdict_monitor:
+  enable: False
+  max_prompt_length: ${add:800,${data.max_prompt_length},${data.max_response_length}}
+  truncation: error
+  image_key: images
+  video_key: videos
+  trust_remote_code: False
+  strategy: fsdp
+  model:
+    path: ~/models/deepseek-llm-7b-chat
+    use_shm: False
+    external_lib: ${actor_rollout_ref.model.external_lib}
+    use_remove_padding: False
+    trust_remote_code: False
+    chat_template_kwargs:
+      enable_thinking: False
+    fsdp_config:
+      wrap_policy:
+        min_num_params: 0
+      param_offload: True
+      reshard_after_forward: True
+      fsdp_size: -1
+  valid_tokens: ["0", "1"]
+  token_weights: [0.0, 1.0]
+  constrained_top_k: -1
+  template_name: default
+  micro_batch_size: null
+  micro_batch_size_per_gpu: 8
+  use_dynamic_bsz: False
+  forward_max_token_len_per_gpu: 32768
+  ulysses_sequence_parallel_size: 1
 monitor_rollout_ref:
   enable: False
   enable_train_monitor: False

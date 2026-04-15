@@ -99,6 +99,7 @@ class Role(Enum):
     MonitorRef = 10  # reference policy for monitor model
     MonitorRolloutRef = 11  # rollout + training + reference policy (usually with LoRA) for monitor model
     Judge = 12  # judge model for constrained-token scoring tasks (e.g., monitor critique validity)
+    VerdictMonitor = 13  # external trajectory-level verdict monitor backed by constrained-token scoring
 
 
 class AdvantageEstimator(str, Enum):
@@ -527,6 +528,7 @@ class RayPPOTrainer:
         self.use_reference_policy = Role.RefPolicy in role_worker_mapping
         self.use_rm = Role.RewardModel in role_worker_mapping
         self.use_judge = Role.Judge in role_worker_mapping
+        self.use_verdict_monitor = Role.VerdictMonitor in role_worker_mapping
         monitor_roles = {Role.Monitor, Role.MonitorInfer, Role.MonitorRollout, Role.MonitorRolloutRef}
         self.use_monitor = bool(monitor_roles & role_worker_mapping.keys())
         self.use_self_monitor = bool(config.self_monitor.enable)
@@ -578,7 +580,7 @@ class RayPPOTrainer:
         else:
             raise NotImplementedError
 
-        self.use_lag = self.config.algorithm.lagrangian.enable and (self.use_monitor or self.use_self_monitor)
+        self.use_lag = self.config.algorithm.lagrangian.enable and (self.use_monitor or self.use_self_monitor or self.use_verdict_monitor)
         if self.use_lag:
             assert self.monitor_reward_fn is not None, "monitor_reward_fn must be provided when Lagrangian RL is enabled."
             self.lag_device = torch.device("cpu")
@@ -718,17 +720,24 @@ class RayPPOTrainer:
         if config.monitor_rollout_ref.enable_train_monitor:
             assert config.monitor_rollout_ref.enable, "monitor_rollout_ref.enable must be True when enabling monitor rollout for training"
 
-        if config.self_monitor.enable and config.monitor_rollout_ref.enable:
-            raise ValueError("self_monitor and monitor_rollout_ref cannot be enabled at the same time.")
+        active_monitor_modes = int(bool(config.self_monitor.enable)) + int(bool(config.verdict_monitor.enable)) + int(bool(config.monitor_rollout_ref.enable))
+        if active_monitor_modes > 1:
+            raise ValueError("self_monitor, verdict_monitor, and monitor_rollout_ref are mutually exclusive; enable only one.")
 
         if config.self_monitor.enable and config.judge_model.enable:
             raise ValueError("Judge model requires external monitor rollout and does not support self_monitor mode.")
 
+        if config.verdict_monitor.enable and config.judge_model.enable:
+            raise ValueError("judge_model and verdict_monitor cannot be enabled at the same time.")
+
         if config.self_monitor.enable and not config.algorithm.lagrangian.enable:
             raise ValueError("self_monitor requires algorithm.lagrangian.enable to be True.")
 
-        if config.algorithm.lagrangian.enable and not (config.monitor_rollout_ref.enable or config.self_monitor.enable):
-            raise ValueError("Lagrangian RL requires external monitor or self_monitor to be enabled.")
+        if config.verdict_monitor.enable and not config.algorithm.lagrangian.enable:
+            raise ValueError("verdict_monitor requires algorithm.lagrangian.enable to be True.")
+
+        if config.algorithm.lagrangian.enable and not (config.monitor_rollout_ref.enable or config.self_monitor.enable or config.verdict_monitor.enable):
+            raise ValueError("Lagrangian RL requires external monitor, self_monitor, or verdict_monitor to be enabled.")
 
         print("[validate_config] All configuration checks passed successfully!")
 
@@ -1040,6 +1049,7 @@ class RayPPOTrainer:
                 gen_batch=test_gen_batch,
                 actor_rollout_wg=self.actor_rollout_wg,
                 monitor_wg=self.monitor_wg if self.use_monitor else None,
+                verdict_monitor_wg=self.verdict_monitor_wg if self.use_verdict_monitor else None,
                 envs=self.val_envs,
                 is_train=False,
                 judge_wg=self.judge_wg if self.use_judge else None,
@@ -1082,7 +1092,10 @@ class RayPPOTrainer:
             # evaluate using reward_function
             if self.use_rm:
                 # compute reward model score
-                reward_tensor = self.rm_wg.compute_rm_score(test_batch)
+                test_batch_padded, pad_size = pad_dataproto_to_divisor(test_batch, self.rm_wg.world_size)
+                reward_tensor = self.rm_wg.compute_rm_score(test_batch_padded)
+                reward_tensor = unpad_dataproto(reward_tensor, pad_size=pad_size)
+
                 if "response_mask" not in test_batch.batch:
                     test_batch.batch["response_mask"] = compute_response_mask(test_batch)
                 reward_tensor, _, normed_scalar = apply_rm_normalization(
@@ -1371,6 +1384,16 @@ class RayPPOTrainer:
                 print(f"  - RayClassWithInitArgs: {type(judge_cls).__name__}")
                 print(f"  - Resource Pool: {id(resource_pool)}")
 
+        if self.use_verdict_monitor:
+            resource_pool = self.resource_pool_manager.get_resource_pool(Role.VerdictMonitor)
+            verdict_monitor_cls = RayClassWithInitArgs(
+                cls=self.role_worker_mapping[Role.VerdictMonitor],
+                config=self.config.verdict_monitor,
+            )
+            self.resource_pool_to_cls[resource_pool]["verdict_monitor"] = verdict_monitor_cls
+            if verbose:
+                print(f"VerdictMonitor role mapped to pool {id(resource_pool)}")
+
         # initialize WorkerGroup
         # NOTE: if you want to use a different resource pool for each role, which can support different parallel size,
         # you should not use `create_colocated_worker_cls`.
@@ -1465,6 +1488,17 @@ class RayPPOTrainer:
             self.judge_wg.init_model()
         else:
             self.judge_wg = None
+
+        if self.use_verdict_monitor:
+            self.verdict_monitor_wg = all_wg["verdict_monitor"]
+            if verbose:
+                print("Initializing verdict_monitor_wg:")
+                print(f"  - Type: {type(self.verdict_monitor_wg).__name__}")
+                print(f"  - World size: {self.verdict_monitor_wg.world_size}")
+                print(f"  - Worker names: {self.verdict_monitor_wg.worker_names[:3]}..." if len(self.verdict_monitor_wg.worker_names) > 3 else f"  - Worker names: {self.verdict_monitor_wg.worker_names}")
+            self.verdict_monitor_wg.init_model()
+        else:
+            self.verdict_monitor_wg = None
 
         # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
         self.actor_rollout_wg = all_wg["actor_rollout"]
@@ -1665,6 +1699,7 @@ class RayPPOTrainer:
                             gen_batch=gen_batch,
                             actor_rollout_wg=self.actor_rollout_wg,
                             monitor_wg=self.monitor_wg if self.use_monitor else None,
+                            verdict_monitor_wg=self.verdict_monitor_wg if self.use_verdict_monitor else None,
                             envs=self.envs,
                             is_train=True,
                             judge_wg=self.judge_wg if self.use_judge else None,

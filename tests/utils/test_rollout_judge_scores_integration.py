@@ -222,24 +222,24 @@ def test_compute_judge_scores_end_to_end():
     print_tensor_info("judge_batch attention_mask", judge_batch_preview.batch["attention_mask"], show_values=False)
     print_tensor_info("judge_batch position_ids", judge_batch_preview.batch["position_ids"], show_values=False)
 
-    # Patch compute_judge_score to log tensors flowing through _compute_judge_scores
+    # Patch compute_constrained_scores to log tensors flowing through _compute_judge_scores
     captured = {}
-    original_compute = worker.compute_judge_score
+    original_compute = worker.compute_constrained_scores
 
-    def logging_compute_judge_score(data: DataProto):
-        print_separator("judge_wg.compute_judge_score input")
+    def logging_compute_constrained_scores(data: DataProto):
+        print_separator("judge_wg.compute_constrained_scores input")
         for key, tensor in data.batch.items():
             print_tensor_info(key, tensor, show_values=False)
         output = original_compute(data)
-        print_separator("judge_wg.compute_judge_score output")
-        print_tensor_info("judge_scores", output.batch["judge_scores"])
-        print(f"  {output.batch['judge_scores']}")
-        print_tensor_info("judge_token_probs", output.batch["judge_token_probs"], show_values=False)
-        print(f"  {output.batch['judge_token_probs']}")
+        print_separator("judge_wg.compute_constrained_scores output")
+        print_tensor_info("constrained_scores", output.batch["constrained_scores"])
+        print(f"  {output.batch['constrained_scores']}")
+        print_tensor_info("constrained_token_probs", output.batch["constrained_token_probs"], show_values=False)
+        print(f"  {output.batch['constrained_token_probs']}")
         captured["output"] = output
         return output
 
-    worker.compute_judge_score = logging_compute_judge_score
+    worker.compute_constrained_scores = logging_compute_constrained_scores
 
     scores = collector._compute_judge_scores(
         monitor_batch=monitor_batch,
@@ -253,7 +253,7 @@ def test_compute_judge_scores_end_to_end():
     assert scores.shape == (len(monitor_outputs),)
     assert scores.dtype == np.float32
 
-    flat_scores = captured["output"].batch["judge_scores"].numpy()
+    flat_scores = captured["output"].batch["constrained_scores"].numpy()
     critique_counts = np.asarray(sample_critique_counts, dtype=np.int64)
     assert critique_counts.sum() == len(flat_scores)
 

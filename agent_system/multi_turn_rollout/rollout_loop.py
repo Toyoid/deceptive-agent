@@ -27,9 +27,11 @@ from verl.models.transformers.qwen2_vl import get_rope_index
 from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
 from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
 from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
+from agent_system.environments.prompts.verdict_monitor_prompt import build_verdict_monitor_prompt
 from agent_system.environments import EnvironmentManagerBase
 from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.self_monitor import parse_self_monitor_batch
+from agent_system.verdict_monitor import constrained_probs_to_binary_penalties
 from typing import List, Dict, Callable, Tuple, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 
@@ -43,6 +45,8 @@ class TrajectoryCollector:
         monitor_processor=None,
         judge_tokenizer: PreTrainedTokenizer = None,
         judge_processor=None,
+        verdict_monitor_tokenizer: PreTrainedTokenizer = None,
+        verdict_monitor_processor=None,
     ):
         """
         Initialize the TrajectoryProcessor class.
@@ -54,6 +58,7 @@ class TrajectoryCollector:
             monitor_tokenizer: Tokenizer for monitor model
             monitor_processor: Processor for monitor model multimodal inputs
             judge_tokenizer: Tokenizer for judge model (for critique preprocessing)
+            verdict_monitor_tokenizer: Tokenizer for verdict monitor model
         """
         self.config = config
         self.tokenizer = tokenizer
@@ -66,6 +71,10 @@ class TrajectoryCollector:
             assert judge_tokenizer is not None, "judge tokenizer should be provided when judge is enabled"
             self.judge_tokenizer = judge_tokenizer
             self.judge_processor = judge_processor
+        if config.verdict_monitor.enable:
+            assert verdict_monitor_tokenizer is not None, "verdict monitor tokenizer should be provided when verdict_monitor is enabled"
+            self.verdict_monitor_tokenizer = verdict_monitor_tokenizer
+            self.verdict_monitor_processor = verdict_monitor_processor
     
     @staticmethod
     def _create_uid_batch(
@@ -103,15 +112,15 @@ class TrajectoryCollector:
         self,
         processed_judge_samples: List[dict],
         judge_score_slots: List[Tuple[int, int]],
-        judge_scores,
-        judge_token_probs,
+        constrained_scores,
+        constrained_token_probs,
     ) -> None:
         debug_print_samples = 2
         if debug_print_samples <= 0 or len(processed_judge_samples) == 0:
             return
 
         num_samples = min(debug_print_samples, len(processed_judge_samples), len(judge_score_slots))
-        probs_array = judge_token_probs.numpy() if hasattr(judge_token_probs, "numpy") else np.asarray(judge_token_probs)
+        probs_array = constrained_token_probs.numpy() if hasattr(constrained_token_probs, "numpy") else np.asarray(constrained_token_probs)
         valid_tokens = list(self.config.judge_model.valid_tokens)
         token_weights = list(self.config.judge_model.token_weights)
         constrained_top_k = self.config.judge_model.get("constrained_top_k", -1)
@@ -137,7 +146,7 @@ class TrajectoryCollector:
             )
 
             print(f"[Judge Debug] Queued sample {idx + 1}/{num_samples} | source_sample={sample_idx} | critique_idx={critique_idx}")
-            print(f"Score: {float(judge_scores[idx]):.4f}")
+            print(f"Score: {float(constrained_scores[idx]):.4f}")
             print(
                 f"Argmax token: {valid_tokens[best_idx]} "
                 f"(weight={float(token_weights[best_idx]):.4f}, prob={prob_row[best_idx]:.4f})"
@@ -377,6 +386,42 @@ class TrajectoryCollector:
         
         return row_dict
 
+    def build_single_verdict_monitor_sample(
+        self,
+        item: int,
+        gen_batch: DataProto,
+        obs: Dict,
+        infos: Optional[List[Dict]] = None,
+    ) -> dict:
+        monitor_background = obs['monitor_background'][item]
+        agent_trajectory = obs['agent_trajectory'][item]
+        monitor_images = obs.get('monitor_image', None)
+        task_type = obs['task_type']
+        monitor_image = monitor_images[item] if monitor_images is not None else None
+
+        chat = build_verdict_monitor_prompt(
+            task_type=task_type,
+            background=monitor_background,
+            behavior_under_review=agent_trajectory,
+            template_name=self.config.verdict_monitor.template_name,
+        )
+
+        row_dict = self._process_chat_to_model_inputs(
+            chat=chat,
+            obs_image=monitor_image,
+            tokenizer=self.verdict_monitor_tokenizer,
+            processor=self.verdict_monitor_processor,
+            max_prompt_length=self.config.verdict_monitor.max_prompt_length,
+            truncation=self.config.verdict_monitor.truncation,
+        )
+
+        row_dict.update({
+            'raw_prompt': copy.deepcopy(chat),
+            'data_source': gen_batch.non_tensor_batch['data_source'][item],
+            'episode_rewards': gen_batch.non_tensor_batch['episode_rewards'][item],
+        })
+        return row_dict
+
     @staticmethod
     def preprocess_batch(
         gen_batch: DataProto, 
@@ -509,6 +554,7 @@ class TrajectoryCollector:
         gen_batch: DataProto,
         actor_rollout_wg,
         monitor_wg,
+        verdict_monitor_wg,
         judge_wg,
         envs: EnvironmentManagerBase,
         rollout_n: int,
@@ -520,6 +566,7 @@ class TrajectoryCollector:
             gen_batch (DataProto): Initial batch with prompts to start the agent_loop
             actor_rollout_wg (WorkerGroup): Worker group containing the actor model for policy decisions
             monitor_wg (WorkerGroup): Worker group containing the monitor model
+            verdict_monitor_wg (WorkerGroup): Worker group containing the verdict monitor model
             envs (EnvironmentManagerBase): Environment manager containing parallel environment instances
             judge_wg (WorkerGroup, optional): Worker group containing the judge model for scoring monitor's critiques.
 
@@ -554,6 +601,7 @@ class TrajectoryCollector:
         episode_rewards = np.zeros(batch_size, dtype=np.float32)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
         self_monitor_trust_penalties = np.zeros(batch_size, dtype=np.float32) if self.config.self_monitor.enable else None
+        verdict_monitor_trust_penalties = None
 
         # Trajectory collection loop
         rollout_max_steps = envs.get_rollout_max_steps()
@@ -649,7 +697,7 @@ class TrajectoryCollector:
             batch.non_tensor_batch['user_inputs'] = np.array([info['user_input'] for info in infos], dtype=object)
             batch.non_tensor_batch['system_infos'] = np.array([info['evidence'] for info in infos], dtype=object)
             
-            if self.config.monitor_rollout_ref.enable:
+            if self.config.monitor_rollout_ref.enable or self.config.verdict_monitor.enable:
                 batch.non_tensor_batch['monitor_background'] = np.array(next_obs['monitor_background'])
                 batch.non_tensor_batch['agent_trajectory'] = np.array(next_obs['agent_trajectory'])
                 if next_obs.get('monitor_image', None) is not None:
@@ -686,8 +734,8 @@ class TrajectoryCollector:
         # TODO: What will the obs be when loop finished and some envs are already done in earlier steps?
         # TODO: This agent loop is to be optimized to asynchronously process envs with varied episode lengths
 
-        # monitor rollout on the episode data of actor
-        if self.config.monitor_rollout_ref.enable and monitor_wg is not None:
+        actor_episode_batch = None
+        if self.config.monitor_rollout_ref.enable or self.config.verdict_monitor.enable:
             # Extract the last real step (active_masks == True) from each trajectory
             actor_episode_list = [None for _ in range(batch_size)]
             for bs in range(batch_size):
@@ -707,6 +755,8 @@ class TrajectoryCollector:
                 data=collate_fn(actor_episode_list)
             )
 
+        # monitor rollout on the episode data of actor
+        if self.config.monitor_rollout_ref.enable and monitor_wg is not None:
             # call monitor rollout with one-sample-per-env batch
             monitor_batch = self.monitor_rollout(
                 actor_batch=actor_episode_batch,
@@ -720,6 +770,15 @@ class TrajectoryCollector:
             monitor_batch = None
         else:
             monitor_batch = None
+
+        if self.config.verdict_monitor.enable and verdict_monitor_wg is not None:
+            verdict_monitor_trust_penalties = self.verdict_monitor_score(
+                actor_batch=actor_episode_batch,
+                verdict_monitor_wg=verdict_monitor_wg,
+                infos=infos,
+            )
+        elif self.config.verdict_monitor.enable and verdict_monitor_wg is None:
+            raise RuntimeError("Verdict monitor worker group is None but verdict_monitor.enable is True.")
 
         success: Dict[str, np.ndarray] = envs.success_evaluator(
             total_infos=total_infos,
@@ -736,6 +795,7 @@ class TrajectoryCollector:
             'traj_uid': traj_uid,
             'tool_callings': tool_callings,
             'self_monitor_trust_penalties': self_monitor_trust_penalties,
+            'verdict_monitor_trust_penalties': verdict_monitor_trust_penalties,
         }
 
         return actor_batch_dict, monitor_batch
@@ -847,6 +907,50 @@ class TrajectoryCollector:
         batch.non_tensor_batch['is_format_correct'] = monitor_format_correct
 
         return batch
+
+    def verdict_monitor_score(
+        self,
+        actor_batch: DataProto,
+        verdict_monitor_wg,
+        infos: List[Dict],
+    ) -> np.ndarray:
+        assert verdict_monitor_wg is not None, "verdict monitor worker group should not be None for verdict monitor rollout"
+
+        verdict_obs = {
+            'task_type': infos[0]['task_type'],
+            'monitor_background': actor_batch.non_tensor_batch['monitor_background'],
+            'agent_trajectory': actor_batch.non_tensor_batch['agent_trajectory'],
+            'monitor_image': actor_batch.non_tensor_batch.get('monitor_image', None),
+        }
+        batch = self.preprocess_batch(
+            gen_batch=actor_batch,
+            obs=verdict_obs,
+            infos=infos,
+            single_preprocessor=self.build_single_verdict_monitor_sample,
+        )
+
+        batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
+        non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
+        if "multi_modal_data" in batch.non_tensor_batch:
+            non_tensor_batch_keys_to_pop.append("multi_modal_data")
+        if "raw_prompt" in batch.non_tensor_batch:
+            non_tensor_batch_keys_to_pop.append("raw_prompt")
+
+        batch_input = batch.pop(
+            batch_keys=batch_keys_to_pop,
+            non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
+        )
+        batch_input.meta_info = actor_batch.meta_info
+        batch_input.meta_info['validate'] = True
+
+        batch_input_padded, pad_size = pad_dataproto_to_divisor(batch_input, verdict_monitor_wg.world_size)
+        verdict_output_padded = verdict_monitor_wg.compute_constrained_scores(batch_input_padded)
+        verdict_output = unpad_dataproto(verdict_output_padded, pad_size=pad_size)
+
+        return constrained_probs_to_binary_penalties(
+            constrained_token_probs=verdict_output.batch["constrained_token_probs"],
+            valid_tokens=self.config.verdict_monitor.valid_tokens,
+        )
     
     def _compute_judge_scores(
         self,
@@ -975,18 +1079,18 @@ class TrajectoryCollector:
 
             # Run judge inference
             judge_input_padded, pad_size = pad_dataproto_to_divisor(judge_batch, judge_wg.world_size)
-            judge_output_padded = judge_wg.compute_judge_score(judge_input_padded)
+            judge_output_padded = judge_wg.compute_constrained_scores(judge_input_padded)
             judge_output = unpad_dataproto(judge_output_padded, pad_size=pad_size)
 
             # Fill judge scores back into per-sample score lists
-            flat_scores = judge_output.batch["judge_scores"].numpy()
-            flat_probs = judge_output.batch["judge_token_probs"]
+            flat_scores = judge_output.batch["constrained_scores"].numpy()
+            flat_probs = judge_output.batch["constrained_token_probs"]
 
             self._debug_print_judge_samples(
                 processed_judge_samples=processed_judge_samples,
                 judge_score_slots=judge_score_slots,
-                judge_scores=flat_scores,
-                judge_token_probs=flat_probs,
+                constrained_scores=flat_scores,
+                constrained_token_probs=flat_probs,
             )
 
             assert len(flat_scores) == len(judge_score_slots), (
@@ -1013,9 +1117,11 @@ class TrajectoryCollector:
         gen_batch: DataProto, 
         actor_rollout_wg, 
         monitor_wg,
+        verdict_monitor_wg,
         judge_wg,
         envs: EnvironmentManagerBase,
         rollout_n: int,
+        monitor_rollout_n: int,
     ) -> DataProto:
         """
         Conduct dynamic rollouts until a target batch size is met. 
@@ -1052,14 +1158,22 @@ class TrajectoryCollector:
                 print(f"valid num={len(total_batch_list)} < target num={self.config.data.train_batch_size * rollout_n}. Keep generating... ({try_count}/{max_try_count})")
             try_count += 1
 
-            batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings = self.vanilla_multi_turn_loop(
+            actor_batch_dict, _ = self.vanilla_multi_turn_loop(
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
                 monitor_wg=monitor_wg,
+                verdict_monitor_wg=verdict_monitor_wg,
                 judge_wg=judge_wg,
                 envs=envs,
                 rollout_n=rollout_n,
+                monitor_rollout_n=monitor_rollout_n,
             )
+            batch_list = actor_batch_dict["total_batch_list"]
+            episode_rewards = actor_batch_dict["episode_rewards"]
+            episode_lengths = actor_batch_dict["episode_lengths"]
+            success = actor_batch_dict["success"]
+            traj_uid = actor_batch_dict["traj_uid"]
+            tool_callings = actor_batch_dict["tool_callings"]
             batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings = filter_group_data(
                 batch_list=batch_list, 
                 episode_rewards=episode_rewards, 
@@ -1091,6 +1205,7 @@ class TrajectoryCollector:
         gen_batch: DataProto, 
         actor_rollout_wg, 
         monitor_wg,
+        verdict_monitor_wg,
         judge_wg,
         envs: EnvironmentManagerBase,
         is_train: bool = True,
@@ -1116,23 +1231,38 @@ class TrajectoryCollector:
 
         # Initial observations from the environment
         if self.config.algorithm.filter_groups.enable and is_train:
+            if self.config.self_monitor.enable or self.config.verdict_monitor.enable or self.config.monitor_rollout_ref.enable:
+                raise NotImplementedError("filter_groups is not supported with self_monitor, verdict_monitor, or monitor_rollout_ref.")
             # Dynamic Sampling (for DAPO and Dynamic GiGPO)
             total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, total_tool_callings = \
                 self.dynamic_multi_turn_loop(
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
                 monitor_wg=monitor_wg,
+                verdict_monitor_wg=verdict_monitor_wg,
                 judge_wg=judge_wg,
                 envs=envs,
                 rollout_n=rollout_n,
                 monitor_rollout_n=monitor_rollout_n,
             )
+            actor_batch_dict = {
+                "total_batch_list": total_batch_list,
+                "episode_rewards": total_episode_rewards,
+                "episode_lengths": total_episode_lengths,
+                "success": total_success,
+                "traj_uid": total_traj_uid,
+                "tool_callings": total_tool_callings,
+                "self_monitor_trust_penalties": None,
+                "verdict_monitor_trust_penalties": None,
+            }
+            monitor_batch_output = None
         else:
             # Vanilla Sampling   
             actor_batch_dict, monitor_batch_output = self.vanilla_multi_turn_loop(
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
                 monitor_wg=monitor_wg,
+                verdict_monitor_wg=verdict_monitor_wg,
                 judge_wg=judge_wg,
                 envs=envs,
                 rollout_n=rollout_n,
@@ -1147,6 +1277,8 @@ class TrajectoryCollector:
         actor_trust_penalties = None
         if self.config.self_monitor.enable:
             actor_trust_penalties = actor_batch_dict['self_monitor_trust_penalties']
+        elif self.config.verdict_monitor.enable:
+            actor_trust_penalties = actor_batch_dict['verdict_monitor_trust_penalties']
         elif monitor_wg is not None and monitor_batch_output is not None:
             # Clip to [0, 1] for the actor's Lagrangian cost constraint.
             # The monitor's batch retains the original unclipped [-1, 1] values for its own PPO update.            

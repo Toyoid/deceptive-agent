@@ -1537,7 +1537,7 @@ class RewardModelWorker(Worker):
 
 class JudgeModelWorker(Worker):
     """
-    Specific judge worker for constrained single-token scoring.
+    Generic worker for constrained single-token scoring.
     
     This worker performs inference with a causal LM and computes weighted probability
     scores over a configurable constrained token set. It can be used for:
@@ -1618,7 +1618,7 @@ class JudgeModelWorker(Worker):
             self.config.micro_batch_size_per_gpu = self.config.micro_batch_size
 
     def _build_model(self, config):
-        """Build the judge model with FSDP wrapping."""
+        """Build the constrained-scorer model with FSDP wrapping."""
         from torch.distributed.fsdp import CPUOffload
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
         from transformers import AutoConfig, AutoModelForCausalLM
@@ -1704,7 +1704,7 @@ class JudgeModelWorker(Worker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def init_model(self):
-        """Initialize the judge model and validate token configuration."""
+        """Initialize the constrained-scorer model and validate token configuration."""
         import_external_libs(self.config.model.get("external_lib", None))
         self.judge_module = self._build_model(config=self.config)
         
@@ -1797,17 +1797,17 @@ class JudgeModelWorker(Worker):
             return scores, constrained_probs
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
-    def compute_judge_score(self, data: DataProto):
+    def compute_constrained_scores(self, data: DataProto):
         """
-        Compute judge scores for a batch of inputs.
+        Compute constrained-token scores for a batch of inputs.
         
         Args:
             data: DataProto containing input_ids, attention_mask, position_ids
         
         Returns:
             DataProto with:
-            - "judge_scores": (batch_size,) weighted validity scores induced by token_weights
-            - "judge_token_probs": (batch_size, num_tokens) probabilities for debugging
+            - "constrained_scores": (batch_size,) weighted scores induced by token_weights
+            - "constrained_token_probs": (batch_size, num_tokens) probabilities for debugging
         """
         import itertools
         from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
@@ -1815,27 +1815,27 @@ class JudgeModelWorker(Worker):
         # Move data to device
         data = data.to(get_torch_device().current_device())
 
-        judge_input_ids = data.batch["input_ids"]
-        judge_attention_mask = data.batch["attention_mask"]
-        judge_position_ids = data.batch["position_ids"]
-        judge_inputs = {
-            "input_ids": judge_input_ids,
-            "attention_mask": judge_attention_mask,
-            "position_ids": judge_position_ids,
+        input_ids = data.batch["input_ids"]
+        attention_mask = data.batch["attention_mask"]
+        position_ids = data.batch["position_ids"]
+        model_inputs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
         }
-        judge_data = DataProto.from_dict(judge_inputs)
-        judge_data.batch = judge_data.batch.to(get_torch_device().current_device())
+        model_data = DataProto.from_dict(model_inputs)
+        model_data.batch = model_data.batch.to(get_torch_device().current_device())
 
         # Perform forward computation with micro-batching
         with self.ulysses_sharding_manager:
-            judge_data = self.ulysses_sharding_manager.preprocess_data(data=judge_data)
+            model_data = self.ulysses_sharding_manager.preprocess_data(data=model_data)
 
             use_dynamic_bsz = self.config.use_dynamic_bsz
             if use_dynamic_bsz:
                 max_token_len = self.config.forward_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
-                micro_batches, indices = rearrange_micro_batches(batch=judge_data.batch, max_token_len=max_token_len)
+                micro_batches, indices = rearrange_micro_batches(batch=model_data.batch, max_token_len=max_token_len)
             else:
-                micro_batches = judge_data.batch.split(self.config.micro_batch_size_per_gpu)
+                micro_batches = model_data.batch.split(self.config.micro_batch_size_per_gpu)
             
             scores_list = []
             probs_list = []
@@ -1856,8 +1856,8 @@ class JudgeModelWorker(Worker):
                 all_probs = all_probs[revert_indices]
 
             output = DataProto.from_dict(tensors={
-                "judge_scores": all_scores,
-                "judge_token_probs": all_probs,
+                "constrained_scores": all_scores,
+                "constrained_token_probs": all_probs,
             })
             output = self.ulysses_sharding_manager.postprocess_data(data=output)
 

@@ -15,7 +15,7 @@
 """
 Integration test for JudgeModelWorker with detailed tensor transformation logging.
 
-This test verifies the correctness of `compute_judge_score` and `_forward_micro_batch` methods
+This test verifies the correctness of `compute_constrained_scores` and `_forward_micro_batch` methods
 by running actual inference on a small model (Qwen2.5-0.5B-Instruct) and printing intermediate
 tensor states for debugging.
 
@@ -219,11 +219,11 @@ def test_forward_micro_batch_detailed(worker, micro_batch: dict):
     return actual_scores, actual_probs
 
 
-def test_compute_judge_score_detailed(worker, tokenizer):
+def test_compute_constrained_scores_detailed(worker, tokenizer):
     """
-    Test compute_judge_score with detailed tensor logging.
+    Test compute_constrained_scores with detailed tensor logging.
     """
-    print_separator("Testing compute_judge_score with detailed logging")
+    print_separator("Testing compute_constrained_scores with detailed logging")
     
     # Create test prompts that should elicit different scores
     test_prompts = [
@@ -278,18 +278,18 @@ def test_compute_judge_score_detailed(worker, tokenizer):
     print(f"    DataProto batch keys: {list(data.batch.keys())}")
     print(f"    DataProto batch size: {data.batch.batch_size}")
     
-    # Run compute_judge_score
-    print("\n>>> RUNNING compute_judge_score...")
-    output = worker.compute_judge_score(data)
+    # Run compute_constrained_scores
+    print("\n>>> RUNNING compute_constrained_scores...")
+    output = worker.compute_constrained_scores(data)
     
-    print("\n>>> OUTPUT FROM compute_judge_score:")
-    print_tensor_info("judge_scores", output.batch["judge_scores"])
-    print_tensor_info("judge_token_probs", output.batch["judge_token_probs"])
+    print("\n>>> OUTPUT FROM compute_constrained_scores:")
+    print_tensor_info("constrained_scores", output.batch["constrained_scores"])
+    print_tensor_info("constrained_token_probs", output.batch["constrained_token_probs"])
     
     # Detailed analysis per sample
     print("\n>>> PER-SAMPLE ANALYSIS:")
-    scores = output.batch["judge_scores"]
-    probs = output.batch["judge_token_probs"]
+    scores = output.batch["constrained_scores"]
+    probs = output.batch["constrained_token_probs"]
     tokens = worker.valid_tokens
     weights = worker.token_weights
     
@@ -357,18 +357,18 @@ def test_top_k_filtering(worker_no_topk, worker_with_topk, tokenizer):
     
     # Run both workers
     print("\n>>> Running worker WITHOUT constrained_top_k filtering...")
-    output_no_topk = worker_no_topk.compute_judge_score(data)
+    output_no_topk = worker_no_topk.compute_constrained_scores(data)
     
     print(">>> Running worker WITH constrained_top_k filtering...")
-    output_with_topk = worker_with_topk.compute_judge_score(data)
+    output_with_topk = worker_with_topk.compute_constrained_scores(data)
     
     # Compare results
     print("\n>>> COMPARISON RESULTS:")
     
-    scores_no_topk = output_no_topk.batch["judge_scores"]
-    scores_with_topk = output_with_topk.batch["judge_scores"]
-    probs_no_topk = output_no_topk.batch["judge_token_probs"]
-    probs_with_topk = output_with_topk.batch["judge_token_probs"]
+    scores_no_topk = output_no_topk.batch["constrained_scores"]
+    scores_with_topk = output_with_topk.batch["constrained_scores"]
+    probs_no_topk = output_no_topk.batch["constrained_token_probs"]
+    probs_with_topk = output_with_topk.batch["constrained_token_probs"]
     
     print_tensor_info("scores (no constrained_top_k)", scores_no_topk)
     print_tensor_info("scores (with constrained_top_k)", scores_with_topk)
@@ -453,18 +453,18 @@ def test_top_k_fallback_strategies(worker_uniform, worker_zero, tokenizer):
     
     # Run both workers
     print("\n>>> Running worker with 'uniform' fallback strategy...")
-    output_uniform = worker_uniform.compute_judge_score(data)
+    output_uniform = worker_uniform.compute_constrained_scores(data)
     
     print(">>> Running worker with 'zero' fallback strategy...")
-    output_zero = worker_zero.compute_judge_score(data)
+    output_zero = worker_zero.compute_constrained_scores(data)
     
     # Compare results
     print("\n>>> COMPARISON RESULTS:")
     
-    scores_uniform = output_uniform.batch["judge_scores"]
-    scores_zero = output_zero.batch["judge_scores"]
-    probs_uniform = output_uniform.batch["judge_token_probs"]
-    probs_zero = output_zero.batch["judge_token_probs"]
+    scores_uniform = output_uniform.batch["constrained_scores"]
+    scores_zero = output_zero.batch["constrained_scores"]
+    probs_uniform = output_uniform.batch["constrained_token_probs"]
+    probs_zero = output_zero.batch["constrained_token_probs"]
     
     print_tensor_info("scores (uniform fallback)", scores_uniform)
     print_tensor_info("scores (zero fallback)", scores_zero)
@@ -593,9 +593,9 @@ def main():
     
     scores, probs = test_forward_micro_batch_detailed(worker, micro_batch)
     
-    # Test 2: compute_judge_score with detailed logging
-    print_separator("Test 2: compute_judge_score")
-    output = test_compute_judge_score_detailed(worker, tokenizer)
+    # Test 2: compute_constrained_scores with detailed logging
+    print_separator("Test 2: compute_constrained_scores")
+    output = test_compute_constrained_scores_detailed(worker, tokenizer)
     
     # Test 3: constrained top-k filtering
     print_separator("Test 3: Constrained Top-k Filtering")
@@ -624,11 +624,11 @@ def main():
     print_separator("TEST SUMMARY", "=", 80)
     print("✓ All tests completed successfully!")
     print(f"  - Test 1: _forward_micro_batch tensor transformations verified")
-    print(f"  - Test 2: compute_judge_score end-to-end pipeline verified")
+    print(f"  - Test 2: compute_constrained_scores end-to-end pipeline verified")
     print(f"  - Test 3: constrained_top_k=100 filtering tested")
     print(f"  - Test 4: constrained_top_k=10 extreme filtering tested")
     print(f"  - Token mapping: {dict(zip(worker.valid_tokens, worker.valid_token_ids))}")
-    print(f"  - Score range (no constrained_top_k): [{output.batch['judge_scores'].min():.4f}, {output.batch['judge_scores'].max():.4f}]")
+    print(f"  - Score range (no constrained_top_k): [{output.batch['constrained_scores'].min():.4f}, {output.batch['constrained_scores'].max():.4f}]")
     
     # Cleanup
     dist.destroy_process_group()
