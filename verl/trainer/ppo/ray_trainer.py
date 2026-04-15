@@ -1099,8 +1099,8 @@ class RayPPOTrainer:
                 if "response_mask" not in test_batch.batch:
                     test_batch.batch["response_mask"] = compute_response_mask(test_batch)
                 reward_tensor, _, normed_scalar = apply_rm_normalization(
-                    reward_tensor, 
-                    test_batch.batch["response_mask"], 
+                    reward_tensor,
+                    test_batch.batch["response_mask"],
                     self.rm_normalizer if self.rm_norm_enabled else None
                 )
                 # Collect normalized RM scores for distribution recording

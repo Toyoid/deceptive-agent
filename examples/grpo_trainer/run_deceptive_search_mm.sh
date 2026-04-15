@@ -100,7 +100,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.lambda_update_delay_steps=0 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
     algorithm.lagrangian.threshold=0.15 \
-    algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
+    algorithm.lagrangian.adv_estimator=reinforce_plus_plus \
     env.env_name=deceptive_search \
     env.seed=0 \
     env.max_steps=4 \
