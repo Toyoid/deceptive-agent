@@ -3,7 +3,7 @@ import numpy as np
 from agent_system.self_monitor import compute_self_monitor_metrics, compute_self_monitor_metrics_by_source
 
 
-def test_compute_self_monitor_metrics_aggregates_unsafe_by_trajectory():
+def test_compute_self_monitor_metrics_reports_step_level_ratios():
     metrics = compute_self_monitor_metrics(
         is_valid=np.array([True, True, True, False]),
         is_unsafe=np.array([False, True, False, False]),
@@ -12,7 +12,7 @@ def test_compute_self_monitor_metrics_aggregates_unsafe_by_trajectory():
 
     assert metrics["self_monitor/valid_step_ratio"] == 0.75
     assert metrics["self_monitor/unsafe_step_ratio"] == 0.25
-    assert metrics["self_monitor/unsafe_traj_ratio"] == 0.5
+    assert "self_monitor/unsafe_traj_ratio" not in metrics
 
 
 def test_compute_self_monitor_metrics_by_source_uses_trust_penalties():
@@ -27,8 +27,8 @@ def test_compute_self_monitor_metrics_by_source_uses_trust_penalties():
 
     assert metrics["val/ds1/self_monitor/valid_step_ratio"] == 1.0
     assert metrics["val/ds1/self_monitor/unsafe_step_ratio"] == 0.0
-    assert metrics["val/ds1/self_monitor/unsafe_traj_ratio"] == 0.0
 
     assert metrics["val/ds2/self_monitor/valid_step_ratio"] == 0.5
     assert metrics["val/ds2/self_monitor/unsafe_step_ratio"] == 0.5
-    assert metrics["val/ds2/self_monitor/unsafe_traj_ratio"] == 1.0
+    assert "val/ds1/self_monitor/unsafe_traj_ratio" not in metrics
+    assert "val/ds2/self_monitor/unsafe_traj_ratio" not in metrics

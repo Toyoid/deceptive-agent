@@ -600,6 +600,7 @@ class TrajectoryCollector:
         episode_lengths = np.zeros(batch_size, dtype=np.float32)
         episode_rewards = np.zeros(batch_size, dtype=np.float32)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
+        monitor_batch = None
         self_monitor_trust_penalties = np.zeros(batch_size, dtype=np.float32) if self.config.self_monitor.enable else None
         verdict_monitor_trust_penalties = None
 
@@ -765,11 +766,9 @@ class TrajectoryCollector:
                 judge_wg=judge_wg,
                 monitor_rollout_n=monitor_rollout_n,
             )
+        # in case we should enable monitor rollout but also need one pure actor rollout, we set monitor_wg as None
         elif self.config.monitor_rollout_ref.enable and monitor_wg is None:
-            print("WARN: Monitor worker group set as None, skipping monitor rollout...")
-            monitor_batch = None
-        else:
-            monitor_batch = None
+            print("NOTE: Monitor worker group set as None, skipping monitor rollout...")
 
         if self.config.verdict_monitor.enable and verdict_monitor_wg is not None:
             verdict_monitor_trust_penalties = self.verdict_monitor_score(
@@ -777,8 +776,9 @@ class TrajectoryCollector:
                 verdict_monitor_wg=verdict_monitor_wg,
                 infos=infos,
             )
+        # in case we should enable verdict monitor but also need one pure actor rollout, we set verdict_monitor_wg as None
         elif self.config.verdict_monitor.enable and verdict_monitor_wg is None:
-            raise RuntimeError("Verdict monitor worker group is None but verdict_monitor.enable is True.")
+            print("NOTE: Verdict monitor worker group set as None, skipping verdict monitor...")
 
         success: Dict[str, np.ndarray] = envs.success_evaluator(
             total_infos=total_infos,

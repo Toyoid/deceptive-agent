@@ -900,6 +900,7 @@ class RayPPOTrainer:
                     gen_batch=gen_batch,
                     actor_rollout_wg=self.actor_rollout_wg,
                     monitor_wg=None,
+                    verdict_monitor_wg=None,
                     envs=self.envs,
                     is_train=False,
                     judge_wg=None,
