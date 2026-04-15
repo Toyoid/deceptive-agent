@@ -906,7 +906,9 @@ class RayPPOTrainer:
                     judge_wg=None,
                 )
                 batch = output_batch_dict["actor"]
-                rm_scores = self.rm_wg.compute_rm_score(batch)
+                batch_padded, pad_size = pad_dataproto_to_divisor(batch, self.rm_wg.world_size)
+                rm_scores = self.rm_wg.compute_rm_score(batch_padded)
+                rm_scores = unpad_dataproto(rm_scores, pad_size=pad_size)
                 response_mask = compute_response_mask(batch)
                 raw_scalar = (rm_scores.batch["rm_scores"] * response_mask).sum(dim=-1)
                 self.rm_normalizer.update(raw_scalar)

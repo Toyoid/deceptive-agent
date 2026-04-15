@@ -155,6 +155,54 @@ class TrajectoryCollector:
             print("-" * 120)
             print(prompt_text)
             print("=" * 120)
+
+    def _debug_print_verdict_monitor_samples(
+        self,
+        raw_prompt_ids,
+        constrained_scores,
+        constrained_token_probs,
+        penalties,
+    ) -> None:
+        debug_print_samples = self.config.verdict_monitor.get("debug_print_samples", 2)
+        if debug_print_samples <= 0 or len(raw_prompt_ids) == 0:
+            return
+
+        num_samples = min(debug_print_samples, len(raw_prompt_ids))
+        probs_array = constrained_token_probs.numpy() if hasattr(constrained_token_probs, "numpy") else np.asarray(constrained_token_probs)
+        valid_tokens = list(self.config.verdict_monitor.valid_tokens)
+        token_weights = list(self.config.verdict_monitor.token_weights)
+        constrained_top_k = self.config.verdict_monitor.get("constrained_top_k", -1)
+
+        print("\n" + "=" * 120)
+        print(
+            f"[Verdict Monitor Debug] Showing {num_samples}/{len(raw_prompt_ids)} samples | "
+            f"valid_tokens={valid_tokens} | constrained_top_k={constrained_top_k}"
+        )
+        print("=" * 120)
+
+        for idx in range(num_samples):
+            prompt_ids = raw_prompt_ids[idx]
+            if hasattr(prompt_ids, "tolist"):
+                prompt_ids = prompt_ids.tolist()
+            prompt_text = self.verdict_monitor_tokenizer.decode(prompt_ids, skip_special_tokens=False)
+
+            prob_row = probs_array[idx].tolist()
+            best_idx = int(np.argmax(prob_row))
+            prob_summary = ", ".join(
+                f"{token}={prob:.4f}" for token, prob in zip(valid_tokens, prob_row)
+            )
+
+            print(f"[Verdict Monitor Debug] Sample {idx + 1}/{num_samples}")
+            print(f"Score: {float(constrained_scores[idx]):.4f}")
+            print(f"Penalty: {float(penalties[idx]):.4f}")
+            print(
+                f"Argmax token: {valid_tokens[best_idx]} "
+                f"(weight={float(token_weights[best_idx]):.4f}, prob={prob_row[best_idx]:.4f})"
+            )
+            print(f"Token probs: {prob_summary}")
+            print("-" * 120)
+            print(prompt_text)
+            print("=" * 120)
     
     @staticmethod
     def _process_chat_to_model_inputs(
@@ -947,10 +995,28 @@ class TrajectoryCollector:
         verdict_output_padded = verdict_monitor_wg.compute_constrained_scores(batch_input_padded)
         verdict_output = unpad_dataproto(verdict_output_padded, pad_size=pad_size)
 
-        return constrained_probs_to_binary_penalties(
-            constrained_token_probs=verdict_output.batch["constrained_token_probs"],
+        # non debugging logic: directly return penalties converted from constrained token probs
+        # return constrained_probs_to_binary_penalties(
+        #     constrained_token_probs=verdict_output.batch["constrained_token_probs"],
+        #     valid_tokens=self.config.verdict_monitor.valid_tokens,
+        # )
+
+        # debug logic
+        constrained_scores = verdict_output.batch["constrained_scores"]
+        constrained_token_probs = verdict_output.batch["constrained_token_probs"]
+        penalties = constrained_probs_to_binary_penalties(
+            constrained_token_probs=constrained_token_probs,
             valid_tokens=self.config.verdict_monitor.valid_tokens,
         )
+
+        self._debug_print_verdict_monitor_samples(
+            raw_prompt_ids=batch_input.non_tensor_batch["raw_prompt_ids"],
+            constrained_scores=constrained_scores,
+            constrained_token_probs=constrained_token_probs,
+            penalties=penalties,
+        )
+
+        return penalties
     
     def _compute_judge_scores(
         self,
