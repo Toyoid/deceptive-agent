@@ -25,7 +25,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
+    actor_rollout_ref.model.path=checkpoints/verl_deceptive_search/grpo_deceptive_search_qwen3_4b/global_step_95/actor/huggingface \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -58,7 +58,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
-    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
+    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
     monitor_rollout_ref.monitor.optim.lr=2e-6 \
     monitor_rollout_ref.monitor.optim.lr_warmup_steps_ratio=0.1 \
     monitor_rollout_ref.monitor.use_kl_loss=True \

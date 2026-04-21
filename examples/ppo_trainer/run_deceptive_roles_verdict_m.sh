@@ -26,11 +26,11 @@ python3 -m verl.trainer.main_ppo \
     data.train_batch_size=64 \
     data.val_batch_size=188 \
     data.max_prompt_length=512 \
-    data.max_response_length=512 \
+    data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-8B \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -41,7 +41,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
@@ -63,7 +63,7 @@ python3 -m verl.trainer.main_ppo \
     reward_model.model.path=sfairXC/FsfairX-LLaMA3-RM-v0.1 \
     reward_model.model.use_remove_padding=True \
     reward_model.model.fsdp_config.param_offload=True \
-    reward_model.micro_batch_size_per_gpu=32 \
+    reward_model.micro_batch_size_per_gpu=16 \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
@@ -72,7 +72,7 @@ python3 -m verl.trainer.main_ppo \
     verdict_monitor.model.use_remove_padding=True \
     verdict_monitor.model.chat_template_kwargs.enable_thinking=False \
     verdict_monitor.model.fsdp_config.param_offload=True \
-    verdict_monitor.micro_batch_size_per_gpu=32 \
+    verdict_monitor.micro_batch_size_per_gpu=16 \
     verdict_monitor.valid_tokens='["0","1"]' \
     verdict_monitor.token_weights='[0.0,1.0]' \
     algorithm.use_kl_in_reward=False \
@@ -97,7 +97,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen3_4b_verdict_monitor' \
+    trainer.experiment_name='grpo_qwen3_8b_verdict_monitor' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \

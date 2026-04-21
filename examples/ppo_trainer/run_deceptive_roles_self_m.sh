@@ -11,7 +11,7 @@ export HF_HUB_OFFLINE=1
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 # A self-monitor SFT checkpoint is required before RL.
-self_monitor_sft_ckpt=checkpoints/self_monitor_sft/qwen2.5_3b_sp2/global_step_117
+self_monitor_sft_ckpt=checkpoints/self_monitor_sft/qwen3_8b_sp2/global_step_954
 
 # Data preparation scripts are available in ``examples/data_preprocess``.
 python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles
@@ -91,7 +91,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen2.5_3b_self_monitor' \
+    trainer.experiment_name='grpo_qwen3_8b_self_monitor' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \

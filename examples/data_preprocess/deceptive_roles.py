@@ -57,9 +57,9 @@ if __name__ == "__main__":
         'Your response must follow a specific format. First, engage in a step-by-step reasoning process within a thinkingpad <think> </think>. This is your internal monologue to analyze the request, consider your role, and decide on the best response. After your thinking process, provide the final, user-facing answer after </think>.\n'
         'The response structure must be:\n'
         '<think>\n'
-        '[Your detailed, step-by-step reasoning process goes here. Analyze the user\'s question, your assigned role, and any constraints or objectives from the dialogue context.]\n'
+        'Your detailed, step-by-step reasoning process goes here. Analyze the user\'s question, your assigned role, and any constraints or objectives from the dialogue context.\n'
         '</think>\n\n'
-        '[Your final, concise answer to the user goes here.]\n'
+        'Your final, concise answer to the user goes here.\n\n'
         'Your entire output must begin with `<think>` and end with the user-facing answer. \n'
     )
 
