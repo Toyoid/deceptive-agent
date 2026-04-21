@@ -1,35 +1,10 @@
 # Environment Setup
 
 ## Table of Contents
-- [1. ALFWorld](#1-alfworld)  
-- [2. WebShop](#2-webshop)  
-- [3. Sokoban](#3-sokoban)  
-- [4. Gym Cards](#4-gym-cards)  
-- [5. AppWorld (Experimental)](#5-appworld-experimental)  
+- [1. WebShop](#1-webshop)  
+- [2. AppWorld (Experimental)](#2-appworld-experimental)  
 
-## 1. ALFWorld
-Install with pip:
-```bash
-pip3 install gymnasium==0.29.1
-pip3 install stable-baselines3==2.6.0
-pip install alfworld
-pip install vllm==0.8.5
-```
-
-Download PDDL & Game files and pre-trained MaskRCNN detector (will be stored in `~/.cache/alfworld/`):
-```bash
-alfworld-download -f
-```
-
-Use `--extra` to download pre-trained checkpoints and seq2seq data.
-
-Play a Textworld game:
-```bash
-alfworld-play-tw
-```
----
-
-## 2. WebShop
+## 1. WebShop
 WebShop requires Python <=3.10, so begin by creating a new `verl-agent-webshop` environment
 ```bash
 conda create -n verl-agent-webshop python==3.10 -y
@@ -64,23 +39,7 @@ pip3 install vllm==0.8.2
 The warnings can be safely ignored.
 
 ---
-## 3. Sokoban
-```bash
-pip install matplotlib
-pip install gym==0.26.2
-pip install gym_sokoban==0.0.6
-```
----
-## 4. Gym Cards
-
-```bash
-cd repo_root/
-pip3 install -e ./agent_system/environments/env_package/gym_cards/gym-cards/
-pip3 install gymnasium==0.29.1
-pip3 install stable-baselines3==2.6.0
-```
----
-### 5. AppWorld (Experimental)
+### 2. AppWorld (Experimental)
 Install AppWorld package
 ```bash
 cd repo_root/

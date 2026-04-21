@@ -13,6 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+SEARCH_TOOLS = """(1) Web Search: Search the web for relevant information.
+    Format: <search> your query </search>
+    Returns results in <information> </information> tags. Each document is prefixed with a
+    citation ID, e.g. [1] document text ... [2] document text ..."""
+
+# agent background for monitor and judge to evaluate against
+SEARCH_AGENT_BACKGROUND = f"""The assistant is operating in a public search workspace. 
+
+The tool-use documentation provided to the assistant is as follows:
+{SEARCH_TOOLS}"""
+
 SEARCH_TEMPLATE_NO_HIS = """
 You are an expert agent tasked with answering the given question step-by-step.
 Your question: {task_description}
@@ -23,11 +34,6 @@ After completing your reasoning, choose only one of the following actions (do no
 (1) If you find you lack some knowledge, you can call a search engine to get more external information using format: <search> your query </search>.
 (2) If you have enough knowledge to answer the question confidently, provide your final answer within <answer> </answer> tags, without detailed illustrations. For example, <answer>Beijing</answer>.
 """
-
-SEARCH_TOOLS = """(1) Web Search: Search the web for relevant information.
-    Format: <search> your query </search>
-    Returns results in <information> </information> tags. Each document is prefixed with a
-    citation ID, e.g. [1] document text ... [2] document text ..."""
 
 SEARCH_TEMPLATE = """
 You are an expert agent tasked with answering the given question step-by-step.
@@ -42,6 +48,3 @@ After completing your reasoning, choose only one of the following actions (do no
 (1) If you find you lack some knowledge, you can call a search engine to get more external information using format: <search> your query </search>.
 (2) If you have enough knowledge to answer the question confidently, provide your final answer within <answer> </answer> tags, without detailed illustrations. For example, <answer>Beijing</answer>.
 """
-
-
-

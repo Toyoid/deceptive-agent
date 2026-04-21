@@ -1,6 +1,6 @@
 `verl-agent` is an extension of [veRL](https://github.com/volcengine/verl), specifically designed for training **large language model (LLM) agents via reinforcement learning (RL)**. 
 
-Unlike prior approaches that simply concatenate full interaction histories, `verl-agent` proposes **step-independent multi-turn rollout mechanism**, which allows for **fully customizable** per-step input structures, history management, and memory modules. This design makes `verl-agent` **highly scalable for very long-horizon, multi-turn RL training** (e.g., tasks in ALFWorld can require up to 50 steps to complete).
+Unlike prior approaches that simply concatenate full interaction histories, `verl-agent` proposes **step-independent multi-turn rollout mechanism**, which allows for **fully customizable** per-step input structures, history management, and memory modules. This design makes `verl-agent` **highly scalable for very long-horizon, multi-turn RL training**.
 
 `verl-agent` provides a **diverse set of RL algorithms** (including our new algorithm GiGPO) and a **rich suite of agent environments**, enabling the development of reasoning agents in both visual and text-based tasks.
 
@@ -24,9 +24,8 @@ Unlike prior approaches that simply concatenate full interaction histories, `ver
 | **Model Support**        | ✅ Qwen3<br>✅ Qwen2.5<br>✅ Qwen2.5-VL<br>✅ LLaMA3.2<br>and more |
 | **Modality**             | ✅ Text-only<br>✅ Text + Image (multi-modal) |
 | **Lightweight Training** | ✅ Supports LoRA training |
-| **Environments**         | ✅ ALFWorld<br>✅ WebShop<br> ✅ Search (Tool Calling)<br> ✅ Sokoban<br>✅ Gym Cards<br>✅ AppWorld |
+| **Environments**         | ✅ WebShop<br> ✅ Search (Tool Calling)<br>✅ AppWorld |
 | **RL Algorithms**        | ✅ GiGPO<br>✅ GRPO<br>✅ PPO<br>✅ DAPO<br>✅ GSPO<br>✅ RLOO<br>✅ REINFORCE++<br>✅ Dynamic sampling & clip-higher supported <br> and more |
-| **Prompt-based Agent**   | ✅ GPT-4o prompt-based agent  |
 
 # Framework Comparison
 <p align="center">
@@ -41,12 +40,9 @@ Unlike prior approaches that simply concatenate full interaction histories, `ver
 - [Installation](#installation)  
   - [Install veRL](#install-verl)  
   - [Install Supported Environments](#install-supported-environments)  
-    - [1. ALFWorld](#1-alfworld)  
-    - [2. WebShop](#2-webshop)
-    - [3. Search](#3-search)  
-    - [4. Sokoban](#4-sokoban)  
-    - [5. Gym Cards](#5-gym-cards)  
-    - [6. AppWorld (Experimental)](#6-appworld-experimental)  
+    - [1. WebShop](#1-webshop)
+    - [2. Search](#2-search)  
+    - [3. AppWorld (Experimental)](#3-appworld-experimental)  
 - [Run Examples](#run-examples)  
   - [RL Training](#rl-training)  
     - [1. GiGPO](#1-gigpo)  
@@ -56,7 +52,6 @@ Unlike prior approaches that simply concatenate full interaction histories, `ver
     - [5. DAPO](#5-dapo)  
     - [6. GiGPO (dynamic)](#6-gigpo-dynamic)
   - [LoRA](#lora)
-  - [Prompt-based Agent with GPT-4o](#prompt-based-agent-with-gpt-4o)
 - [FAQ](#faq)
   - [1. Customize Memory Module](#1-customize-memory-module)
   - [2. Data Preparation](#2-data-preparation)
@@ -80,7 +75,7 @@ Unlike prior approaches that simply concatenate full interaction histories, `ver
 
 - **Scalable for Very Long-Horizon Optimization**
 
-  Prior works like [RAGEN](https://github.com/RAGEN-AI/RAGEN) and [Search-R1](https://github.com/PeterGriffinJin/Search-R1) concatenate the entire history of states and responses. This causes the context length to grow rapidly with the number of turns, making them difficult to scale to long-horizon scenarios. In contrast, `verl-agent` constructs inputs step-by-step. Each input is concise and customizable. This design keeps the context length almost constant over time, making `verl-agent` highly scalable for long-horizon scenarios (e.g., 30–50 steps in ALFWorld) without running into token limits or inefficiency.
+  Prior works like [RAGEN](https://github.com/RAGEN-AI/RAGEN) and [Search-R1](https://github.com/PeterGriffinJin/Search-R1) concatenate the entire history of states and responses. This causes the context length to grow rapidly with the number of turns, making them difficult to scale to long-horizon scenarios. In contrast, `verl-agent` constructs inputs step-by-step. Each input is concise and customizable. This design keeps the context length almost constant over time, making `verl-agent` highly scalable for long-horizon scenarios without running into token limits or inefficiency.
   
 - **Parallelized Gym-Style Environments and Group Environments**
 
@@ -100,7 +95,7 @@ Unlike prior approaches that simply concatenate full interaction histories, `ver
 
 - **Rich Suite of Environments**
   
-  `verl-agent` offers a diverse set of interactive environments including [Search-R1](https://github.com/PeterGriffinJin/Search-R1) experiment, embodied AI environments like [ALFWorld](https://github.com/alfworld/alfworld), visual games such as [Sokoban](https://github.com/mpSchrader/gym-sokoban) and [Gym Cards](https://github.com/RL4VLM/RL4VLM/blob/main/gym-cards/README.md), and digital interface control tasks like [WebShop](https://github.com/princeton-nlp/WebShop) and [AppWorld](https://github.com/stonybrooknlp/appworld/) (experimental). 
+  `verl-agent` offers a focused set of interactive environments including the [Search-R1](https://github.com/PeterGriffinJin/Search-R1) experiment, digital interface control tasks like [WebShop](https://github.com/princeton-nlp/WebShop), and [AppWorld](https://github.com/stonybrooknlp/appworld/) (experimental). 
 
 - **Diverse RL Algorithms**
 
@@ -111,13 +106,8 @@ Unlike prior approaches that simply concatenate full interaction histories, `ver
 
 | Algorithm          | Task         | Model      | Success Rate (Paper) | Training Log |
 |-------------------|--------------|--------------------------|-----------------------|-------------------------|
-| GiGPO | ALFWorld     | Qwen2.5-1.5B-Instruct    | 86.7%   |  [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/78zz4sc9) |
-| GiGPO | ALFWorld     | Qwen2.5-7B-Instruct      | 90.8%   |  [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/78zz4sc9) |
 | GiGPO | WebShop      | Qwen2.5-1.5B-Instruct    | 67.4%   |  [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/zfnvpvxe) |
 | GiGPO | WebShop      | Qwen2.5-7B-Instruct      | 75.2%   |  [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/zfnvpvxe) |
-| GiGPO | Sokoban [6x6]| Qwen2.5-VL-3B-Instruct   | 81.0%   | [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/xm92tyea) |
-| GiGPO | EZPoints     | Qwen2.5-VL-3B-Instruct   | 100.0%  |  [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/k0y51zei) |
-| GiGPO | NumberLine   | Qwen2-VL-2B-Instruct     | 100.0%  | [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/81qzsc3n) |
 
 
 <table border="1" cellspacing="0" cellpadding="5">
@@ -200,29 +190,7 @@ pip3 install vllm==0.8.5
 > ⚠️ **Important:** 
 To run an agent in any of these environments, you must first install and configure the corresponding environment. We strongly recommend installing ***each environment in its own dedicated conda environment*** to avoid potential package version conflicts.
 
-### 1. ALFWorld
-Install with pip:
-```bash
-pip3 install gymnasium==0.29.1
-pip3 install stable-baselines3==2.6.0
-pip install alfworld
-pip install vllm==0.8.5
-```
-
-Download PDDL & Game files and pre-trained MaskRCNN detector (will be stored in `~/.cache/alfworld/`):
-```bash
-alfworld-download -f
-```
-
-Use `--extra` to download pre-trained checkpoints and seq2seq data.
-
-Play a Textworld game:
-```bash
-alfworld-play-tw
-```
----
-
-### 2. WebShop
+### 1. WebShop
 WebShop requires Python <=3.10, so begin by creating a new `verl-agent-webshop` environment
 ```bash
 conda create -n verl-agent-webshop python==3.10 -y
@@ -252,7 +220,7 @@ The warnings can be safely ignored.
 
 ---
 
-### 3. Search
+### 2. Search
 ```bash
 cd ./agent_system/environments/env_package/search/third_party
 pip install -e .
@@ -305,23 +273,7 @@ conda activate retriever
 bash examples/search/retriever/retrieval_launch.sh > retrieval_server.log 
 ```
 
-### 4. Sokoban
-```bash
-pip install matplotlib
-pip install gym==0.26.2
-pip install gym_sokoban==0.0.6
-```
----
-### 5. Gym Cards
-
-```bash
-cd repo_root/
-pip3 install -e ./agent_system/environments/env_package/gym_cards/gym-cards/
-pip3 install gymnasium==0.29.1
-pip3 install stable-baselines3==2.6.0
-```
----
-### 6. AppWorld (Experimental)
+### 3. AppWorld (Experimental)
 Install AppWorld package
 ```bash
 cd repo_root/
@@ -358,67 +310,40 @@ GiGPO is our novel algorithm designed to support fine-grained credit assignment 
 GiGPO is fully critic-free, maintains the same GPU memory footprint and LLM rollout cost as GRPO, yet achieves significantly better training efficiency and performance.
 
 ```bash
-bash examples/gigpo_trainer/run_alfworld.sh # ALFWorld
-```
-```bash
 bash examples/gigpo_trainer/run_webshop.sh # WebShop
 ```
 ```bash
 bash examples/gigpo_trainer/run_search.sh # Search
 ```
-```bash
-bash examples/gigpo_trainer/run_sokoban.sh # Sokoban
-```
 ### 2. GRPO
 GRPO is a critic-free algorithm that estimates relative advantages based on a group of full episode trajectories.
-```bash
-bash examples/grpo_trainer/run_alfworld.sh # ALFWorld
-```
 ```bash
 bash examples/grpo_trainer/run_webshop.sh # WebShop
 ```
 ### 3. PPO
 PPO is a classic actor-critic algorithm that updates the policy using a clipped objective to ensure stable learning. It requires a separate value network (critic) to estimate state values.
 ```bash
-bash examples/ppo_trainer/run_alfworld.sh # ALFWorld
-```
-```bash
 bash examples/ppo_trainer/run_webshop.sh # WebShop
 ```
 ### 4. RLOO
 For RLOO, we use a leave-one-out estimate and the PPO-clip update (instead of the REINFORCE update), making it closer to [LOOP](https://arxiv.org/abs/2502.01600).
-```bash
-bash examples/rloo_trainer/run_alfworld.sh # ALFWorld
-```
 ```bash
 bash examples/rloo_trainer/run_webshop.sh # WebShop
 ```
 ### 5. DAPO
 DAPO enhances GRPO with techniques like dynamic sampling and clip-higher.
 ```bash
-bash examples/dapo_trainer/run_alfworld.sh # ALFWorld
-```
-```bash
 bash examples/dapo_trainer/run_webshop.sh # WebShop
 ```
 ### 6. GiGPO (dynamic)
 GiGPO uses dynamic sampling and clip-higher from DAPO
-```bash
-bash examples/gigpo_dynamic_trainer/run_alfworld.sh # ALFWorld
-```
 ```bash
 bash examples/gigpo_dynamic_trainer/run_webshop.sh # WebShop
 ```
 
 ## LoRA
 ```bash
-bash examples/gigpo_trainer/run_alfworld_lora.sh
-```
-
-## Prompt-based Agent with GPT-4o
-We also provide a prompt-based GPT-4o agent.
-```bash
-bash examples/prompt_agent/run_gpt4o_agent.sh
+bash examples/gigpo_trainer/run_webshop_lora.sh
 ```
 
 # FAQ
@@ -429,7 +354,7 @@ bash examples/prompt_agent/run_gpt4o_agent.sh
 Developers are encouraged to extend this module with custom memory strategies, such as dynamic summarization, selective memory retention, or external knowledge integration, to improve the handling of long-horizon interaction histories.
 
 ## 2. Data Preparation
-For most environments (e.g., AFLWorld, WebShop, Sokoban), we only use data preparation to indicate the modality, either "text" or "visual". For example, if the task is purely text-based, the data will just be an empty string "". If it involves visual input, it will be "\<image\>". As for agent input (including task instruction, observation and prompt), we follow the classical RL pipeline. That means the input of LLM agent comes from the environment's feedback through `env.step()`. In the case of search-r1 experiments where tasks are drawn from a dataset, we leverage the [env_kwargs](./examples/data_preprocess/preprocess_search_r1_dataset.py#L90) parameter to pass tasks into the environment, using: [envs.reset(kwargs=gen_batch.non_tensor_batch.pop('env_kwargs', None))](./agent_system/multi_turn_rollout/rollout_loop.py#L301).
+For most environments (e.g., WebShop), we only use data preparation to indicate the modality, either "text" or "visual". For example, if the task is purely text-based, the data will just be an empty string "". If it involves visual input, it will be "\<image\>". As for agent input (including task instruction, observation and prompt), we follow the classical RL pipeline. That means the input of LLM agent comes from the environment's feedback through `env.step()`. In the case of search-r1 experiments where tasks are drawn from a dataset, we leverage the [env_kwargs](./examples/data_preprocess/preprocess_search_r1_dataset.py#L90) parameter to pass tasks into the environment, using: [envs.reset(kwargs=gen_batch.non_tensor_batch.pop('env_kwargs', None))](./agent_system/multi_turn_rollout/rollout_loop.py#L301).
 
 ## 3. Customize Your Own Prompts  
 We adopt a simple and minimal prompt format in our implementation. For example, in the WebShop environment:
@@ -467,7 +392,7 @@ Example contributions include:
 # Acknowledgement
 
 `verl-agent` codebase is built upon [veRL](https://github.com/volcengine/verl). 
-The supported environments are adapted from [ALFWorld](https://github.com/alfworld/alfworld), [Sokoban](https://github.com/mpSchrader/gym-sokoban), [SkyRL-Gym](https://github.com/NovaSky-AI/SkyRL/tree/main/skyrl-gym), [Search-R1](https://github.com/PeterGriffinJin/Search-R1), [Gym Cards](https://github.com/RL4VLM/RL4VLM/tree/main/gym-cards), [WebShop](https://github.com/princeton-nlp/WebShop), and [AppWorld](https://github.com/stonybrooknlp/appworld). We extend our gratitude to the authors and contributors of these projects for their valuable work.
+The supported environments are adapted from [SkyRL-Gym](https://github.com/NovaSky-AI/SkyRL/tree/main/skyrl-gym), [Search-R1](https://github.com/PeterGriffinJin/Search-R1), [WebShop](https://github.com/princeton-nlp/WebShop), and [AppWorld](https://github.com/stonybrooknlp/appworld). We extend our gratitude to the authors and contributors of these projects for their valuable work.
 
 We would also like to thank the following contributors for their specific improvements to this project: WebShop bug fix ([@YSLIU627](https://github.com/YSLIU627)), GSPO support ([@MakeKJ](https://github.com/MakeKJ)).
 

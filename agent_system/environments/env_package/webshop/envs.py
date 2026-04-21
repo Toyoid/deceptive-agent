@@ -248,7 +248,7 @@ def build_webshop_envs(
     is_train: bool = True,
     env_kwargs: dict = None,
 ):
-    """Mirror *build_sokoban_envs* so higher‑level code can swap seamlessly."""
+    """Build a vectorized WebShop environment wrapper."""
     return WebshopMultiProcessEnv(
         seed=seed,
         env_num=env_num,

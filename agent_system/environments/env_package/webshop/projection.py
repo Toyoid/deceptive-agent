@@ -38,7 +38,7 @@ def webshop_projection(actions: List[str]):
         try:
             if start_idx == -1 or end_idx == -1:
                 # If we can't find a valid <action>...</action> block, mark as invalid
-                actions[i] = actions[i][-20:]  # 0 is invalid action for Sokoban
+                actions[i] = actions[i][-20:]
                 continue
 
             # Extract just the content between the tags

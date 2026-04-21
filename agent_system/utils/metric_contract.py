@@ -1,5 +1,4 @@
-# Copyright 2025 Nanyang Technological University (NTU), Singapore
-# and the verl-agent (GiGPO) team.
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .search import *
-from .deceptive_search import *
-from .cheatshop import *
-from .webshop import *
-from .appworld import *
+"""
+Shared contract for environment-side episode metric logging.
 
-DEFAULT_SYSTEM_PROMPT = "You are a helpful and harmless assistant. "
+- ``*_rate`` keys are logged as scalar env behavioral metrics.
+- ``episode_metric/<name>`` keys are treated as per-trajectory episode metrics
+  and reduced by the unified trainer logger into
+  ``episode/<name>/{mean,max,min}``.
+"""
+
+
+EPISODE_METRIC_PREFIX = "episode_metric/"

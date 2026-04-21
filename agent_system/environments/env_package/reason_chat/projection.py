@@ -1,5 +1,4 @@
-# Copyright 2025 Beihang University (BUAA), China
-# and myxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx team.
+# Copyright 2026 Hanxiao Li, Beihang University
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,18 +14,13 @@
 
 from typing import Dict, List, Tuple
 import re
+from agent_system.utils.reason_answer_format import parse_reason_answer
 
 
-_THINK_BLOCK = re.compile(r"<think>(.*?)</think>", flags=re.IGNORECASE | re.DOTALL)
-_ANSWER_BLOCK = re.compile(r"<answer>(.*?)</answer>", flags=re.IGNORECASE | re.DOTALL)
 _THINK_OPEN = re.compile(r"<think>", flags=re.IGNORECASE)
 _THINK_CLOSE = re.compile(r"</think>", flags=re.IGNORECASE)
 _ANSWER_OPEN = re.compile(r"<answer>", flags=re.IGNORECASE)
 _ANSWER_CLOSE = re.compile(r"</answer>", flags=re.IGNORECASE)
-
-
-def _strip_block(match: re.Match | None) -> str:
-    return match.group(1).strip() if match else ""
 
 
 def reason_chat_projection(actions: List[str]) -> Tuple[List[Dict[str, str]], List[int]]:
@@ -47,8 +41,8 @@ def reason_chat_projection(actions: List[str]) -> Tuple[List[Dict[str, str]], Li
 
     Each projected action is a dict:
         {
-            "reason": "<think> block content or ''>",
-            "answer": "<answer> block or tail text>",
+            "reason": "<think> block content or ''",
+            "answer": "<answer> block or tail text",
             "raw_text": "<full original action>",
         }
     """
@@ -57,36 +51,23 @@ def reason_chat_projection(actions: List[str]) -> Tuple[List[Dict[str, str]], Li
     valids: List[int] = [1] * len(actions)
 
     for idx, raw_action in enumerate(actions):
-        raw_text = raw_action if isinstance(raw_action, str) else str(raw_action)
-        text = raw_text.strip()
-        think_match = _THINK_BLOCK.search(text)
-        answer_match = _ANSWER_BLOCK.search(text)
-
-        thought = _strip_block(think_match)
-
-        if answer_match:
-            answer = _strip_block(answer_match)
-        elif think_match:
-            # Whatever follows the closing </think> is treated as the user-facing answer.
-            answer = text[think_match.end():].strip()
-        else:
-            answer = text  # best-effort fallback for diagnostics
+        parsed_action = parse_reason_answer(raw_action)
 
         payload = {
-            "reason": thought,
-            "answer": answer,
-            "raw_action": text,
+            "reason": parsed_action.reason,
+            "answer": parsed_action.answer,
+            "raw_action": parsed_action.text,
         }
         projected.append(payload)
 
         # --- Validity checks -------------------------------------------------
-        stripped = text.lstrip()
+        stripped = parsed_action.text.lstrip()
         think_open = len(_THINK_OPEN.findall(text))
         think_close = len(_THINK_CLOSE.findall(text))
         answer_open = len(_ANSWER_OPEN.findall(text))
         answer_close = len(_ANSWER_CLOSE.findall(text))
 
-        if not think_match:
+        if not parsed_action.reason:
             valids[idx] = 0
         elif not stripped.lower().startswith("<think>"):
             valids[idx] = 0

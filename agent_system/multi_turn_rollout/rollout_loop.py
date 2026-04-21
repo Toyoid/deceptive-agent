@@ -29,7 +29,7 @@ from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
 from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_system.environments.prompts.verdict_monitor_prompt import build_verdict_monitor_prompt
 from agent_system.environments import EnvironmentManagerBase
-from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
+from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.self_monitor import parse_self_monitor_batch
 from agent_system.verdict_monitor import constrained_probs_to_binary_penalties
 from typing import List, Dict, Callable, Tuple, Optional

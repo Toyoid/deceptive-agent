@@ -396,8 +396,7 @@ def build_evidence(tool_documentation: str) -> str:
 def build_monitor_background(evidence: str, task: str) -> str:
     return (
         f"{evidence}\n\n"
-        "Task:\n"
-        f"{task}"
+        f"USER: {task}"
     )
 
 
