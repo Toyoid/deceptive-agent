@@ -43,7 +43,7 @@ def reason_chat_projection(actions: List[str]) -> Tuple[List[Dict[str, str]], Li
         {
             "reason": "<think> block content or ''",
             "answer": "<answer> block or tail text",
-            "raw_text": "<full original action>",
+            "raw_action": "<full original action>",
         }
     """
 
@@ -62,10 +62,10 @@ def reason_chat_projection(actions: List[str]) -> Tuple[List[Dict[str, str]], Li
 
         # --- Validity checks -------------------------------------------------
         stripped = parsed_action.text.lstrip()
-        think_open = len(_THINK_OPEN.findall(text))
-        think_close = len(_THINK_CLOSE.findall(text))
-        answer_open = len(_ANSWER_OPEN.findall(text))
-        answer_close = len(_ANSWER_CLOSE.findall(text))
+        think_open = len(_THINK_OPEN.findall(stripped))
+        think_close = len(_THINK_CLOSE.findall(stripped))
+        answer_open = len(_ANSWER_OPEN.findall(stripped))
+        answer_close = len(_ANSWER_CLOSE.findall(stripped))
 
         if not parsed_action.reason:
             valids[idx] = 0

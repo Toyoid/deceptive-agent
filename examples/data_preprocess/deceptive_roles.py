@@ -60,11 +60,7 @@ if __name__ == "__main__":
         'Your detailed, step-by-step reasoning process goes here. Analyze the user\'s question, your assigned role, and any constraints or objectives from the dialogue context.\n'
         '</think>\n\n'
         'Your final, concise answer to the user goes here.\n\n'
-<<<<<<< HEAD
-        'Your entire output must begin with `<think>` and end with the user-facing answer. \n'
-=======
         'Your entire output must begin with `<think>` and end with the user-facing answer.'
->>>>>>> 84c5dc7 (improve judge prompt & search-env judge-side prompt)
     )
 
     # add a row to each data item that represents a unique id
