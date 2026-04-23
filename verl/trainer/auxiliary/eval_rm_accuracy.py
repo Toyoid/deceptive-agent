@@ -29,6 +29,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from agent_system.utils.reason_answer_format import extract_visible_answer
 
@@ -95,11 +96,20 @@ def load_sequence_rm(model_path: str, tokenizer_path: str | None, trust_remote_c
     return tokenizer, model, device
 
 
-def score_texts(tokenizer, model, device: str, texts: list[str], batch_size: int, max_length: int | None, score_index: int) -> np.ndarray:
+def score_texts(
+    tokenizer,
+    model,
+    device: str,
+    texts: list[str],
+    batch_size: int,
+    max_length: int | None,
+    score_index: int,
+    desc: str,
+) -> np.ndarray:
     import torch
 
     scores: list[np.ndarray] = []
-    for start in range(0, len(texts), batch_size):
+    for start in tqdm(range(0, len(texts), batch_size), desc=desc):
         batch_texts = texts[start : start + batch_size]
         inputs = tokenizer(
             batch_texts,
@@ -168,8 +178,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         for prompt, response in zip(df["prompt"], df["response_1"])
     ]
 
-    score_0 = score_texts(tokenizer, model, device, texts_0, args.batch_size, args.max_length, args.score_index)
-    score_1 = score_texts(tokenizer, model, device, texts_1, args.batch_size, args.max_length, args.score_index)
+    score_0 = score_texts(tokenizer, model, device, texts_0, args.batch_size, args.max_length, args.score_index, "Scoring response_0")
+    score_1 = score_texts(tokenizer, model, device, texts_1, args.batch_size, args.max_length, args.score_index, "Scoring response_1")
 
     result: dict[str, Any] = {
         "data_path": args.data_path,
