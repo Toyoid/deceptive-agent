@@ -115,7 +115,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
     trainer.nnodes_monitor=1 \
-    trainer.judge_pool_mode='seperate' \
+    trainer.judge_pool_mode='separate' \
     trainer.n_gpus_per_node_judge=2 \
     trainer.nnodes_judge=1 \
     trainer.save_freq=-1 \
