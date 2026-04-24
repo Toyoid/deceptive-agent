@@ -27,7 +27,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pprint import pprint
-from typing import Dict, Optional, Type
+from typing import Any, Dict, Optional, Type
 
 import math
 import numpy as np
@@ -75,7 +75,7 @@ from verl.workers.rollout.async_server import AsyncLLMServerManager
 from gigpo import core_gigpo
 
 from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
-from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
+from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.self_monitor import compute_self_monitor_metrics, compute_self_monitor_metrics_by_source
 
 WorkerType = Type[Worker]
@@ -100,6 +100,7 @@ class Role(Enum):
     MonitorRolloutRef = 11  # rollout + training + reference policy (usually with LoRA) for monitor model
     Judge = 12  # judge model for constrained-token scoring tasks (e.g., monitor critique validity)
     VerdictMonitor = 13  # external trajectory-level verdict monitor backed by constrained-token scoring
+    AuxRewardModel = 14  # optional dedicated RM used only by auxiliary prompt-only training
 
 
 class AdvantageEstimator(str, Enum):
@@ -527,6 +528,8 @@ class RayPPOTrainer:
         self.resource_pool_manager = resource_pool_manager
         self.use_reference_policy = Role.RefPolicy in role_worker_mapping
         self.use_rm = Role.RewardModel in role_worker_mapping
+        self.use_auxiliary = bool(config.auxiliary.enable)
+        self.use_auxiliary_rm = Role.AuxRewardModel in role_worker_mapping
         self.use_judge = Role.Judge in role_worker_mapping
         self.use_verdict_monitor = Role.VerdictMonitor in role_worker_mapping
         monitor_roles = {Role.Monitor, Role.MonitorInfer, Role.MonitorRollout, Role.MonitorRolloutRef}
@@ -534,6 +537,7 @@ class RayPPOTrainer:
         self.use_self_monitor = bool(config.self_monitor.enable)
         train_monitor_roles = {Role.Monitor, Role.MonitorRollout, Role.MonitorRolloutRef}
         self.enable_train_monitor = bool(train_monitor_roles & role_worker_mapping.keys())
+
         if self.use_monitor:
             self.monitor_role: Role = next(iter(monitor_roles & set(self.role_worker_mapping.keys())))
             if self.monitor_role == Role.MonitorInfer:
@@ -601,9 +605,20 @@ class RayPPOTrainer:
         self.log_distributions = self.config.trainer.get("log_distributions", False)
         self._initial_distributions = None
         self._initial_distributions_step = None
+        self.actor_rollout_wg = None
+        self.critic_wg = None
+        self.ref_policy_wg = None
+        self.rm_wg = None
+        self.auxiliary = None
+        self.aux_rm_wg = None
+        self.monitor_wg = None
+        self.monitor_ref_policy_wg = None
+        self.judge_wg = None
+        self.verdict_monitor_wg = None
 
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
+        self._configure_optimizer_step_budgets()
 
     def _validate_config(self):  # TODO-monitor: add monitor config validation
         config = self.config
@@ -617,6 +632,7 @@ class RayPPOTrainer:
                 "actor_rollout_ref.actor": "micro_batch_size",
                 "critic": "micro_batch_size",
                 "reward_model": "micro_batch_size",
+                "auxiliary.reward_model": "micro_batch_size",
                 "actor_rollout_ref.ref": "log_prob_micro_batch_size",
                 "actor_rollout_ref.rollout": "log_prob_micro_batch_size",
             }
@@ -661,6 +677,13 @@ class RayPPOTrainer:
         # Check for reward model micro-batch size conflicts
         if config.reward_model.enable and not config.reward_model.use_dynamic_bsz:
             check_mutually_exclusive(config.reward_model.micro_batch_size, config.reward_model.micro_batch_size_per_gpu, "reward_model")
+
+        if config.auxiliary.enable and not config.auxiliary.reward_model.use_main and not config.auxiliary.reward_model.use_dynamic_bsz:
+            check_mutually_exclusive(
+                config.auxiliary.reward_model.micro_batch_size,
+                config.auxiliary.reward_model.micro_batch_size_per_gpu,
+                "auxiliary.reward_model",
+            )
 
         # Actor
         # check if train_batch_size is larger than ppo_mini_batch_size
@@ -739,6 +762,71 @@ class RayPPOTrainer:
         if config.algorithm.lagrangian.enable and not (config.monitor_rollout_ref.enable or config.self_monitor.enable or config.verdict_monitor.enable):
             raise ValueError("Lagrangian RL requires external monitor, self_monitor, or verdict_monitor to be enabled.")
 
+        if config.auxiliary.enable:
+            auxiliary_adv_estimator = config.algorithm.adv_estimator
+            auxiliary_incompatible_estimators = {
+                AdvantageEstimator.GAE: (
+                    "auxiliary.enable does not support algorithm.adv_estimator=gae because "
+                    "the prompt-only auxiliary substep does not compute critic values or update the critic."
+                ),
+                AdvantageEstimator.REMAX: (
+                    "auxiliary.enable does not support algorithm.adv_estimator=remax because "
+                    "the prompt-only auxiliary substep does not build reward baselines from an extra deterministic rollout."
+                ),
+                AdvantageEstimator.GiGPO: (
+                    "auxiliary.enable does not support algorithm.adv_estimator=gigpo because "
+                    "the prompt-only auxiliary substep does not produce env-structured step_rewards/anchor_obs inputs."
+                ),
+            }
+
+            if auxiliary_adv_estimator in auxiliary_incompatible_estimators:
+                raise ValueError(auxiliary_incompatible_estimators[auxiliary_adv_estimator])
+
+            if auxiliary_adv_estimator == AdvantageEstimator.GRPO_PASSK and config.auxiliary.rollout.n < 2:
+                raise ValueError(
+                    "auxiliary.enable with algorithm.adv_estimator=grpo_passk requires auxiliary.rollout.n >= 2 "
+                    "because Pass@k needs at least two sampled responses per prompt."
+                )
+
+            if config.actor_rollout_ref.rollout.mode == "async":
+                raise ValueError(
+                    "auxiliary.enable does not support actor_rollout_ref.rollout.mode=async in v1. "
+                    "Auxiliary prompt-only updates call generate_sequences() directly, while the async "
+                    "rollout worker only supports server-managed execution."
+                )
+
+            if config.monitor_rollout_ref.enable or config.self_monitor.enable or config.verdict_monitor.enable:
+                raise ValueError(
+                    "auxiliary.enable is intentionally incompatible with monitor/self-monitor/verdict-monitor modes, "
+                    "as they are designed to correspond to different baselines for safety alignment. "
+                )
+
+            if config.algorithm.lagrangian.enable:
+                raise ValueError(
+                    "auxiliary.enable does not support algorithm.lagrangian.enable because "
+                    "the auxiliary branch is RM-scored and does not participate in the monitor-cost path."
+                )
+
+            if config.auxiliary.batch_size <= 0:
+                raise ValueError("auxiliary.batch_size must be greater than 0.")
+
+            if config.auxiliary.rollout.n <= 0:
+                raise ValueError("auxiliary.rollout.n must be greater than 0.")
+
+            if config.auxiliary.data.train_files is None:
+                raise ValueError("auxiliary.data.train_files must be provided when auxiliary.enable=True.")
+
+            if not config.auxiliary.data.return_raw_chat:
+                raise ValueError(
+                    "auxiliary.data.return_raw_chat must be True so auxiliary reward-model scoring can rebuild "
+                    "chat inputs and optionally strip hidden reasoning before scoring."
+                )
+
+            if config.auxiliary.reward_model.use_main and not config.reward_model.enable:
+                raise ValueError(
+                    "auxiliary.reward_model.use_main=True requires reward_model.enable=True so the main RM worker exists."
+                )
+
         print("[validate_config] All configuration checks passed successfully!")
 
     def _create_dataloader(self, train_dataset, val_dataset, collate_fn, train_sampler):
@@ -805,6 +893,27 @@ class RayPPOTrainer:
                     self.config.critic.optim.total_training_steps = total_training_steps
         except Exception as e:
             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
+
+    def _configure_optimizer_step_budgets(self):
+        """Account for auxiliary substeps without changing the main-step training loop.
+
+        `self.total_training_steps` stays aligned with main env steps so progress bars,
+        validation cadence, and checkpoint cadence remain intuitive. When auxiliary is
+        enabled, however, the actor receives one extra optimizer update after each active
+        main step, so its scheduler budget must include those appended substeps.
+        """
+        self.total_actor_training_steps = self.total_training_steps
+        if self.use_auxiliary:
+            aux_updates = max(0, self.total_training_steps - self.config.auxiliary.start_step + 1)
+            self.total_actor_training_steps += aux_updates
+
+        try:
+            OmegaConf.set_struct(self.config, True)
+            with open_dict(self.config):
+                if OmegaConf.select(self.config, "actor_rollout_ref.actor.optim"):
+                    self.config.actor_rollout_ref.actor.optim.total_training_steps = self.total_actor_training_steps
+        except Exception as e:
+            print(f"Warning: Could not update actor total_training_steps for auxiliary scheduling. Error: {e}")
 
     def calibrate_rm_stats_if_enabled(self):
         """Run a short rollout-only loop to pre-compute RM normalization stats."""
@@ -1343,6 +1452,20 @@ class RayPPOTrainer:
                 print(f"  - RayClassWithInitArgs: {type(rm_cls).__name__}")
                 print(f"  - Resource Pool: {id(resource_pool)}")
 
+        if self.use_auxiliary_rm:
+            resource_pool = self.resource_pool_manager.get_resource_pool(Role.AuxRewardModel)
+            aux_rm_cls = RayClassWithInitArgs(
+                self.role_worker_mapping[Role.AuxRewardModel],
+                config=self.config.auxiliary.reward_model,
+            )
+            self.resource_pool_to_cls[resource_pool]["aux_rm"] = aux_rm_cls
+            if verbose:
+                print("AuxiliaryRewardModel:")
+                print(f"  - Role: {Role.AuxRewardModel}")
+                print(f"  - Worker Class: {self.role_worker_mapping[Role.AuxRewardModel]}")
+                print(f"  - RayClassWithInitArgs: {type(aux_rm_cls).__name__}")
+                print(f"  - Resource Pool: {id(resource_pool)}")
+
         # create a monitor model if enabled
         if self.use_monitor:
             resource_pool = self.resource_pool_manager.get_resource_pool(self.monitor_role)
@@ -1461,6 +1584,21 @@ class RayPPOTrainer:
             self.rm_wg.init_model()
             # ISSUE: Some weights of LlamaForTokenClassification were not initialized from the model checkpoint at OpenRLHF/Llama-3-8b-rm-700k and are newly initialized: ['score.bias', 'score.weight']
 
+        if self.use_auxiliary_rm:
+            self.aux_rm_wg = all_wg["aux_rm"]
+            if verbose:
+                print("Initializing aux_rm_wg:")
+                print(f"  - Type: {type(self.aux_rm_wg).__name__}")
+                print(f"  - World size: {self.aux_rm_wg.world_size}")
+                print(
+                    f"  - Worker names: {self.aux_rm_wg.worker_names[:3]}..."
+                    if len(self.aux_rm_wg.worker_names) > 3
+                    else f"  - Worker names: {self.aux_rm_wg.worker_names}"
+                )
+            self.aux_rm_wg.init_model()
+        else:
+            self.aux_rm_wg = None
+
         if self.use_monitor:
             if self.use_monitor_ref_policy and not self.ref_in_monitor:
                 self.monitor_ref_policy_wg = all_wg["monitor_ref"]
@@ -1524,6 +1662,37 @@ class RayPPOTrainer:
                 worker_group=self.actor_rollout_wg,
             )
 
+    def _init_auxiliary(self):
+        if not self.use_auxiliary or self.auxiliary is not None:
+            return
+
+        from verl.trainer.auxiliary import AuxiliaryCoordinator
+
+        rm_wg = self.rm_wg if self.config.auxiliary.reward_model.use_main else self.aux_rm_wg
+        if rm_wg is None:
+            raise ValueError("Auxiliary RM worker is not initialized. Check auxiliary.reward_model.use_main.")
+
+        self.auxiliary = AuxiliaryCoordinator(
+            config=self.config,
+            tokenizer=self.tokenizer,
+            processor=self.processor,
+            actor_rollout_wg=self.actor_rollout_wg,
+            ref_policy_wg=self.ref_policy_wg if self.use_reference_policy and not self.ref_in_actor else None,
+            rm_wg=rm_wg,
+            balance_batch_fn=self._balance_batch,
+            timer_fn=_timer,
+            adjust_batch_fn=adjust_batch,
+            compute_response_mask_fn=compute_response_mask,
+            compute_log_prob_metrics_fn=compute_log_prob_metrics,
+            compute_advantage_fn=compute_advantage,
+            apply_kl_penalty_fn=apply_kl_penalty,
+            compute_data_metrics_fn=compute_data_metrics,
+            reduce_metrics_fn=reduce_metrics,
+            use_reference_policy=self.use_reference_policy,
+            ref_in_actor=self.ref_in_actor,
+            kl_ctrl_in_reward=getattr(self, "kl_ctrl_in_reward", None),
+        )
+
     def _save_checkpoint(self):
         # path: given_path + `/global_step_{global_steps}` + `/actor`
         local_global_step_folder = os.path.join(self.config.trainer.default_local_dir, f"global_step_{self.global_steps}")
@@ -1555,7 +1724,9 @@ class RayPPOTrainer:
 
         # save dataloader
         dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
-        dataloader_state_dict = self.train_dataloader.state_dict()
+        dataloader_state_dict = {"main": self.train_dataloader.state_dict()}
+        if self.auxiliary is not None:
+            dataloader_state_dict["auxiliary"] = self.auxiliary.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
 
         # latest checkpointed iteration tracker (for atomic usage)
@@ -1612,7 +1783,13 @@ class RayPPOTrainer:
         dataloader_local_path = os.path.join(global_step_folder, "data.pt")
         if os.path.exists(dataloader_local_path):
             dataloader_state_dict = torch.load(dataloader_local_path, weights_only=False)
-            self.train_dataloader.load_state_dict(dataloader_state_dict)
+            if isinstance(dataloader_state_dict, dict) and "main" in dataloader_state_dict:
+                self.train_dataloader.load_state_dict(dataloader_state_dict["main"])
+                if self.auxiliary is not None:
+                    self.auxiliary.load_state_dict(dataloader_state_dict.get("auxiliary"))
+            else:
+                # Backward compatibility for checkpoints saved before auxiliary state existed.
+                self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
             print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
 
@@ -1647,6 +1824,11 @@ class RayPPOTrainer:
         )
 
         self.global_steps = 0
+
+        # Auxiliary is initialized here instead of inside __init__ because it depends on
+        # worker groups that are only available after init_workers(). Keeping the
+        # coordinator as a sidecar preserves the canonical main training loop.
+        self._init_auxiliary()
 
         # load checkpoint before doing anything
         self._load_checkpoint()
@@ -2059,6 +2241,18 @@ class RayPPOTrainer:
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
 
+                    if self.auxiliary is not None:
+                        # Auxiliary is an appended, source-pure plugin. It owns its
+                        # own prompt-only rollout, RM scoring, and simplified update
+                        # substep without changing the canonical main env loop above.
+                        aux_result = self.auxiliary.run_step(
+                            main_step=self.global_steps,
+                            timing_raw=timing_raw,
+                        )
+                        metrics.update(aux_result.metrics)
+                    else:
+                        aux_result = None
+
                     # ==================================================
                     #       Rollout Logging & Validation & Saving
                     # ==================================================
@@ -2118,6 +2312,10 @@ class RayPPOTrainer:
                 metrics.update(
                     {
                         "training/global_step": self.global_steps,
+                        "training/actor_optimizer_step": (
+                            self.global_steps
+                            + (self.auxiliary.auxiliary_steps_completed(self.global_steps) if self.auxiliary is not None else 0)
+                        ),
                         "training/epoch": epoch,
                     }
                 )
@@ -2148,6 +2346,8 @@ class RayPPOTrainer:
 
                 n_gpus = self.resource_pool_manager.get_n_gpus()
                 total_num_tokens = sum(batch.meta_info["global_token_num"])
+                if aux_result is not None:
+                    total_num_tokens += aux_result.total_num_tokens
                 if self.use_monitor and "global_token_num" in monitor_batch.meta_info:
                     total_num_tokens += sum(monitor_batch.meta_info["global_token_num"])
                 metrics.update(compute_throughout_metrics(total_num_tokens=total_num_tokens, timing_raw=timing_raw, n_gpus=n_gpus))

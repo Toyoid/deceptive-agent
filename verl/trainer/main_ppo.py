@@ -197,6 +197,15 @@ class TaskRunner:
             Role.Critic: actor_pool_id,
         }
 
+        def build_reward_model_remote_cls(rm_config):
+            if rm_config.strategy in ["fsdp", "fsdp2"]:
+                from verl.workers.fsdp_workers import RewardModelWorker
+            elif rm_config.strategy == "megatron":
+                from verl.workers.megatron_workers import RewardModelWorker
+            else:
+                raise NotImplementedError
+            return ray.remote(RewardModelWorker)
+
         # we should adopt a multi-source reward function here
         # - for rule-based rm, we directly call a reward score
         # - for model-based rm, we call a model
@@ -204,15 +213,13 @@ class TaskRunner:
         # - finally, we combine all the rewards together
         # - The reward type depends on the tag of the data
         if config.reward_model.enable:
-            if config.reward_model.strategy in ["fsdp", "fsdp2"]:
-                from verl.workers.fsdp_workers import RewardModelWorker
-            elif config.reward_model.strategy == "megatron":
-                from verl.workers.megatron_workers import RewardModelWorker
-            else:
-                raise NotImplementedError
-            role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
+            role_worker_mapping[Role.RewardModel] = build_reward_model_remote_cls(config.reward_model)
             # mapping[Role.RewardModel] = monitor_pool_id if config.monitor_rollout_ref.enable else actor_pool_id
             mapping[Role.RewardModel] = actor_pool_id
+
+        if config.auxiliary.enable and not config.auxiliary.reward_model.use_main:
+            role_worker_mapping[Role.AuxRewardModel] = build_reward_model_remote_cls(config.auxiliary.reward_model)
+            mapping[Role.AuxRewardModel] = actor_pool_id
 
         # use reference model
         if config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss:

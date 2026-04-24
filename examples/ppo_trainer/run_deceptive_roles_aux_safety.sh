@@ -10,18 +10,33 @@ export HF_HUB_OFFLINE=1
 export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
-# Data preparation scripts are available in ``examples/data_preprocess``.
+# Main-task data preparation.
 python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles
+
+# Auxiliary prompt-only safety data preparation.
+python3 -m verl.trainer.auxiliary.preprocess \
+    prompt_only \
+    --dataset PKU-Alignment/PKU-SafeRLHF \
+    --split train \
+    --local_dir $DATA_ROOT/pku_safe_rlhf/prompt_only \
+    --data_source pku_safe_rlhf
 
 train_files=$DATA_ROOT/deceptive_roles/train.parquet
 test_files=$DATA_ROOT/deceptive_roles/test.parquet
+aux_train_files=$DATA_ROOT/pku_safe_rlhf/prompt_only/train.parquet
 
-# Vanilla RL training
+# Main-task RL training with appended prompt-only auxiliary safety RL.
+# The auxiliary data mix ratio is set by
+# rollout sample counts rather than a separate mix_ratio knob:
+#   aux_ratio = (auxiliary.batch_size * auxiliary.rollout.n) /
+#               (data.train_batch_size * env.rollout.n + auxiliary.batch_size * auxiliary.rollout.n)
+# With the values below: aux_ratio = (48 * 8) / (48 * 8 + 48 * 8) = 50%.
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=94 \
+    data.train_batch_size=48 \
     data.val_batch_size=188 \
     data.max_prompt_length=512 \
     data.max_response_length=2048 \
@@ -56,6 +71,18 @@ python3 -m verl.trainer.main_ppo \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
+    auxiliary.enable=True \
+    auxiliary.start_step=1 \
+    auxiliary.batch_size=48 \
+    auxiliary.data.train_files="$aux_train_files" \
+    auxiliary.data.max_prompt_length=512 \
+    auxiliary.data.max_response_length=2048 \
+    auxiliary.data.filter_overlong_prompts=True \
+    auxiliary.data.truncation='error' \
+    auxiliary.data.return_raw_chat=True \
+    auxiliary.rollout.n=8 \
+    auxiliary.reward_model.use_main=True \
+    auxiliary.reward_model.strip_thinking=True \
     algorithm.use_kl_in_reward=False \
     env.env_name=ReasonChat \
     env.seed=0 \
@@ -69,7 +96,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=6 \
     trainer.rollout_data_dir=auto \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen3_8b' \
+    trainer.experiment_name='grpo_qwen3_8b_aux_safety' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \

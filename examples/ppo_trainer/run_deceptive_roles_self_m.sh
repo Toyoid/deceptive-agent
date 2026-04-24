@@ -51,14 +51,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
-    critic.optim.lr=1e-5 \
-    critic.model.use_remove_padding=True \
-    critic.optim.lr_warmup_steps_ratio=0.05 \
-    critic.model.path="$self_monitor_sft_ckpt" \
-    critic.model.enable_gradient_checkpointing=True \
-    critic.ppo_micro_batch_size_per_gpu=1 \
-    critic.model.fsdp_config.param_offload=False \
-    critic.model.fsdp_config.optimizer_offload=False \
     reward_model.enable=True \
     reward_model.reward_manager=episode \
     reward_model.model.path=sfairXC/FsfairX-LLaMA3-RM-v0.1 \

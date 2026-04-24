@@ -71,6 +71,7 @@ from safetensors.torch import save_file
 from dataclasses import asdict
 import json
 
+from agent_system.utils.reason_answer_format import extract_visible_answer
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -699,7 +700,7 @@ class ActorRolloutRefWorker(Worker):
         data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
         data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
         data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
-        data.meta_info["temperature"] = self.config.rollout.temperature
+        data.meta_info["temperature"] = data.meta_info.get("temperature", self.config.rollout.temperature)
         # perform recompute log_prob
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
@@ -707,7 +708,7 @@ class ActorRolloutRefWorker(Worker):
                 output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)
             output = DataProto.from_dict(
                 tensors={"old_log_probs": output, "entropys": entropys},
-                meta_info={"temperature": self.config.rollout.temperature},
+                meta_info={"temperature": data.meta_info["temperature"]},
             )
             output = self.ulysses_sharding_manager.postprocess_data(output)
 
@@ -741,7 +742,7 @@ class ActorRolloutRefWorker(Worker):
 
         micro_batch_size = self.config.ref.log_prob_micro_batch_size_per_gpu
         data.meta_info["micro_batch_size"] = micro_batch_size
-        data.meta_info["temperature"] = self.config.rollout.temperature
+        data.meta_info["temperature"] = data.meta_info.get("temperature", self.config.rollout.temperature)
         data.meta_info["max_token_len"] = self.config.ref.log_prob_max_token_len_per_gpu
         data.meta_info["use_dynamic_bsz"] = self.config.ref.log_prob_use_dynamic_bsz
         with self.ulysses_sharding_manager:
@@ -1247,15 +1248,17 @@ class RewardModelWorker(Worker):
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.model.path, use_shm=use_shm)
 
+        trust_remote_code = config.model.get("trust_remote_code", False)
+        self.tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
+
         if self.config.model.input_tokenizer is None:
             self._do_switch_chat_template = False
+            self.input_tokenizer = self.tokenizer  # we reserve input_tokenizer for stripping thinking pad in func:_switch_chat_template()
         else:
             self._do_switch_chat_template = True
             input_tokenizer_local_path = copy_to_local(config.model.input_tokenizer, use_shm=use_shm)
-            self.input_tokenizer = hf_tokenizer(input_tokenizer_local_path, trust_remote_code=config.model.get("trust_remote_code", False))
-            self.tokenizer = hf_tokenizer(local_path, trust_remote_code=config.model.get("trust_remote_code", False))
+            self.input_tokenizer = hf_tokenizer(input_tokenizer_local_path, trust_remote_code=trust_remote_code)
 
-        trust_remote_code = config.model.get("trust_remote_code", False)
         model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
         model_config.num_labels = 1
 
@@ -1415,6 +1418,7 @@ class RewardModelWorker(Worker):
 
     def _switch_chat_template(self, data: DataProto):
         src_max_length = data.batch["attention_mask"].shape[-1]
+        strip_thinking = bool(data.meta_info.get("strip_thinking", False))
 
         src_tokenizer = self.input_tokenizer
         target_tokenizer = self.tokenizer
@@ -1424,10 +1428,16 @@ class RewardModelWorker(Worker):
 
         for i in range(data.batch.batch_size[0]):
             # extract raw prompt
+            if "raw_prompt" not in data.non_tensor_batch:
+                raise ValueError(
+                    "Reward-model chat-template switching requires `raw_prompt` in non_tensor_batch. "
+                    "Please enable `return_raw_chat=True` for this dataset."
+                )
+
             if isinstance(data.non_tensor_batch["raw_prompt"][i], list):
-                chat: list = data.non_tensor_batch["raw_prompt"][i]
+                chat: list = list(data.non_tensor_batch["raw_prompt"][i])
             else:
-                chat: list = data.non_tensor_batch["raw_prompt"][i].tolist()
+                chat: list = list(data.non_tensor_batch["raw_prompt"][i].tolist())
 
             # extract response
             response_ids = data.batch["responses"][i]
@@ -1439,6 +1449,12 @@ class RewardModelWorker(Worker):
             response = src_tokenizer.decode(valid_response_ids)
             # remove bos and eos
             response = response.replace(src_tokenizer.eos_token, "")
+            if src_tokenizer.bos_token is not None:
+                response = response.replace(src_tokenizer.bos_token, "")
+            if strip_thinking:
+                # Auxiliary safety RL scores the user-visible answer only so the RM
+                # does not learn from hidden chain-of-thought formatting.
+                response = extract_visible_answer(response)
 
             chat.append({"role": "assistant", "content": response})
 
@@ -1482,7 +1498,7 @@ class RewardModelWorker(Worker):
 
         # Support all hardwares
         data = data.to(get_torch_device().current_device())
-        if self._do_switch_chat_template:
+        if self._do_switch_chat_template or data.meta_info.get("strip_thinking", False):
             rm_data = self._switch_chat_template(data)
         else:
             rm_input_ids = data.batch["input_ids"]

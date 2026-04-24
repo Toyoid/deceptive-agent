@@ -23,7 +23,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-from agent_system.environments.metric_contract import EPISODE_METRIC_PREFIX
+from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from verl import DataProto
 from verl.utils.import_utils import deprecated
 
@@ -100,7 +100,12 @@ def compute_episode_metric_stats(
     return metrics
 
 
-def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefix: str = "") -> Dict[str, Any]:
+def compute_data_metrics(
+    batch: DataProto,
+    use_critic: bool = True,
+    metric_prefix: str = "",
+    include_episode_metrics: bool = True,
+) -> Dict[str, Any]:
     """
     Computes various metrics from a batch of data for PPO training.
 
@@ -113,6 +118,10 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefi
         use_critic: Whether to include critic-specific metrics. Defaults to True.
         metric_prefix: Optional prefix for metric keys (e.g., "monitor" -> "monitor/critic/score/mean").
                       If empty, no prefix is added (backward compatible).
+        include_episode_metrics: Whether to log environment-level episode metrics such as
+                      success rates or tool counts. Prompt-only auxiliary batches can share
+                      the score/reward/advantage metrics while intentionally skipping the
+                      env-only episode statistics.
 
     Returns:
         A dictionary of metrics including:
@@ -148,13 +157,16 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefi
 
     valid_adv = torch.masked_select(advantages, response_mask)
     valid_returns = torch.masked_select(returns, response_mask)
-    unique_traj_uid, unique_idx = np.unique(batch.non_tensor_batch['traj_uid'], return_index=True)
-
     if use_critic:
         values = batch.batch["values"]
         valid_values = torch.masked_select(values, response_mask)
         return_diff_var = torch.var(valid_returns - valid_values)
         return_var = torch.var(valid_returns)
+
+    include_episode_metrics = include_episode_metrics and metric_prefix != "monitor"
+    unique_idx = None
+    if include_episode_metrics:
+        _, unique_idx = np.unique(batch.non_tensor_batch["traj_uid"], return_index=True)
 
     metrics = {
         # score
@@ -200,11 +212,11 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefi
         # because monitor currently evaluates actor's entire trajectory of responses rather than each step.
         **(
             {
-                _key("episode/reward/mean"): 
+                _key("episode/reward/mean"):
                     batch.non_tensor_batch["episode_rewards"][unique_idx].mean().item(),
-                _key("episode/reward/max"): 
+                _key("episode/reward/max"):
                     batch.non_tensor_batch["episode_rewards"][unique_idx].max().item(),
-                _key("episode/reward/min"): 
+                _key("episode/reward/min"):
                     batch.non_tensor_batch["episode_rewards"][unique_idx].min().item(),
                 **({
                     _key("episode/trust_penalty/mean"): batch.non_tensor_batch["trust_penalties"][unique_idx].mean().item(),
@@ -230,7 +242,7 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True, metric_prefi
                     metric_prefix=metric_prefix,
                 ),
             }
-            if metric_prefix != "monitor"
+            if include_episode_metrics
             else {}
         ),
     }

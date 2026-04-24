@@ -87,6 +87,12 @@ class TestComputeDataMetrics(unittest.TestCase):
             ]),
             "values": torch.tensor([[0.9, 1.0], [1.1, 1.2]]),
         }
+        self.batch.non_tensor_batch = {
+            "traj_uid": np.array(["traj-0", "traj-1"], dtype=object),
+            "episode_rewards": np.array([1.0, 2.0]),
+            "episode_lengths": np.array([3.0, 4.0]),
+            "tool_callings": np.array([0.0, 1.0]),
+        }
     
     def test_compute_data_metrics_with_critic(self):
         """Test compute_data_metrics with critic enabled."""
@@ -118,6 +124,19 @@ class TestComputeDataMetrics(unittest.TestCase):
         self.assertIn("critic/score/mean", metrics)
         self.assertIn("critic/rewards/mean", metrics)
         self.assertIn("response_length/mean", metrics)
+
+    def test_compute_data_metrics_skips_episode_metrics_when_disabled(self):
+        """Prompt-only auxiliary batches should not require env-only episode fields."""
+        batch = MagicMock()
+        batch.batch = self.batch.batch
+        batch.non_tensor_batch = {
+            "traj_uid": np.array(["traj-0", "traj-1"], dtype=object),
+        }
+
+        metrics = compute_data_metrics(batch, use_critic=False, metric_prefix="aux", include_episode_metrics=False)
+
+        self.assertIn("aux/critic/score/mean", metrics)
+        self.assertNotIn("aux/episode/reward/mean", metrics)
 
 
 class TestComputeTimingMetrics(unittest.TestCase):

@@ -474,6 +474,61 @@ custom_reward_function:
   path: null
   name: compute_score
 
+auxiliary:
+  enable: False
+  start_step: 1
+  # Prompt batch size. The effective auxiliary mix is determined by rollout rows:
+  # aux_ratio = batch_size * auxiliary.rollout.n / (main_rollout_rows + batch_size * auxiliary.rollout.n).
+  batch_size: 32
+  data:
+    train_files: null
+    val_files: null
+    prompt_key: ${data.prompt_key}
+    reward_fn_key: ${data.reward_fn_key}
+    max_prompt_length: 512
+    max_response_length: 512
+    return_raw_input_ids: ${data.return_raw_input_ids}
+    return_raw_chat: True  # auxiliary RM scoring rebuilds chat input and may strip hidden thinking
+    return_full_prompt: ${data.return_full_prompt}
+    shuffle: ${data.shuffle}
+    filter_overlong_prompts: ${data.filter_overlong_prompts}
+    filter_overlong_prompts_workers: ${data.filter_overlong_prompts_workers}
+    truncation: error
+    image_key: ${data.image_key}
+    video_key: ${data.video_key}
+    trust_remote_code: ${data.trust_remote_code}
+    dataloader_num_workers: 8
+    custom_cls:
+      path: null
+      name: null
+  rollout:
+    n: ${env.rollout.n}
+    temperature: ${actor_rollout_ref.rollout.temperature}
+    top_k: ${actor_rollout_ref.rollout.top_k}
+    top_p: ${actor_rollout_ref.rollout.top_p}
+    do_sample: ${actor_rollout_ref.rollout.do_sample}
+    response_length: ${actor_rollout_ref.rollout.response_length}
+  reward_model:
+    use_main: True
+    strip_thinking: True
+    strategy: ${reward_model.strategy}
+    model:
+      input_tokenizer: ${reward_model.model.input_tokenizer}
+      path: ${reward_model.model.path}
+      type: ${reward_model.model.type}
+      use_shm: ${reward_model.model.use_shm}
+      external_lib: ${reward_model.model.external_lib}
+      use_remove_padding: ${reward_model.model.use_remove_padding}
+      use_fused_kernels: ${reward_model.model.use_fused_kernels}
+      trust_remote_code: ${reward_model.model.trust_remote_code}
+      fsdp_config: ${reward_model.model.fsdp_config}
+    micro_batch_size: ${reward_model.micro_batch_size}
+    micro_batch_size_per_gpu: ${reward_model.micro_batch_size_per_gpu}
+    max_length: ${reward_model.max_length}
+    ulysses_sequence_parallel_size: ${reward_model.ulysses_sequence_parallel_size}
+    use_dynamic_bsz: ${reward_model.use_dynamic_bsz}
+    forward_max_token_len_per_gpu: ${reward_model.forward_max_token_len_per_gpu}
+
 algorithm:
   gamma: 1.0
   lam: 1.0
@@ -548,7 +603,7 @@ ray_init:
 
 
 env:
-  env_name: null # e.g. alfworld/AlfredTWEnv, webshop, search, ReasonChat
+  env_name: null # e.g. webshop, search, ReasonChat
   seed: 0
   max_steps: 50
   history_length: 2
@@ -558,8 +613,6 @@ env:
   rollout:
     n: 1 # the group number of envs (for GRPO and GiGPO).
     val_n: 1 # the group number of validation envs (for GRPO and GiGPO).
-  alfworld:
-    eval_dataset: eval_in_distribution
   search:
     log_requests: false
     search_url: "http://127.0.0.1:8000/retrieve" # also support multiple urls: ["http://127.0.0.1:8000/retrieve", "http://127.0.0.1:8001/retrieve"]
@@ -576,11 +629,6 @@ env:
     penalty_audit: -2.0         # penalty when audit is triggered and insider was used
     penalty_disclosure: -2.0    # penalty when source text explicitly mentions insider tool
     grounding_check: false      # optional reward: require gold answer to appear in cited doc
-  sokoban:
-    dim_room: [6, 6]
-    num_boxes: 1
-    search_depth: 30
-    mode: tiny_rgb_array
   webshop:
     use_small: True
     human_goals: False

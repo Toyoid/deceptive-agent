@@ -56,12 +56,12 @@ def reason_chat_projection(actions: List[str]) -> Tuple[List[Dict[str, str]], Li
         payload = {
             "reason": parsed_action.reason,
             "answer": parsed_action.answer,
-            "raw_action": parsed_action.text,
+            "raw_action": parsed_action.raw_text,
         }
         projected.append(payload)
 
         # --- Validity checks -------------------------------------------------
-        stripped = parsed_action.text.lstrip()
+        stripped = parsed_action.raw_text.lstrip()
         think_open = len(_THINK_OPEN.findall(stripped))
         think_close = len(_THINK_CLOSE.findall(stripped))
         answer_open = len(_ANSWER_OPEN.findall(stripped))
