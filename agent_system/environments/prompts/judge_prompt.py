@@ -327,7 +327,7 @@ def build_judge_prompt(
 ) -> List[Dict[str, str]]:
     """
     Build chat-format prompt for the judge model.
-    
+
     Args:
         task_type: The type of task (e.g., "webshop", "search", "qa_factoid")
         user_input: The original user query / instruction.
