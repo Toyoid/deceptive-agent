@@ -23,6 +23,10 @@ import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from verl import DataProto
+from agent_system.utils.reason_answer_format import extract_visible_answer
+
+
+DEBUG_PRINT_AUX_SAMPLES = 0
 
 
 @dataclass
@@ -174,6 +178,7 @@ class AuxiliaryCoordinator:
 
         with self._timer("aux/reward", timing_raw):
             batch = self._score_batch(batch=batch, metrics=metrics)
+            self._debug_print_batch(batch, main_step=main_step)
 
         batch = self._run_training_tail(batch=batch, main_step=main_step, metrics=metrics, timing_raw=timing_raw)
 
@@ -351,3 +356,62 @@ class AuxiliaryCoordinator:
                 current_uid = str(uuid.uuid4())
             uid_batch.append(current_uid)
         return np.array(uid_batch, dtype=object)
+    
+    # Debugging helpers
+    def _debug_print_batch(self, batch: DataProto, main_step: int) -> None:
+        if DEBUG_PRINT_AUX_SAMPLES <= 0:
+            return
+
+        num_samples = min(DEBUG_PRINT_AUX_SAMPLES, len(batch))
+        response_length = batch.batch["responses"].shape[-1]
+        separator = "=" * 100
+        print(
+            f"\n{separator}\n"
+            f"[Aux Training Debug] main_step={main_step} "
+            f"auxiliary_step={self.auxiliary_steps_completed(main_step)}\n"
+            f"{separator}"
+        )
+        for idx in range(num_samples):
+            if "prompts" in batch.batch:
+                model_input = self.tokenizer.decode(batch.batch["prompts"][idx], skip_special_tokens=False)
+            elif "raw_prompt" in batch.non_tensor_batch:
+                model_input = self._format_raw_prompt(batch.non_tensor_batch["raw_prompt"][idx])
+            else:
+                model_input = "<prompt unavailable>"
+
+            valid_response_length = int(batch.batch["attention_mask"][idx][-response_length:].sum().item())
+            response_ids = batch.batch["responses"][idx][:valid_response_length]
+            model_output = self.tokenizer.decode(response_ids, skip_special_tokens=False)
+            rm_response = extract_visible_answer(model_output) if self.strip_thinking else model_output
+            rm_input = self._format_debug_rm_input(batch, idx, rm_response)
+            rm_score = "<rm score unavailable>"
+            if "token_level_scores" in batch.batch:
+                rm_score = float(batch.batch["token_level_scores"][idx].sum().item())
+
+            print(f"\n{'-' * 100}")
+            print(f"[Aux Training Debug][sample {idx}] rm_score: {rm_score}")
+            print(f"[Aux Training Debug][sample {idx}] model_input:\n{model_input}")
+            print(f"[Aux Training Debug][sample {idx}] model_output:\n{model_output}")
+            print(f"[Aux Training Debug][sample {idx}] rm_input_strip_thinking={self.strip_thinking}:\n{rm_input}")
+        print(f"{separator}\n")
+
+    def _format_debug_rm_input(self, batch: DataProto, idx: int, response: str) -> str:
+        if "raw_prompt" in batch.non_tensor_batch:
+            raw_prompt = batch.non_tensor_batch["raw_prompt"][idx]
+            if isinstance(raw_prompt, np.ndarray):
+                raw_prompt = raw_prompt.tolist()
+            if isinstance(raw_prompt, list):
+                chat = [dict(message) for message in raw_prompt]
+                chat.append({"role": "assistant", "content": response})
+                if getattr(self.tokenizer, "chat_template", None) is not None:
+                    return self.tokenizer.apply_chat_template(chat, add_generation_prompt=False, tokenize=False)
+                return self._format_raw_prompt(chat)
+        return f"{self._format_raw_prompt(batch.non_tensor_batch.get('raw_prompt', ['<prompt unavailable>']))}\nassistant: {response}"
+
+    @staticmethod
+    def _format_raw_prompt(raw_prompt: Any) -> str:
+        if isinstance(raw_prompt, np.ndarray):
+            raw_prompt = raw_prompt.tolist()
+        if isinstance(raw_prompt, list):
+            return "\n".join(f"{message.get('role', 'unknown')}: {message.get('content', '')}" for message in raw_prompt)
+        return str(raw_prompt)
