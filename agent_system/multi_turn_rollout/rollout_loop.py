@@ -1379,8 +1379,13 @@ class TrajectoryCollector:
             return {"actor": gen_batch_output}
 
     # Final actor dataproto
-    # tensor batch: 
-    # {'prompts': 'Tensor(shape=(4, 512), dtype=torch.int64)', 'rollout_log_probs': 'Tensor(shape=(4, 512), dtype=torch.float32)', 'attention_mask': 'Tensor(shape=(4, 1024), dtype=torch.int64)', 'input_ids': 'Tensor(shape=(4, 1024), dtype=torch.int64)', 'position_ids': 'Tensor(shape=(4, 1024), dtype=torch.int64)', 'responses': 'Tensor(shape=(4, 512), dtype=torch.int64)'}
+    # tensor batch: {
+    #     'prompts': 'Tensor(shape=(4, 512), dtype=torch.int64)', 
+    #     'rollout_log_probs': 'Tensor(shape=(4, 512), dtype=torch.float32)', 
+    #     'attention_mask': 'Tensor(shape=(4, 1024), dtype=torch.int64)', 
+    #     'input_ids': 'Tensor(shape=(4, 1024), dtype=torch.int64)', 
+    #     'position_ids': 'Tensor(shape=(4, 1024), dtype=torch.int64)', 
+    #     'responses': 'Tensor(shape=(4, 512), dtype=torch.int64)'}
     # non_tensor batch: {
     #     'data_source': 'ndarray(shape=(4,), dtype=object)', 
     #     'uid': 'ndarray(shape=(4,), dtype=object)', 

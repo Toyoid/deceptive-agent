@@ -373,7 +373,7 @@ class AuxiliaryCoordinator:
         )
         for idx in range(num_samples):
             if "prompts" in batch.batch:
-                model_input = self.tokenizer.decode(batch.batch["prompts"][idx], skip_special_tokens=False)
+                model_input = self.tokenizer.decode(batch.batch["prompts"][idx], skip_special_tokens=True)
             elif "raw_prompt" in batch.non_tensor_batch:
                 model_input = self._format_raw_prompt(batch.non_tensor_batch["raw_prompt"][idx])
             else:
@@ -381,7 +381,7 @@ class AuxiliaryCoordinator:
 
             valid_response_length = int(batch.batch["attention_mask"][idx][-response_length:].sum().item())
             response_ids = batch.batch["responses"][idx][:valid_response_length]
-            model_output = self.tokenizer.decode(response_ids, skip_special_tokens=False)
+            model_output = self.tokenizer.decode(response_ids, skip_special_tokens=True)
             rm_response = extract_visible_answer(model_output) if self.strip_thinking else model_output
             rm_input = self._format_debug_rm_input(batch, idx, rm_response)
             rm_score = "<rm score unavailable>"
@@ -389,10 +389,10 @@ class AuxiliaryCoordinator:
                 rm_score = float(batch.batch["token_level_scores"][idx].sum().item())
 
             print(f"\n{'-' * 100}")
-            print(f"[Aux Training Debug][sample {idx}] rm_score: {rm_score}")
             print(f"[Aux Training Debug][sample {idx}] model_input:\n{model_input}")
             print(f"[Aux Training Debug][sample {idx}] model_output:\n{model_output}")
             print(f"[Aux Training Debug][sample {idx}] rm_input_strip_thinking={self.strip_thinking}:\n{rm_input}")
+            print(f"[Aux Training Debug][sample {idx}] rm_score: {rm_score}")
         print(f"{separator}\n")
 
     def _format_debug_rm_input(self, batch: DataProto, idx: int, response: str) -> str:
