@@ -30,6 +30,7 @@ install_requires = [
     "dill",
     "hydra-core",
     "numpy",
+    "openai",
     "pandas",
     "peft",
     "pyarrow>=19.0.0",
