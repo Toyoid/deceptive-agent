@@ -53,10 +53,10 @@ env:
 
 dump:
   output_dir: null
-  n_trajectories: 128
+  n_trajectories: 128  # number of trajectories to dump to a json filefor offline review/evaluation
   policy: random
   include_steps: true
-  log_generations: 16
+  log_generations: 4  # number of trajectories to log as a table of validation samples to the configured logger (wandb or swanlab)
 
 trainer:
   project_name: api_rollout_eval
