@@ -22,6 +22,25 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+try:
+    from tqdm.auto import tqdm
+except ImportError:  # pragma: no cover - dependency is declared, fallback keeps minimal test envs usable
+    class tqdm:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            self.total = kwargs.get("total")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def update(self, n=1):
+            pass
+
+        def set_postfix(self, *args, **kwargs):
+            pass
+
 from .clients import ChatResponse, OpenAICompatibleChatClient
 from .data import EvalRow
 from .metrics import compute_eval_metrics
@@ -70,12 +89,20 @@ class ApiRolloutRunner:
         if batch_size <= 0:
             raise ValueError("data.batch_size must be positive.")
 
-        for start in range(0, len(self.rows), batch_size):
-            chunk = self.rows[start:start + batch_size]
-            chunk_result = await self._run_chunk(chunk, chunk_start=start)
-            all_episodes.extend(chunk_result.episodes)
-            for key, values in chunk_result.success.items():
-                success_parts.setdefault(key, []).append(np.asarray(values))
+        progress_enabled = bool(self.config.get("progress", {}).get("enabled", True))
+        with tqdm(
+            total=len(self.rows),
+            desc="API rollout",
+            unit="traj",
+            dynamic_ncols=True,
+            disable=not progress_enabled,
+        ) as progress:
+            for start in range(0, len(self.rows), batch_size):
+                chunk = self.rows[start:start + batch_size]
+                chunk_result = await self._run_chunk(chunk, chunk_start=start, progress=progress)
+                all_episodes.extend(chunk_result.episodes)
+                for key, values in chunk_result.success.items():
+                    success_parts.setdefault(key, []).append(np.asarray(values))
 
         success = {
             key: np.concatenate(value, axis=0) if value else np.asarray([], dtype=np.float32)
@@ -84,16 +111,16 @@ class ApiRolloutRunner:
         metrics = compute_eval_metrics(episodes=all_episodes, success=success)
         return ApiRolloutResult(episodes=all_episodes, success=success, metrics=metrics)
 
-    async def _run_chunk(self, rows: List[EvalRow], *, chunk_start: int) -> ApiRolloutResult:
+    async def _run_chunk(self, rows: List[EvalRow], *, chunk_start: int, progress: tqdm) -> ApiRolloutResult:
         envs = self.env_factory(self.config, len(rows))
         try:
-            return await self._run_chunk_with_env(envs, rows, chunk_start=chunk_start)
+            return await self._run_chunk_with_env(envs, rows, chunk_start=chunk_start, progress=progress)
         finally:
             close = getattr(envs, "close", None)
             if close is not None:
                 close()
 
-    async def _run_chunk_with_env(self, envs, rows: List[EvalRow], *, chunk_start: int) -> ApiRolloutResult:
+    async def _run_chunk_with_env(self, envs, rows: List[EvalRow], *, chunk_start: int, progress: tqdm) -> ApiRolloutResult:
         env_kwargs = [copy.deepcopy(row.env_kwargs) for row in rows]
         obs, infos = envs.reset(kwargs=env_kwargs)
 
@@ -139,6 +166,12 @@ class ApiRolloutRunner:
             active_masks = np.logical_not(is_done)
             if not active_masks.any():
                 break
+            progress.set_postfix(
+                batch=f"{chunk_start}-{chunk_start + batch_size - 1}",
+                step=step + 1,
+                active=int(active_masks.sum()),
+                refresh=False,
+            )
 
             # TODO: Add active-only generation / environment short-circuiting after the first stable implementation.
             messages = [
@@ -201,8 +234,16 @@ class ApiRolloutRunner:
                         )
                     )
 
+            newly_done = np.logical_and(np.logical_not(is_done), dones)
+            if newly_done.any():
+                progress.update(int(newly_done.sum()))
+
             is_done = np.logical_or(is_done, dones)
             obs = next_obs
+
+        unfinished = np.logical_not(is_done)
+        if unfinished.any():
+            progress.update(int(unfinished.sum()))
 
         success = envs.success_evaluator(
             total_infos=total_infos,

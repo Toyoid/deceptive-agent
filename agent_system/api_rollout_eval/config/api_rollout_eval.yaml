@@ -58,6 +58,9 @@ dump:
   include_steps: true
   log_generations: 4  # number of trajectories to log as a table of validation samples to the configured logger (wandb or swanlab)
 
+progress:
+  enabled: true
+
 trainer:
   project_name: api_rollout_eval
   experiment_name: api_eval

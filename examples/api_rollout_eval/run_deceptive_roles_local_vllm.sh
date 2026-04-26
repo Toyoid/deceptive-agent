@@ -9,8 +9,13 @@ export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
-API_BASE=http://127.0.0.1:7000/v1
+PORT=7000
+API_BASE=http://127.0.0.1:$PORT/v1
 DATA_FILE=$DATA_ROOT/deceptive_roles/train.parquet
+
+# Start the local vLLM server in another terminal before running this eval:
+# bash examples/api_rollout_eval/serve_local_vllm.sh $PORT 1 $MODEL_NAME
+# API_BASE must match the serve port, and MODEL_NAME must match the served model name.
 
 # Prepare the ReasonChat eval parquet if needed:
 # python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles

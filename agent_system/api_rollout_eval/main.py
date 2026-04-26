@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pprint import pprint
 
@@ -34,6 +35,11 @@ from .runner import ApiRolloutRunner
 register_resolvers()
 
 
+def _quiet_api_loggers() -> None:
+    for name in ("httpx", "httpcore", "openai"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 @hydra.main(config_path="config", config_name="api_rollout_eval", version_base=None)
 def main(config) -> None:
     if config.dump.output_dir == "auto":
@@ -42,6 +48,7 @@ def main(config) -> None:
 
 
 def run_api_rollout_eval(config) -> None:
+    _quiet_api_loggers()
     OmegaConf.resolve(config)
     pprint(OmegaConf.to_container(config, resolve=True))
 

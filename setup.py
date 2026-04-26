@@ -38,6 +38,7 @@ install_requires = [
     "pylatexenc",
     "ray[default]>=2.41.0,<2.50.0",
     "torchdata",
+    "tqdm",
     "tensordict<=0.6.2",
     "transformers<=4.51.1",
     "wandb",

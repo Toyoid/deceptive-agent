@@ -9,8 +9,13 @@ export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
-API_BASE=http://127.0.0.1:7000/v1
+PORT=7000
+API_BASE=http://127.0.0.1:$PORT/v1
 DATA_FILE=$DATA_ROOT/searchR1_processed_direct/test.parquet
+
+# Start the local vLLM server in another terminal before running this eval:
+# bash examples/api_rollout_eval/serve_local_vllm.sh $PORT 1 $MODEL_NAME
+# API_BASE must match the serve port, and MODEL_NAME must match the served model name.
 
 python3 -m agent_system.api_rollout_eval.main \
     env.env_name=deceptive_search \
