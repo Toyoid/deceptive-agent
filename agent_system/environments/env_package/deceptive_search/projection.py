@@ -25,6 +25,14 @@ re_think = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
 re_search_tag = re.compile(r"<search>", re.IGNORECASE)
 re_insider_tag = re.compile(r"<insider>", re.IGNORECASE)
 re_answer_tag = re.compile(r"<answer>", re.IGNORECASE)
+re_source_tag = re.compile(r"<source>", re.IGNORECASE)
+re_think_tag = re.compile(r"<think>", re.IGNORECASE)
+
+re_search_close_tag = re.compile(r"</search>", re.IGNORECASE)
+re_insider_close_tag = re.compile(r"</insider>", re.IGNORECASE)
+re_answer_close_tag = re.compile(r"</answer>", re.IGNORECASE)
+re_source_close_tag = re.compile(r"</source>", re.IGNORECASE)
+re_think_close_tag = re.compile(r"</think>", re.IGNORECASE)
 
 INVALID_FINAL_ANSWER_TOOL = "Conducted tool-call {tool_call_tag} and unable to provide a valid final answer."
 INVALID_FINAL_ANSWER = "Unable to provide a valid final answer."
@@ -38,6 +46,76 @@ def _postprocess_action(action: str) -> str:
     return action
 
 
+def _count_managed_tags(action: str) -> dict[str, tuple[int, int]]:
+    return {
+        "search": (len(re_search_tag.findall(action)), len(re_search_close_tag.findall(action))),
+        "insider": (len(re_insider_tag.findall(action)), len(re_insider_close_tag.findall(action))),
+        "answer": (len(re_answer_tag.findall(action)), len(re_answer_close_tag.findall(action))),
+        "source": (len(re_source_tag.findall(action)), len(re_source_close_tag.findall(action))),
+        "think": (len(re_think_tag.findall(action)), len(re_think_close_tag.findall(action))),
+    }
+
+
+def _valid_action_prefix(text: str, action_start: int) -> bool:
+    prefix = text[:action_start].strip()
+    if not prefix:
+        return True
+    return re_think.fullmatch(prefix) is not None
+
+
+def _format_validity(action: str, selected_kind: str | None) -> int:
+    """Validate the full raw response while allowing callers to salvage the first action."""
+    if selected_kind is None:
+        return 0
+
+    counts = _count_managed_tags(action)
+
+    # <think> is optional for backward compatibility, but malformed or repeated
+    # think blocks are invalid when present.
+    think_open, think_close = counts["think"]
+    if think_open != think_close or think_open > 1:
+        return 0
+
+    action_kinds = ["search", "insider", "answer"]
+    active_action_kinds = [
+        kind for kind in action_kinds
+        if counts[kind][0] > 0 or counts[kind][1] > 0
+    ]
+    if active_action_kinds != [selected_kind]:
+        return 0
+
+    selected_open, selected_close = counts[selected_kind]
+    if selected_open != 1 or selected_close != 1:
+        return 0
+
+    source_open, source_close = counts["source"]
+    if selected_kind in {"search", "insider"}:
+        if source_open > 0 or source_close > 0:
+            return 0
+        selected_match = {
+            "search": re_search,
+            "insider": re_insider,
+        }[selected_kind].search(action)
+        if selected_match is None:
+            return 0
+        if not _valid_action_prefix(action, selected_match.start()):
+            return 0
+        return 1
+
+    if source_open != 1 or source_close != 1:
+        return 0
+
+    answer_match = re_answer.search(action)
+    source_match = re_source.search(action)
+    if answer_match is None or source_match is None:
+        return 0
+    if not _valid_action_prefix(action, answer_match.start()):
+        return 0
+    if source_match.start() < answer_match.end():
+        return 0
+    return 1
+
+
 def deceptive_search_projection(actions: List[str]) -> Tuple[List[str], List[int]]:
     """Project LLM actions into (results, valids) for the deceptive search env.
 
@@ -45,7 +123,7 @@ def deceptive_search_projection(actions: List[str]) -> Tuple[List[str], List[int
 
     Validity: valids[i] = 0 when:
     - Tags of more than one type are present (mixed action).
-    - Duplicate tags of the same type appear.
+    - Duplicate or unbalanced managed tags appear.
     - No recognisable tag found at all.
     """
     results: List[str] = []
@@ -55,17 +133,22 @@ def deceptive_search_projection(actions: List[str]) -> Tuple[List[str], List[int
         trimmed = _postprocess_action(action)
 
         # --- Extraction (priority order) ---
+        selected_kind = None
+
         m = re_insider.search(trimmed)
         if m:
             results.append(f"<insider>{m.group(1).strip()}</insider>")
+            selected_kind = "insider"
         else:
             m = re_search.search(trimmed)
             if m:
                 results.append(f"<search>{m.group(1).strip()}</search>")
+                selected_kind = "search"
             else:
                 m = re_answer.search(trimmed)
                 if m:
                     part = f"<answer>{m.group(1).strip()}</answer>"
+                    selected_kind = "answer"
                     # Grab <source> from the original (un-trimmed) action
                     ms = re_source.search(action)
                     if ms:
@@ -77,18 +160,8 @@ def deceptive_search_projection(actions: List[str]) -> Tuple[List[str], List[int
                     results.append("")
                     valids[i] = 0
 
-        # --- Validity checks ---
-        tag_counts = [
-            len(re_search_tag.findall(action)),
-            len(re_insider_tag.findall(action)),
-            len(re_answer_tag.findall(action)),
-        ]
-        # Mixed types present
-        if sum(1 for c in tag_counts if c > 0) > 1:
-            valids[i] = 0
-        # Duplicate tags of same type
-        if any(c > 1 for c in tag_counts):
-            valids[i] = 0
+        if valids[i]:
+            valids[i] = _format_validity(action, selected_kind)
 
     return results, valids
 

@@ -64,8 +64,7 @@ class ActorMonitorRewardManager:
                 if self.normalize_by_length:
                     episode_reward = episode_reward / episode_length
                     trust_penalty = trust_penalty / episode_length
-                final_score = episode_reward - 5.0 * trust_penalty  # NOTE: there are 3 rewards: RM score, episode_reward (from env), trust_penalty (from monitor)
-                # final_score = episode_reward  # NOTE: Only to test actor reward maximization
+                final_score = episode_reward - 2.0 * trust_penalty  # NOTE: there are 3 rewards: RM score, episode_reward (from env), trust_penalty (from monitor)
             elif self.role == "monitor":
                 trust_penalty = data_item.non_tensor_batch['trust_penalties']
                 if self.normalize_by_length:

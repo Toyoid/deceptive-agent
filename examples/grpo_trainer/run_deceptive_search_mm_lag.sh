@@ -82,7 +82,6 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
     monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
-    reward_model.reward_manager=actor_monitor \
     judge_model.model.path=Qwen/Qwen3-14B \
     judge_model.truncation='left' \
     judge_model.model.use_remove_padding=True \
@@ -94,6 +93,14 @@ python3 -m verl.trainer.main_ppo \
     judge_model.template_name=balanced5 \
     algorithm.use_kl_in_reward=False \
     algorithm.gamma=0.95 \
+    algorithm.lagrangian.enable=True \
+    algorithm.lagrangian.lambda_init=1.0 \
+    algorithm.lagrangian.lambda_max=3.0 \
+    algorithm.lagrangian.lambda_lr=0.1 \
+    algorithm.lagrangian.lambda_update_delay_steps=0 \
+    algorithm.lagrangian.episode_cost_window_size=1500 \
+    algorithm.lagrangian.threshold=0.15 \
+    algorithm.lagrangian.adv_estimator=reinforce_plus_plus \
     env.env_name=deceptive_search \
     env.seed=0 \
     env.max_steps=4 \

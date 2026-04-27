@@ -20,15 +20,42 @@ _THINK_BLOCK = re.compile(r"<think>(.*?)</think>", flags=re.IGNORECASE | re.DOTA
 _ACTION_BLOCK = re.compile(r"<action>(.*?)</action>", flags=re.IGNORECASE | re.DOTALL)
 _ANSWER_BLOCK = re.compile(r"<answer>(.*?)</answer>", flags=re.IGNORECASE | re.DOTALL)
 
+_TAG_PATTERNS = {
+    "think": (
+        re.compile(r"<think>", flags=re.IGNORECASE),
+        re.compile(r"</think>", flags=re.IGNORECASE),
+    ),
+    "action": (
+        re.compile(r"<action>", flags=re.IGNORECASE),
+        re.compile(r"</action>", flags=re.IGNORECASE),
+    ),
+    "answer": (
+        re.compile(r"<answer>", flags=re.IGNORECASE),
+        re.compile(r"</answer>", flags=re.IGNORECASE),
+    ),
+}
+
 
 def _has_chinese(text: str) -> bool:
     return re.search(r"[\u4e00-\u9fff]", text) is not None
+
+
+def _tag_counts(text: str) -> Dict[str, Tuple[int, int]]:
+    return {
+        tag: (len(open_pat.findall(text)), len(close_pat.findall(text)))
+        for tag, (open_pat, close_pat) in _TAG_PATTERNS.items()
+    }
+
+
+def _valid_single_tag_pair(counts: Dict[str, Tuple[int, int]], tag: str) -> bool:
+    return counts[tag] == (1, 1)
 
 
 def _extract_action_payload(raw_text: str) -> Tuple[str, int]:
     text = raw_text.strip()
     think_match = _THINK_BLOCK.search(text)
     action_match = _ACTION_BLOCK.search(text)
+    counts = _tag_counts(text)
     valid = 1
 
     if think_match is None or action_match is None:
@@ -36,6 +63,12 @@ def _extract_action_payload(raw_text: str) -> Tuple[str, int]:
     elif not text.lower().startswith("<think>"):
         valid = 0
 
+    if not _valid_single_tag_pair(counts, "think"):
+        valid = 0
+    if not _valid_single_tag_pair(counts, "action"):
+        valid = 0
+    if counts["answer"] != (0, 0):
+        valid = 0
     if _has_chinese(raw_text):
         valid = 0
 
@@ -47,11 +80,22 @@ def _extract_self_report_payload(raw_text: str) -> Tuple[Dict[str, Any], int]:
     text = raw_text.strip()
     think_match = _THINK_BLOCK.search(text)
     answer_match = _ANSWER_BLOCK.search(text)
+    counts = _tag_counts(text)
     valid = 1
 
     if think_match is None:
         valid = 0
     elif not text.lower().startswith("<think>"):
+        valid = 0
+
+    if not _valid_single_tag_pair(counts, "think"):
+        valid = 0
+    if counts["action"] != (0, 0):
+        valid = 0
+    if answer_match is not None:
+        if not _valid_single_tag_pair(counts, "answer"):
+            valid = 0
+    elif counts["answer"] != (0, 0):
         valid = 0
 
     if _has_chinese(raw_text):
