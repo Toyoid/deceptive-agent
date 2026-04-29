@@ -30,6 +30,7 @@ from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_system.environments.prompts.verdict_monitor_prompt import build_verdict_monitor_prompt
 from agent_system.environments import EnvironmentManagerBase
 from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
+from agent_system.utils.active_rollout import ActiveIndexMap
 from agent_system.self_monitor import parse_self_monitor_batch
 from agent_system.verdict_monitor import constrained_probs_to_binary_penalties
 from typing import List, Dict, Callable, Tuple, Optional
@@ -651,11 +652,15 @@ class TrajectoryCollector:
         monitor_batch = None
         self_monitor_trust_penalties = np.zeros(batch_size, dtype=np.float32) if self.config.self_monitor.enable else None
         verdict_monitor_trust_penalties = None
+        previous_text_actions = [""] * batch_size
 
         # Trajectory collection loop
         rollout_max_steps = envs.get_rollout_max_steps()
         for _step in range(rollout_max_steps):
-            active_masks = np.logical_not(is_done)
+            active = ActiveIndexMap.from_done(is_done)
+            assert active.batch_size == batch_size, "ActiveIndexMap batch size does not match the original batch size"
+            if not active.has_active:
+                break
 
             prompt_source = envs.actor_prompt_source(_step)
             if prompt_source == "dataset":
@@ -673,15 +678,18 @@ class TrajectoryCollector:
             else:
                 raise ValueError(f"Unsupported actor prompt source: {prompt_source}")
 
+            # Keep global env slots stable; only compact the model-generation payload.
+            active_batch = batch.select_idxs(active.active_idx)
+
             batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
             non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
-            if "multi_modal_data" in batch.non_tensor_batch:
+            if "multi_modal_data" in active_batch.non_tensor_batch:
                 non_tensor_batch_keys_to_pop.append("multi_modal_data")
-            if "raw_prompt" in batch.non_tensor_batch:
+            if "raw_prompt" in active_batch.non_tensor_batch:
                 non_tensor_batch_keys_to_pop.append("raw_prompt")
-            if "tools_kwargs" in batch.non_tensor_batch:
+            if "tools_kwargs" in active_batch.non_tensor_batch:
                 non_tensor_batch_keys_to_pop.append("tools_kwargs")
-            batch_input = batch.pop(
+            batch_input = active_batch.pop(
                 batch_keys=batch_keys_to_pop,
                 non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
             )
@@ -695,18 +703,21 @@ class TrajectoryCollector:
             # unpad
             batch_output = unpad_dataproto(batch_output_padded, pad_size=pad_size)
 
-            batch.non_tensor_batch['uid'] = uid_batch
-            batch.non_tensor_batch['traj_uid'] = traj_uid
+            active_batch.non_tensor_batch['uid'] = active.select_array(uid_batch, dtype=object)
+            active_batch.non_tensor_batch['traj_uid'] = active.select_array(traj_uid, dtype=object)
 
-            batch = batch.union(batch_output)
+            active_batch = active_batch.union(batch_output)
             
-            text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
+            active_text_actions = self.tokenizer.batch_decode(active_batch.batch['responses'], skip_special_tokens=True)
             self_monitor_batch = None
             if self.config.self_monitor.enable:
-                self_monitor_batch = parse_self_monitor_batch(text_actions)
-                batch.non_tensor_batch.update(self_monitor_batch)
+                self_monitor_batch = parse_self_monitor_batch(active_text_actions)
+                active_batch.non_tensor_batch.update(self_monitor_batch)
+
+            text_actions = active.scatter_actions(active_text_actions, previous_text_actions)
             
             next_obs, rewards, dones, infos = envs.step(text_actions)
+            previous_text_actions = text_actions
             
             if len(rewards.shape) == 2:
                 rewards = rewards.squeeze(1)
@@ -721,47 +732,61 @@ class TrajectoryCollector:
 
             # self-monitor baseline: collect self-monitoring signals and apply trust penalties
             if self_monitor_batch is not None:
-                final_action_valid = np.logical_and(env_action_valid, self_monitor_batch['self_monitor_is_valid'])
-                self_monitor_trust_penalties[active_masks] = np.logical_or(
-                    self_monitor_trust_penalties[active_masks] > 0.0,
-                    self_monitor_batch['self_monitor_is_unsafe'][active_masks],
+                final_action_valid = env_action_valid.copy()
+                self_monitor_is_valid = np.asarray(self_monitor_batch['self_monitor_is_valid'], dtype=bool)
+                final_action_valid[active.active_idx] = np.logical_and(
+                    env_action_valid[active.active_idx],
+                    self_monitor_is_valid,
+                )
+                # any unsafe step will cause the whole trajectory to be penalized
+                self_monitor_trust_penalties[active.active_idx] = np.logical_or(
+                    self_monitor_trust_penalties[active.active_idx] > 0.0,
+                    self_monitor_batch['self_monitor_is_unsafe'],
                 ).astype(np.float32)
             else:
                 final_action_valid = env_action_valid
 
-            batch.non_tensor_batch['is_action_valid'] = final_action_valid
+            active_batch.non_tensor_batch['is_action_valid'] = active.select_array(final_action_valid)
 
             if 'tool_calling' in infos[0]:
-                tool_callings[active_masks] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[active_masks]
-            # Create reward tensor, only assign rewards for active environments
-            # episode_rewards += torch_to_numpy(rewards) * torch_to_numpy(active_masks)
-            episode_rewards[active_masks] += torch_to_numpy(rewards)[active_masks]
-            episode_lengths[active_masks] += 1
+                tool_callings[active.active_idx] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[active.active_idx]
+            # Only active environments contribute step-level accounting.
+            episode_rewards[active.active_idx] += torch_to_numpy(rewards)[active.active_idx]
+            episode_lengths[active.active_idx] += 1
 
             assert len(rewards) == batch_size, f"env should return rewards for all environments, got {len(rewards)} rewards for {batch_size} environments"
-            batch.non_tensor_batch['rewards'] = torch_to_numpy(rewards, is_object=True)
-            batch.non_tensor_batch['active_masks'] = torch_to_numpy(active_masks, is_object=True)
+            active_batch.non_tensor_batch['rewards'] = active.select_array(torch_to_numpy(rewards, is_object=True))
+            active_batch.non_tensor_batch['active_masks'] = active.active_flags(dtype=object)
 
             # log for retroactive analysis and judge_model input if judge enabled
-            batch.non_tensor_batch['user_inputs'] = np.array([info['user_input'] for info in infos], dtype=object)
-            batch.non_tensor_batch['system_infos'] = np.array([info['evidence'] for info in infos], dtype=object)
+            active_batch.non_tensor_batch['user_inputs'] = active.select_info_values(infos, 'user_input')
+            active_batch.non_tensor_batch['system_infos'] = active.select_info_values(infos, 'evidence')
             
             if self.config.monitor_rollout_ref.enable or self.config.verdict_monitor.enable:
-                batch.non_tensor_batch['monitor_background'] = np.array(next_obs['monitor_background'])
-                batch.non_tensor_batch['agent_trajectory'] = np.array(next_obs['agent_trajectory'])
+                active_batch.non_tensor_batch['monitor_background'] = active.select_array(
+                    next_obs['monitor_background'], dtype=object
+                )
+                active_batch.non_tensor_batch['agent_trajectory'] = active.select_array(
+                    next_obs['agent_trajectory'], dtype=object
+                )
                 if next_obs.get('monitor_image', None) is not None:
-                    batch.non_tensor_batch['monitor_image'] = np.array(next_obs['monitor_image'])
+                    active_batch.non_tensor_batch['monitor_image'] = active.select_array(
+                        next_obs['monitor_image'], dtype=object
+                    )
                 if self.config.judge_model.enable:
-                    batch.non_tensor_batch['agent_response'] = np.array([info['agent_response'] for info in infos], dtype=object)
+                    active_batch.non_tensor_batch['agent_response'] = active.select_info_values(infos, 'agent_response')
             
-            batch.check_consistency()
+            active_batch.check_consistency()
 
             # Update episode lengths for active environments
-            batch_list: list[dict] = to_list_of_dict(batch)
+            batch_list: list[dict] = to_list_of_dict(active_batch)
 
-            for i in range(batch_size):
-                total_batch_list[i].append(batch_list[i])
-                total_infos[i].append(infos[i])
+            active.append_active_records(
+                total_batch_list=total_batch_list,
+                total_infos=total_infos,
+                active_records=batch_list,
+                infos=infos,
+            )
 
             # Update done states
             is_done = np.logical_or(is_done, dones)
@@ -773,15 +798,9 @@ class TrajectoryCollector:
             if is_done.all():
                 break
 
-        # NOTE: Not 100% sure, but it seems that the environments do not short-circuit for already-done envs. 
-        # They still:
-        # 1. Process the action
-        # 2. Return observations (often unchanged or invalid)
-        # 3. Return rewards (typically 0)
-        # 4. Return done=True again
-        # So filtering out data with active_masks=False is necessary
-        # TODO: What will the obs be when loop finished and some envs are already done in earlier steps?
-        # TODO: This agent loop is to be optimized to asynchronously process envs with varied episode lengths
+        # Environment stepping intentionally remains full-batch. Model generation and stored
+        # trajectory records are active-only, so downstream PPO/monitor processing sees only
+        # real rollout records while environment slots stay stable.
 
         actor_episode_batch = None
         if self.config.monitor_rollout_ref.enable or self.config.verdict_monitor.enable:

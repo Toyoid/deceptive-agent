@@ -53,9 +53,11 @@ def test_prompt_builder_uses_env_observation_after_bootstrap():
 class _FakeClient:
     def __init__(self):
         self.calls = 0
+        self.batch_sizes = []
 
     async def generate_batch(self, batch_messages):
         self.calls += 1
+        self.batch_sizes.append(len(batch_messages))
         return [
             ChatResponse(
                 text=f"action-{self.calls}-{i}",
@@ -114,6 +116,74 @@ class _FakeEnv:
         pass
 
 
+class _StaggeredDoneEnv(_FakeEnv):
+    def __init__(self, batch_size):
+        super().__init__(batch_size)
+        self.step_actions = []
+
+    def get_rollout_max_steps(self):
+        return 3
+
+    def step(self, text_actions):
+        self.step_count += 1
+        self.step_actions.append(list(text_actions))
+        done = np.asarray([self.step_count >= end_step for end_step in (1, 2, 3)], dtype=bool)
+        infos = []
+        for i, action in enumerate(text_actions):
+            infos.append(
+                {
+                    "won": bool(done[i]),
+                    "task_score": float(done[i]),
+                    "is_action_valid": True,
+                    "tool_calling": 1.0,
+                    "agent_response": action,
+                }
+            )
+        return (
+            {"text": [f"next-{self.step_count}-{i}" for i in range(self.batch_size)], "image": None, "anchor": None},
+            np.ones(self.batch_size, dtype=np.float32),
+            done,
+            infos,
+        )
+
+
+class _FlakyDoneEnv(_FakeEnv):
+    def __init__(self, batch_size):
+        super().__init__(batch_size)
+        self.step_actions = []
+
+    def get_rollout_max_steps(self):
+        return 5
+
+    def step(self, text_actions):
+        self.step_count += 1
+        self.step_actions.append(list(text_actions))
+        done = np.asarray(
+            [
+                self.step_count == 1,
+                self.step_count == 4,
+            ],
+            dtype=bool,
+        )
+        infos = []
+        for i, action in enumerate(text_actions):
+            infos.append(
+                {
+                    "won": bool(done[i]),
+                    "task_score": float(done[i]),
+                    "is_action_valid": True,
+                    "tool_calling": 1.0,
+                    "agent_response": action,
+                }
+            )
+        return (
+            {"text": [f"next-{self.step_count}-{i}" for i in range(self.batch_size)], "image": None, "anchor": None},
+            np.ones(self.batch_size, dtype=np.float32),
+            done,
+            infos,
+        )
+
+
 def test_runner_collects_actor_only_episodes_and_metrics():
     rows = [
         EvalRow(
@@ -150,3 +220,72 @@ def test_runner_collects_actor_only_episodes_and_metrics():
     assert result.episodes[1]["action_valid_sequence"] == [False, False]
     assert result.metrics["eval/success_rate"] == 1.0
     assert result.metrics["eval/episode/delete_count/max"] == 1.0
+
+
+def test_runner_generates_only_for_active_episodes_and_appends_only_real_steps():
+    rows = [
+        EvalRow(
+            data_source="fake",
+            prompt=[{"role": "user", "content": f"question-{i}"}],
+            env_kwargs={"question": f"question-{i}"},
+            index=i,
+        )
+        for i in range(3)
+    ]
+    cfg = OmegaConf.create({"data": {"batch_size": 3}, "env": {"max_steps": 3}, "progress": {"enabled": False}})
+    client = _FakeClient()
+    env_holder = {}
+
+    def env_factory(config, batch_size):
+        env = _StaggeredDoneEnv(batch_size)
+        env_holder["env"] = env
+        return env
+
+    runner = ApiRolloutRunner(config=cfg, client=client, rows=rows, env_factory=env_factory)
+
+    result = runner.run()
+
+    assert client.batch_sizes == [3, 2, 1]
+    assert env_holder["env"].step_actions == [
+        ["action-1-0", "action-1-1", "action-1-2"],
+        ["action-1-0", "action-2-0", "action-2-1"],
+        ["action-1-0", "action-2-0", "action-3-0"],
+    ]
+    assert [episode["length"] for episode in result.episodes] == [1.0, 2.0, 3.0]
+    assert [len(episode["steps"]) for episode in result.episodes] == [1, 2, 3]
+    assert [episode["final_output"] for episode in result.episodes] == ["action-1-0", "action-2-0", "action-3-0"]
+
+
+def test_runner_done_slots_do_not_reactivate_if_env_done_flickers_false():
+    rows = [
+        EvalRow(
+            data_source="fake",
+            prompt=[{"role": "user", "content": f"question-{i}"}],
+            env_kwargs={"question": f"question-{i}"},
+            index=i,
+        )
+        for i in range(2)
+    ]
+    cfg = OmegaConf.create({"data": {"batch_size": 2}, "env": {"max_steps": 5}, "progress": {"enabled": False}})
+    client = _FakeClient()
+    env_holder = {}
+
+    def env_factory(config, batch_size):
+        env = _FlakyDoneEnv(batch_size)
+        env_holder["env"] = env
+        return env
+
+    runner = ApiRolloutRunner(config=cfg, client=client, rows=rows, env_factory=env_factory)
+
+    result = runner.run()
+
+    assert client.batch_sizes == [2, 1, 1, 1]
+    assert env_holder["env"].step_actions == [
+        ["action-1-0", "action-1-1"],
+        ["action-1-0", "action-2-0"],
+        ["action-1-0", "action-3-0"],
+        ["action-1-0", "action-4-0"],
+    ]
+    assert [episode["length"] for episode in result.episodes] == [1.0, 4.0]
+    assert [len(episode["steps"]) for episode in result.episodes] == [1, 4]
+    assert [episode["final_output"] for episode in result.episodes] == ["action-1-0", "action-4-0"]

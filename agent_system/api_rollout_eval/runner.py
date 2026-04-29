@@ -45,6 +45,7 @@ from .clients import ChatResponse, OpenAICompatibleChatClient
 from .data import EvalRow
 from .metrics import compute_eval_metrics
 from .prompt_builder import build_actor_messages, messages_to_text
+from agent_system.utils.active_rollout import ActiveIndexMap
 
 
 @dataclass
@@ -160,28 +161,33 @@ class ApiRolloutRunner:
         episode_rewards = np.zeros(batch_size, dtype=np.float32)
         episode_lengths = np.zeros(batch_size, dtype=np.float32)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
+        previous_text_actions = [""] * batch_size
 
         rollout_max_steps = int(envs.get_rollout_max_steps())
         for step in range(rollout_max_steps):
-            active_masks = np.logical_not(is_done)
-            if not active_masks.any():
+            active = ActiveIndexMap.from_done(is_done)
+            assert active.batch_size == batch_size, "ActiveIndexMap batch size does not match the original batch size"
+            active_masks = active.active_mask()
+            if not active.has_active:
                 break
             progress.set_postfix(
                 batch=f"{chunk_start}-{chunk_start + batch_size - 1}",
                 step=step + 1,
-                active=int(active_masks.sum()),
+                active=active.n_active,
                 refresh=False,
             )
 
-            # TODO: Add active-only generation / environment short-circuiting after the first stable implementation.
-            messages = [
+            # Environment stepping intentionally remains full-batch; only model generation is compacted.
+            active_messages = [
                 build_actor_messages(row=rows[i], envs=envs, obs=obs, infos=infos, item=i, step=step)
-                for i in range(batch_size)
+                for i in active.active_idx
             ]
-            responses = await self.client.generate_batch(messages)
-            text_actions = [response.text for response in responses]
+            active_responses = await self.client.generate_batch(active_messages)
+            active_text_actions = [response.text for response in active_responses]
+            text_actions = active.scatter_actions(active_text_actions, previous_text_actions)
 
             next_obs, rewards, dones, infos = envs.step(text_actions)
+            previous_text_actions = text_actions
             rewards = np.asarray(rewards).reshape(-1)
             dones = np.asarray(dones).reshape(-1).astype(bool)
             if len(rewards) != batch_size or len(dones) != batch_size or len(infos) != batch_size:
@@ -200,9 +206,9 @@ class ApiRolloutRunner:
             episode_lengths[active_masks] += 1.0
             tool_callings[active_masks] += step_tool_calls[active_masks]
 
-            for i in range(batch_size):
+            for local_i, i in active.iter_active():
                 batch_item = {
-                    "active_masks": bool(active_masks[i]),
+                    "active_masks": True,
                     "data_source": rows[i].data_source,
                     "traj_uid": trajectory_ids[i],
                     "response": text_actions[i],
@@ -212,27 +218,26 @@ class ApiRolloutRunner:
                 total_batch_list[i].append(batch_item)
                 total_infos[i].append(infos[i])
 
-                if active_masks[i]:
-                    response = responses[i]
-                    episodes[i]["final_output"] = text_actions[i]
-                    episodes[i]["reward"] = float(episode_rewards[i])
-                    episodes[i]["length"] = float(episode_lengths[i])
-                    episodes[i]["tool_calls"] = float(tool_callings[i])
-                    episodes[i]["action_valid_sequence"].append(bool(action_valid[i]))
-                    episodes[i]["final_info"] = dict(infos[i])
-                    episodes[i]["steps"].append(
-                        self._build_step_record(
-                            step=step,
-                            active=True,
-                            messages=messages[i],
-                            response=response,
-                            reward=float(rewards[i]),
-                            done=bool(dones[i]),
-                            is_action_valid=bool(action_valid[i]),
-                            tool_calling=float(step_tool_calls[i]),
-                            info=infos[i],
-                        )
+                response = active_responses[local_i]
+                episodes[i]["final_output"] = text_actions[i]
+                episodes[i]["reward"] = float(episode_rewards[i])
+                episodes[i]["length"] = float(episode_lengths[i])
+                episodes[i]["tool_calls"] = float(tool_callings[i])
+                episodes[i]["action_valid_sequence"].append(bool(action_valid[i]))
+                episodes[i]["final_info"] = dict(infos[i])
+                episodes[i]["steps"].append(
+                    self._build_step_record(
+                        step=step,
+                        active=True,
+                        messages=active_messages[local_i],
+                        response=response,
+                        reward=float(rewards[i]),
+                        done=bool(dones[i]),
+                        is_action_valid=bool(action_valid[i]),
+                        tool_calling=float(step_tool_calls[i]),
+                        info=infos[i],
                     )
+                )
 
             newly_done = np.logical_and(np.logical_not(is_done), dones)
             if newly_done.any():
