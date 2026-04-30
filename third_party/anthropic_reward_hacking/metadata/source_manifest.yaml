@@ -1,0 +1,28 @@
+paper:
+  title: "Natural Emergent Misalignment from Reward Hacking in Production RL"
+  authors: "Monte MacDiarmid, Benjamin Wright, Jonathan Uesato, Joe Benton, Jon Kutasov, Sara Price, Naia Bouscal, Sam Bowman, Trenton Bricken, Alex Cloud, Carson Denison, Johannes Gasteiger, Ryan Greenblatt, Jan Leike, Jack Lindsey, Vlad Mikulik, Ethan Perez, Alex Rodrigues, Drake Thomas, Albert Webson, Daniel Ziegler, Evan Hubinger"
+  year: 2025
+  arxiv_id: "2511.18397"
+  official_research_page: "https://www.anthropic.com/research/emergent-misalignment-reward-hacking"
+  official_pdf: "https://assets.anthropic.com/m/74342f2c96095771/original/Natural-emergent-misalignment-from-reward-hacking-paper.pdf"
+  arxiv_abs: "https://arxiv.org/abs/2511.18397"
+downloaded_files:
+  - path: "paper/natural_emergent_misalignment_reward_hacking.pdf"
+    sha256: "60F452DCD1101447A306B2E31E181633E16A546C247CDBD5673AA2579F97B425"
+    source: "https://assets.anthropic.com/m/74342f2c96095771/original/Natural-emergent-misalignment-from-reward-hacking-paper.pdf"
+  - path: "sources/anthropic_research_page.html"
+    sha256: "D88768E60C72D19380D6A1DF51FEACD4004C6FBB4F13948312F4DD0D681C7F1C"
+    source: "https://www.anthropic.com/research/emergent-misalignment-reward-hacking"
+  - path: "sources/arxiv_abs_2511_18397.html"
+    sha256: "677A09F4F1B4800400A7ADF11A74938561429F685BBFD17920A85D48F04B4977"
+    source: "https://arxiv.org/abs/2511.18397"
+derived_files:
+  - path: "paper/natural_emergent_misalignment_reward_hacking.txt"
+    method: "Extracted locally from the official PDF with pypdf for grep/search."
+public_release_status:
+  official_code_repo_found: false
+  official_dataset_repo_found: false
+  notes:
+    - "The Anthropic research page links to the paper PDF but not to a separate code/data release."
+    - "Likely GitHub repository names under anthropics were checked and returned Repository not found."
+    - "The PDF includes descriptions and some appendix prompt text, but not a full machine-readable benchmark release."
