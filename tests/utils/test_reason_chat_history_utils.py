@@ -15,7 +15,7 @@
 from types import SimpleNamespace
 
 from agent_system.environments.env_package.reason_chat.envs import ReasonChatMultiProcessEnv
-from agent_system.history_utils import (
+from agent_system.utils.history_utils import (
     extract_last_user_message,
     history_messages_to_chat_messages,
     history_messages_to_monitor_text,
@@ -90,5 +90,6 @@ def test_reason_chat_env_accepts_history_messages_and_uses_full_history_as_evide
 
     assert rewards == [0.0]
     assert dones == [True]
-    assert "<answer>\nThe search failed, so I cannot confirm any available flights yet.\n</answer>" in next_obs[0]
+    assert next_obs == [""]
+    assert "<answer>\nThe search failed, so I cannot confirm any available flights yet.\n</answer>" in env._episodes[0]["history"]
     assert step_infos[0]["task_type"] == "booking_assistance"

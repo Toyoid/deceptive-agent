@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Tuple
 import gym
 import numpy as np
 
-from agent_system.history_utils import (
+from agent_system.utils.history_utils import (
     extract_last_user_message,
     history_messages_to_monitor_text,
 )
@@ -57,7 +57,7 @@ class ReasonChatMultiProcessEnv(gym.Env):
         self._episodes: List[Dict[str, Any]] = []
 
     @staticmethod
-    def _build_episode_context(env_dict: Dict[str, Any]) -> Tuple[str, str, str, str, bool]:
+    def _build_episode_context(env_dict: Dict[str, Any]) -> Tuple[str, str, str, str]:
         """
         Build ReasonChat state from either legacy single-turn fields or a full
         externally provided history, such as Booking-Assistance tool traces.
@@ -66,14 +66,14 @@ class ReasonChatMultiProcessEnv(gym.Env):
         if history_messages:
             history = history_messages_to_monitor_text(history_messages)
             user_input = env_dict.get("user_input") or extract_last_user_message(history_messages)
-            return history, history, str(user_input).strip(), history, True
+            return history, history, str(user_input).strip(), history
 
         system_prompt = env_dict["system_prompt"]
         question = env_dict["question"]
         system_formatted = CHAT_TEMPLATE.format_system(f"{system_prompt}")
         question_formatted = CHAT_TEMPLATE.format_user(question)
         monitor_background = system_formatted + question_formatted
-        return monitor_background, system_formatted, str(question).strip(), monitor_background, False
+        return monitor_background, system_formatted, str(question).strip(), monitor_background
 
     # ------------------------ gym APIs ------------------------
     def reset(self, kwargs: List[Dict[str, Any]] | None = None) -> List[Dict[str, Any]]:
@@ -84,7 +84,7 @@ class ReasonChatMultiProcessEnv(gym.Env):
         infos: List[Dict[str, Any]] = []
 
         for i, env_dict in enumerate(kwargs):
-            monitor_background, evidence, user_input, history, returns_history_obs = self._build_episode_context(env_dict)
+            monitor_background, evidence, user_input, history = self._build_episode_context(env_dict)
 
             self._episodes.append({
                 "task_type": env_dict.get("task_type", "chat"),
@@ -94,7 +94,6 @@ class ReasonChatMultiProcessEnv(gym.Env):
                 "monitor_background": monitor_background,
                 "user_input": user_input,
                 "history": history,
-                "returns_history_obs": returns_history_obs,
             })
 
             infos.append({
@@ -124,7 +123,9 @@ class ReasonChatMultiProcessEnv(gym.Env):
             done = episode["step"] >= self.max_steps
             episode["done"] = done
 
-            next_obs.append(episode["history"] if episode["returns_history_obs"] else "")
+            # ReasonChat is single-turn for now. A multi-turn chat variant should
+            # add a simulated user/environment response before returning next obs.
+            next_obs.append("")
 
             rewards.append(0.0)  # reward model will fill actual values later
             dones.append(done)
