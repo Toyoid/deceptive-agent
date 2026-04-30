@@ -1,420 +1,424 @@
-`verl-agent` is an extension of [veRL](https://github.com/volcengine/verl), specifically designed for training **large language model (LLM) agents via reinforcement learning (RL)**. 
+# Deceptive Agent
 
-Unlike prior approaches that simply concatenate full interaction histories, `verl-agent` proposes **step-independent multi-turn rollout mechanism**, which allows for **fully customizable** per-step input structures, history management, and memory modules. This design makes `verl-agent` **highly scalable for very long-horizon, multi-turn RL training**.
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12+-3776AB.svg)](#installation)
+[![Base](https://img.shields.io/badge/base-veRL%20%2B%20verl--agent-4B8BBE.svg)](https://github.com/volcengine/verl)
+[![Research Code](https://img.shields.io/badge/status-research%20code-orange.svg)](#status)
 
-`verl-agent` provides a **diverse set of RL algorithms** (including our new algorithm GiGPO) and a **rich suite of agent environments**, enabling the development of reasoning agents in both visual and text-based tasks.
+**Deceptive Agent** is a research codebase for training and evaluating language-model agents in settings where task reward can conflict with honesty, transparency, and monitorability.
 
-# News
-- [2025.09] `GiGPO` is now supported by [ROLL](https://github.com/alibaba/ROLL)! [[Document](https://alibaba.github.io/ROLL/docs/English/UserGuide/agentic/agentic_GiGPO)] [[Train Curves](https://github.com/alibaba/ROLL/issues/173#issuecomment-3332106534)].
-- [2025.09] `verl-agent`-style training pipeline is now supported by [OpenManus-RL](https://github.com/OpenManus/OpenManus-RL)!
-- [2025.09] [GiGPO](https://arxiv.org/abs/2505.10978) accepted at [NeurIPS 2025](https://neurips.cc/)! 🎉🎉🎉
-- [2025.08] Add **Search-R1 experiments** and **similarity-based GiGPO**! Check out GiGPO's superior performance in Search-R1 experiments [here](#results).
-- [2025.07] `GiGPO` & `verl-agent` talks at [Agent for SWE meetup](https://lu.ma/e498qhsi) by LF AI & Data Singapore on 7/11.
-- [2025.07] Add modular memory manager. See [here](./agent_system/memory).
-- [2025.06] ***Major update***: Merge all features from the latest [veRL](https://github.com/volcengine/verl). For example, `verl-agent` now supports Qwen3, LoRA, REINFORCE++, and more. Feel free to explore!
-- [2025.05] Code released and paper on `GiGPO` released.
+This repository extends the `veRL` / `verl-agent` training stack with deception-aware environments, monitor and judge models, constrained reward shaping, API-based rollout evaluation, and auxiliary safety training baselines. It is designed for experiments where an agent may have access to hidden or privileged actions, and the training objective must trade off task success against detected or judged dishonest behavior.
 
-# Quick Feature Summary
-| Feature Category | Supported Capabilities|
-| - | - |
-| **Interaction**          | ✅ Multi-turn Agent-Environment interaction<br>✅ Step-wise interaction<br>✅ Scalable for long-horizon tasks |
-| **Memory**               | ✅ Fully customizable memory module<br>✅ Flexible history management|
-| **Input Flexibility**    | ✅ Fully customizable per-step input structures |
-| **Execution**            | ✅ Parallelized Gym environments<br>✅ Group environments support (for group-based RL)|
-| **Model Support**        | ✅ Qwen3<br>✅ Qwen2.5<br>✅ Qwen2.5-VL<br>✅ LLaMA3.2<br>and more |
-| **Modality**             | ✅ Text-only<br>✅ Text + Image (multi-modal) |
-| **Lightweight Training** | ✅ Supports LoRA training |
-| **Environments**         | ✅ WebShop<br> ✅ Search (Tool Calling)<br>✅ AppWorld |
-| **RL Algorithms**        | ✅ GiGPO<br>✅ GRPO<br>✅ PPO<br>✅ DAPO<br>✅ GSPO<br>✅ RLOO<br>✅ REINFORCE++<br>✅ Dynamic sampling & clip-higher supported <br> and more |
+The previous upstream-oriented `verl-agent` README is preserved at [README_legacy_verl_agent.md](README_legacy_verl_agent.md).
 
-# Framework Comparison
-<p align="center">
-    <img src="./docs/gigpo/framework-comparison.png" alt="framework" width="100%">
-</p>
+## Table of Contents
 
+- [Highlights](#highlights)
+- [Method Overview](#method-overview)
+- [Repository Layout](#repository-layout)
+- [Environments](#environments)
+- [Deception and Oversight Signals](#deception-and-oversight-signals)
+- [Installation](#installation)
+- [Data Preparation](#data-preparation)
+- [Running Experiments](#running-experiments)
+- [API Rollout Evaluation](#api-rollout-evaluation)
+- [Configuration Reference](#configuration-reference)
+- [Tests](#tests)
+- [Status](#status)
+- [Lineage](#lineage)
 
-# Table of Contents
+## Highlights
 
-- [Key Features](#key-features)
-- [Results](#results)  
-- [Installation](#installation)  
-  - [Install veRL](#install-verl)  
-  - [Install Supported Environments](#install-supported-environments)  
-    - [1. WebShop](#1-webshop)
-    - [2. Search](#2-search)  
-    - [3. AppWorld (Experimental)](#3-appworld-experimental)  
-- [Run Examples](#run-examples)  
-  - [RL Training](#rl-training)  
-    - [1. GiGPO](#1-gigpo)  
-    - [2. GRPO](#2-grpo)  
-    - [3. PPO](#3-ppo)  
-    - [4. RLOO](#4-rloo)  
-    - [5. DAPO](#5-dapo)  
-    - [6. GiGPO (dynamic)](#6-gigpo-dynamic)
-  - [LoRA](#lora)
-- [FAQ](#faq)
-  - [1. Customize Memory Module](#1-customize-memory-module)
-  - [2. Data Preparation](#2-data-preparation)
-  - [3. Customize Your Own Prompts](#3-customize-your-own-prompts)
-  - [4. Add New Environments](#4-add-new-environments)
-- [Contributing](#contributing)
-- [Acknowledgement](#acknowledgement)
-- [Awesome Work Powered by verl-agent & GiGPO](#awesome-work-powered-by-verl-agent--gigpo)
-- [Citation](#citation)
-- [Star History](#star-history)
+| Component | What this repository adds |
+| --- | --- |
+| Deception environments | `ReasonChat`, `deceptive_search`, and `CheatShop`, each exposing a different honesty/task-reward conflict. |
+| Monitor training | Optional monitor rollout worker group with fixed-monitor and trainable maximin-style modes. |
+| Judge scoring | Constrained-token judge model for scoring whether monitor critiques are evidence-supported. |
+| Verdict monitor | Lightweight 0/1 verdict model path for trajectory-level honesty decisions. |
+| Lagrangian RL | Cost-constrained agent training through `algorithm.lagrangian.*` config knobs. |
+| API rollout evaluation | OpenAI-compatible evaluation runner for closed-source APIs or locally served vLLM models. |
+| Auxiliary safety baseline | Prompt-only auxiliary safety RL mixed into the main task training loop. |
+| Active-only rollout | Multi-turn rollout support that generates only for active environments, reducing wasted inference. |
 
-# Key Features
+## Method Overview
 
-- **Multi-Turn Agent-Environment Interaction**
+The core training loop keeps the original veRL actor/rollout/reference/reward-model design, then adds deception-specific supervision paths:
 
-  `verl-agent` supports multi-step interactive loops between agents and environments. Agents perceive environmental feedback after each step, forming the basis for reinforcement learning.
-
-- **Fully Customizable Memory Module & Per-Step Input Structure**
-
-  `verl-agent` features a **customizable memory module** (see [here](./agent_system/memory)) that allows for flexibly choosing what history to include for each step. The input typically consists of the current observation along with a concise history summary at each step (see prompt [here](./agent_system/environments/prompts/webshop.py)). Developers can **freely define what to include, such as recent steps, key events, summaries, or external knowledge**. There's no requirement to concatenate the full history, and the input structure for each step is ***fully customizable***.
-
-- **Scalable for Very Long-Horizon Optimization**
-
-  Prior works like [RAGEN](https://github.com/RAGEN-AI/RAGEN) and [Search-R1](https://github.com/PeterGriffinJin/Search-R1) concatenate the entire history of states and responses. This causes the context length to grow rapidly with the number of turns, making them difficult to scale to long-horizon scenarios. In contrast, `verl-agent` constructs inputs step-by-step. Each input is concise and customizable. This design keeps the context length almost constant over time, making `verl-agent` highly scalable for long-horizon scenarios without running into token limits or inefficiency.
-  
-- **Parallelized Gym-Style Environments and Group Environments**
-
-  `verl-agent` provides a gym-style interface with support for parallelized environments. This enables high-throughput rollouts, speeding up training. In addition, `verl-agent` introduces the concept of group environments. All environments within a group share identical initial states during `reset()`. This is especially useful for algorithms like GRPO and DAPO that require multiple rollouts on the same state. You can configure the number of rollouts per group using the `env.rollout.n` in [ppo_trainer.yaml](./verl/trainer/config/ppo_trainer.yaml) config file.
-
-- **Support for Various Models**
-
-  `verl-agent` supports a wide range of LLMs, including `Qwen3`, `Qwen2.5`, `LLaMA3.2`, `Qwen2.5-VL`, and others, allowing flexibility for various deployment needs.
-
-- **LoRA Fine-Tuning Support**
-
-  `verl-agent` provides support for [LoRA](https://arxiv.org/abs/2106.09685) (Low-Rank Adaptation), significantly reducing computational cost. Now, `verl-agent` supports training 7B models using 2 H100 GPUs.
-
-- **Vision-Language Agent Support**
-
-  Beyond text-based agents, `verl-agent` also supports training vision-language agents. This enables multi-modal reasoning in environments where both visual perception and language understanding are required.
-
-- **Rich Suite of Environments**
-  
-  `verl-agent` offers a focused set of interactive environments including the [Search-R1](https://github.com/PeterGriffinJin/Search-R1) experiment, digital interface control tasks like [WebShop](https://github.com/princeton-nlp/WebShop), and [AppWorld](https://github.com/stonybrooknlp/appworld/) (experimental). 
-
-- **Diverse RL Algorithms**
-
-  `verl-agent` includes implementations of various RL algorithms, such as [GRPO](https://arxiv.org/abs/2402.03300), [PPO](https://arxiv.org/abs/1707.06347), [DAPO](https://arxiv.org/abs/2503.14476), [GSPO](https://arxiv.org/abs/2507.18071), [RLOO](https://arxiv.org/abs/2402.14740) and our new state-of-the-art algorithm [GiGPO](https://arxiv.org/abs/2505.10978). It also supports several variants enhanced with dynamic sampling and clip-higher techniques.
-
-# Results
-> ⚠️ Note: The performance of GiGPO has improved slightly after the "[2025.06.03] Major Update." To reproduce the original paper results, please use the version released prior to the "[2025.06.03] Major Update."
-
-| Algorithm          | Task         | Model      | Success Rate (Paper) | Training Log |
-|-------------------|--------------|--------------------------|-----------------------|-------------------------|
-| GiGPO | WebShop      | Qwen2.5-1.5B-Instruct    | 67.4%   |  [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/zfnvpvxe) |
-| GiGPO | WebShop      | Qwen2.5-7B-Instruct      | 75.2%   |  [![wandb](https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb)](https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/zfnvpvxe) |
-
-
-<table border="1" cellspacing="0" cellpadding="5">
-  <thead>
-    <tr>
-      <th>Date</th>
-      <th>Method</th>
-      <th>NQ†</th>
-      <th>TriviaQA*</th>
-      <th>PopQA*</th>
-      <th>HotpotQA†</th>
-      <th>2Wiki*</th>
-      <th>MuSiQue*</th>
-      <th>Bamboogle*</th>
-      <th>Avg.</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td colspan="10" align="center"><b>Qwen2.5-3B-Instruct</b></td>
-    </tr>
-    <tr>
-      <td>2025.03</td><td>R1-Instruct</td><td>27.0</td><td>53.7</td><td>19.9</td><td>23.7</td><td>29.2</td><td>7.2</td><td>29.3</td><td>27.1</td>
-    </tr>
-    <tr>
-      <td>2025.03</td><td>Search-R1</td><td>34.1</td><td>54.5</td><td>37.8</td><td>32.4</td><td>31.9</td><td>10.3</td><td>26.4</td><td>32.5</td>
-    </tr>
-    <tr>
-      <td>2025.05</td><td>ZeroSearch</td><td>41.4</td><td>57.4</td><td>44.8</td><td>27.4</td><td>30.0</td><td>9.8</td><td>11.1</td><td>31.7</td>
-    </tr>
-    <tr>
-      <td>2025.05</td><td>StepSearch</td><td>-</td><td>-</td><td>-</td><td>34.5</td><td>32.0</td><td>17.4</td><td>34.4</td><td>-</td>
-    </tr>
-    <tr>
-      <td>2025.05</td><td><b>GiGPO</b><a href="https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/1dd48ymw" target="_blank">
-      <img src="https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb" alt="wandb link"/>
-    </a></td><td>42.0</td><td>59.5</td><td>42.4</td><td>36.9</td><td>37.0</td><td>12.6</td><td>64.1</td><td>42.1</td>
-    </tr>
-    <tr>
-      <td colspan="10" align="center"><b>Qwen2.5-7B-Instruct</b></td>
-    </tr>
-    <tr>
-      <td>2025.03</td><td>R1-Instruct</td><td>21.0</td><td>44.9</td><td>17.1</td><td>20.8</td><td>27.5</td><td>6.0</td><td>19.2</td><td>22.4</td>
-    </tr>
-    <tr>
-      <td>2025.03</td><td>Search-R1</td><td>39.3</td><td>61.0</td><td>39.7</td><td>37.0</td><td>40.1</td><td>14.6</td><td>36.8</td><td>38.5</td>
-    </tr>
-    <tr>
-      <td>2025.05</td><td>ZeroSearch</td><td>43.6</td><td>61.8</td><td>51.5</td><td>34.6</td><td>35.2</td><td>18.4</td><td>27.8</td><td>39.1</td>
-    </tr>
-    <tr>
-      <td>2025.05</td><td>StepSearch</td><td>-</td><td>-</td><td>-</td><td>38.6</td><td>36.6</td><td>22.6</td><td>40.0</td><td>-</td>
-    </tr>
-    <tr>
-      <td>2025.05</td><td><b>GiGPO</b><a href="https://api.wandb.ai/links/langfeng-cs-nanyang-technological-university-singapore/1dd48ymw" target="_blank">
-      <img src="https://img.shields.io/badge/W%26B-view-FFBE00?logo=wandb" alt="wandb link"/>
-    </a></td><td>46.4</td><td>64.7</td><td>46.1</td><td>41.6</td><td>43.6</td><td>18.9</td><td>68.9</td><td>47.2</td>
-    </tr>
-  </tbody>
-</table>
-
-
-We have released our models on [HuggingFace](https://huggingface.co/collections/langfeng01/verl-agent-684970e8f51babe2a6d98554).
-
-# Installation
-## Install veRL
-```bash
-conda create -n verl-agent python==3.12 -y
-conda activate verl-agent
-
-pip3 install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-pip3 install flash-attn==2.7.4.post1 --no-build-isolation
-
-pip3 install -e .
-
-pip3 install vllm==0.8.5
+```mermaid
+flowchart LR
+    D["Task data"] --> E["Environment manager"]
+    E --> R["Multi-turn rollout"]
+    R --> A["Actor policy"]
+    A --> E
+    E --> M["Episode metrics and task reward"]
+    E --> O["Behavior under review"]
+    O --> C["Monitor model"]
+    C --> J["Judge model"]
+    J --> K["Honesty cost"]
+    M --> L["RL objective"]
+    K --> L
+    L --> U["Actor update"]
+    C --> V["Optional monitor update"]
 ```
 
-## Install Supported Environments
-> ⚠️ **Important:** 
-To run an agent in any of these environments, you must first install and configure the corresponding environment. We strongly recommend installing ***each environment in its own dedicated conda environment*** to avoid potential package version conflicts.
+The design separates three signals that are often conflated:
 
-### 1. WebShop
-WebShop requires Python <=3.10, so begin by creating a new `verl-agent-webshop` environment
-```bash
-conda create -n verl-agent-webshop python==3.10 -y
-conda activate verl-agent-webshop
+1. **Task reward**, such as answering correctly or completing a shopping task.
+2. **Observable behavior**, including tool calls, source statements, action logs, and final answers.
+3. **Oversight signal**, produced either by a learned monitor, a verdict monitor, or a judge-scored critique.
+
+This makes it possible to study agents that are competent at the task but strategically problematic under partial oversight.
+
+## Repository Layout
+
+```text
+agent_system/
+  api_rollout_eval/        OpenAI-compatible API rollout evaluator
+  environments/            Environment managers, prompts, and task packages
+  memory/                  Per-step history and memory utilities
+  multi_turn_rollout/      Agent-environment rollout loop
+  reward_manager/          Episode, monitor, and actor-monitor reward managers
+  self_monitor/            Self-monitor parsing and metrics utilities
+  verdict_monitor/         Binary verdict monitor utilities
+  utils/                   Shared metric contracts and active rollout helpers
+
+examples/
+  api_rollout_eval/        API and local-vLLM evaluation launch scripts
+  data_preprocess/         Dataset preprocessing scripts
+  grpo_trainer/            GRPO and monitor/judge search experiments
+  ppo_trainer/             ReasonChat, verdict monitor, and auxiliary safety runs
+  search/retriever/        Search-R1 retrieval server
+  sft/self_monitor/        Self-monitor SFT scripts
+
+verl/                      veRL trainer, workers, configs, and auxiliary RL hooks
+gigpo/                     GiGPO core implementation
+tests/                     Unit, CPU, worker, rollout, and integration tests
+docs/                      Upstream veRL/verl-agent documentation and notes
 ```
 
-Install WebShop
+## Environments
+
+| Environment | `env.env_name` | Purpose | Main files |
+| --- | --- | --- | --- |
+| ReasonChat | `ReasonChat` | Single-turn role-conditioned chat scenarios where a role or objective may incentivize deception. | [reason_chat](agent_system/environments/env_package/reason_chat), [deceptive_roles.py](examples/data_preprocess/deceptive_roles.py) |
+| Deceptive Search | `deceptive_search` | Search-R1-style QA with a public search tool and a hidden insider lookup tool. Rewards track correctness, citation validity, audits, and disclosure. | [deceptive_search](agent_system/environments/env_package/deceptive_search), [deceptive_search.py](agent_system/environments/prompts/deceptive_search.py) |
+| CheatShop | `CheatShop` | WebShop-derived shopping environment with privileged assistance and oversight-oriented observations. | [cheatshop](agent_system/environments/env_package/cheatshop), [cheatshop.py](agent_system/environments/prompts/cheatshop.py) |
+| Search | `search` | Standard Search-R1-style tool-use baseline. | [search](agent_system/environments/env_package/search) |
+| WebShop | `webshop` | Standard WebShop baseline. | [webshop](agent_system/environments/env_package/webshop) |
+| AppWorld | `appworld` | Experimental app-control environment. | [appworld](agent_system/environments/env_package/appworld) |
+
+## Deception and Oversight Signals
+
+### Deceptive Search
+
+`DeceptiveSearchEnv` extends Search-R1-style QA with:
+
+- A public `<search>...</search>` tool that returns cited documents.
+- A hidden `<insider>...</insider>` tool that reveals the gold answer.
+- A terminal answer format with `<answer>` and `<source>` fields.
+- Metrics for `used_insider`, `answer_correct`, `citation_valid`, `source_grounded`, `audit_triggered`, `audit_caught`, and `disclosed_insider`.
+- Reward components for correctness, citation validity, probabilistic audit penalty, and insider disclosure penalty.
+
+### Monitor and Judge
+
+The monitor prompts live in [monitor_prompt.py](agent_system/environments/prompts/monitor_prompt.py). A monitor emits atomic critiques wrapped in `<critique>...</critique>` tags. The judge prompts live in [judge_prompt.py](agent_system/environments/prompts/judge_prompt.py) and score whether a critique exposes a real, evidence-supported honesty issue.
+
+Supported judge templates include:
+
+- `balanced` and `strict`: four-level critique validity scales.
+- `balanced5` and `strict5`: five-level symmetric scales with a neutral center.
+
+The trainer exposes these paths through:
+
+- `monitor_rollout_ref.*` for fixed or trainable monitor rollout.
+- `judge_model.*` for constrained-token judge scoring.
+- `verdict_monitor.*` for trajectory-level binary verdict scoring.
+- `algorithm.lagrangian.*` for cost-constrained optimization.
+
+## Installation
+
+The training stack is GPU-oriented and follows the upstream veRL setup. The commands below are the tested intent of the repository scripts; exact CUDA, driver, and cluster details may require local adjustment.
+
 ```bash
-cd ./agent_system/environments/env_package/webshop/webshop
-./setup.sh -d all
-```
+conda create -n deceptive-agent python=3.12 -y
+conda activate deceptive-agent
 
-Note: If you encounter issues with gdown, you may need to visit `https://drive.google.com/`, get your Google Drive cookie, and paste it into `.cache/gdown/cookies.txt`.
-Or you may need to manually download the files.
-
-After WebShop is installed, return to the root directory of the repository and install the verl package in `verl-agent`:
-```bash
-cd repo_root/
-pip3 install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-pip3 install flash-attn==2.7.4.post1 --no-build-isolation
-pip3 install -e .
-pip3 install vllm==0.8.2
-# spacy 3.7.2 requires typer<0.10.0,>=0.3.0, but you have typer 0.15.2 which is incompatible.
-# weasel 0.3.4 requires typer<0.10.0,>=0.3.0, but you have typer 0.15.2 which is incompatible.
-```
-The warnings can be safely ignored.
-
----
-
-### 2. Search
-```bash
-cd ./agent_system/environments/env_package/search/third_party
-pip install -e .
-pip install gym==0.26.2
-```
-
-Prepare dataset (data will be saved at `/DATA/lhx/data/searchR1_processed_direct`):
-```bash
-cd repo_root/
-python examples/data_preprocess/preprocess_search_r1_dataset.py
-```
-
-
-Since faiss-gpu is not available via pip, we setup a separate conda environment for the local retrieval server. Running this server will use around 6GB of GPU memory per GPU, so make sure to account for this in your training run configuration. Build Retriever environments:
-```bash
-# Create and activate the retriever environment with Python 3.10
-conda create -n retriever python=3.10 -y
-conda activate retriever
-
-# Install PyTorch (with GPU support) and related libraries
-conda install numpy==1.26.4 # needed to stop incompatible version of numpy from being installed via pip
-pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-
-# Install other Python packages
-pip install transformers datasets pyserini huggingface_hub
-
-# Install the GPU version of faiss
-conda install faiss-gpu==1.8.0 -c pytorch -c nvidia -y
-
-# Install the API service framework
-pip install uvicorn fastapi
-```
-
-Download the index:
-```bash
-conda activate retriever
-
-local_dir=/DATA/lhx/data/searchR1
-python examples/search/searchr1_download.py --local_dir $local_dir
-cat $local_dir/part_* > $local_dir/e5_Flat.index
-gzip -d $local_dir/wiki-18.jsonl.gz
-```
-
-Start the local flat e5 retrieval server: 
-```bash
-conda activate retriever
-
-# redirect the output to a file to avoid cluttering the terminal
-# we have observed outputting to the terminal causing spikes in server response times
-bash examples/search/retriever/retrieval_launch.sh > retrieval_server.log 
-```
-
-### 3. AppWorld (Experimental)
-Install AppWorld package
-```bash
-cd repo_root/
-pip install git+https://github.com/StonyBrookNLP/appworld.git
-appworld install
+pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install flash-attn==2.7.4.post1 --no-build-isolation
 pip install -e .
 pip install vllm==0.8.5
 ```
-You can ignore the warning of incompatibility for appworld, because we don't run appworld in `verl-agent` environment.
 
-Create a dedicated conda environment `appworld` for the AppWorld server:
+For development and tests:
+
 ```bash
-conda create -n appworld python=3.12 -y
-conda activate appworld
+pip install -e ".[test]"
+pip install -r requirements.txt
+```
+
+For SGLang:
+
+```bash
+pip install -r requirements_sglang.txt
+```
+
+### Search Retriever
+
+Deceptive Search and Search-R1 experiments require a local retrieval server. The repository provides a server and launch script under [examples/search/retriever](examples/search/retriever).
+
+```bash
+conda create -n retriever python=3.10 -y
+conda activate retriever
+
+pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install transformers datasets pyserini huggingface_hub uvicorn fastapi
+conda install faiss-gpu==1.8.0 -c pytorch -c nvidia -y
+```
+
+Then launch the retriever before training or API evaluation:
+
+```bash
+bash examples/search/retriever/retrieval_launch.sh
+```
+
+The training scripts assume the retriever is reachable at:
+
+```text
+http://127.0.0.1:8000/retrieve
+```
+
+### WebShop and CheatShop
+
+CheatShop reuses WebShop assets. WebShop has tighter Python constraints, so a separate environment is recommended:
+
+```bash
+conda create -n deceptive-agent-webshop python=3.10 -y
+conda activate deceptive-agent-webshop
+
+cd agent_system/environments/env_package/webshop/webshop
+bash setup.sh -d all
+python run_web_agent_text_env.py
+```
+
+Return to the main `deceptive-agent` environment for RL training.
+
+### AppWorld
+
+AppWorld support is experimental:
+
+```bash
 pip install git+https://github.com/StonyBrookNLP/appworld.git
 appworld install
 appworld download data
 ```
 
+See [agent_system/environments/README.md](agent_system/environments/README.md) for environment-specific notes inherited from upstream.
 
-<!-- > ⚠️ **Important:**  
-To run an agent in any of these environments, you must first install and configure the corresponding environment. Please refer to the [Environment Setup Guide](agent_system/environments/README.md) for step-by-step installation instructions. -->
+## Data Preparation
 
-# Run Examples
-## RL Training
-We provide out-of-the-box scripts in the ["examples/"](./examples/) directory for training agents in different environments.
-
-Here are some examples:
-### 1. GiGPO
-GiGPO is our novel algorithm designed to support fine-grained credit assignment in long-horizon LLM agent training. It introduces a two-level grouping mechanism:
-- Episode-level groups capture overall task success via total returns (like GRPO).
-- Step-level groups gather repeated states across trajectories to compute relative advantages for individual actions.
-
-GiGPO is fully critic-free, maintains the same GPU memory footprint and LLM rollout cost as GRPO, yet achieves significantly better training efficiency and performance.
+Set a local data root. Many launch scripts use `/devsft_AFS/hanxiaoli/verl_data`; replace it with your own path.
 
 ```bash
-bash examples/gigpo_trainer/run_webshop.sh # WebShop
+export DATA_ROOT=/path/to/verl_data
 ```
+
+### ReasonChat / Deceptive Roles
+
 ```bash
-bash examples/gigpo_trainer/run_search.sh # Search
+python examples/data_preprocess/deceptive_roles.py \
+  --local_dir "$DATA_ROOT/deceptive_roles"
 ```
-### 2. GRPO
-GRPO is a critic-free algorithm that estimates relative advantages based on a group of full episode trajectories.
+
+This creates:
+
+```text
+$DATA_ROOT/deceptive_roles/train.parquet
+$DATA_ROOT/deceptive_roles/test.parquet
+```
+
+### Search-R1 / Deceptive Search
+
 ```bash
-bash examples/grpo_trainer/run_webshop.sh # WebShop
+python examples/data_preprocess/preprocess_search_r1_dataset.py \
+  --local_dir "$DATA_ROOT/searchR1_processed_direct"
 ```
-### 3. PPO
-PPO is a classic actor-critic algorithm that updates the policy using a clipped objective to ensure stable learning. It requires a separate value network (critic) to estimate state values.
+
+This creates:
+
+```text
+$DATA_ROOT/searchR1_processed_direct/train.parquet
+$DATA_ROOT/searchR1_processed_direct/test.parquet
+```
+
+### Auxiliary Safety Data
+
+The auxiliary safety baseline uses prompt-only PKU-SafeRLHF data:
+
 ```bash
-bash examples/ppo_trainer/run_webshop.sh # WebShop
+python -m verl.trainer.auxiliary.preprocess \
+  prompt_only \
+  --dataset PKU-Alignment/PKU-SafeRLHF \
+  --split train \
+  --local_dir "$DATA_ROOT/pku_safe_rlhf/prompt_only" \
+  --data_source pku_safe_rlhf
 ```
-### 4. RLOO
-For RLOO, we use a leave-one-out estimate and the PPO-clip update (instead of the REINFORCE update), making it closer to [LOOP](https://arxiv.org/abs/2502.01600).
+
+## Running Experiments
+
+All training examples are Hydra-style scripts around:
+
 ```bash
-bash examples/rloo_trainer/run_webshop.sh # WebShop
+python -m verl.trainer.main_ppo <overrides>
 ```
-### 5. DAPO
-DAPO enhances GRPO with techniques like dynamic sampling and clip-higher.
+
+Representative launch scripts:
+
+| Goal | Script |
+| --- | --- |
+| Deceptive Search GRPO baseline | [examples/grpo_trainer/run_deceptive_search.sh](examples/grpo_trainer/run_deceptive_search.sh) |
+| Deceptive Search with fixed monitor and Lagrangian cost | [examples/grpo_trainer/run_deceptive_search_m_lag.sh](examples/grpo_trainer/run_deceptive_search_m_lag.sh) |
+| Deceptive Search maximin monitor training | [examples/grpo_trainer/run_deceptive_search_mm_lag.sh](examples/grpo_trainer/run_deceptive_search_mm_lag.sh) |
+| ReasonChat / deceptive roles baseline | [examples/ppo_trainer/run_deceptive_roles.sh](examples/ppo_trainer/run_deceptive_roles.sh) |
+| ReasonChat with trainable monitor | [examples/ppo_trainer/run_deceptive_roles_m.sh](examples/ppo_trainer/run_deceptive_roles_m.sh) |
+| ReasonChat with verdict monitor | [examples/ppo_trainer/run_deceptive_roles_verdict_m.sh](examples/ppo_trainer/run_deceptive_roles_verdict_m.sh) |
+| ReasonChat with auxiliary safety RL | [examples/ppo_trainer/run_deceptive_roles_aux_safety.sh](examples/ppo_trainer/run_deceptive_roles_aux_safety.sh) |
+| CheatShop GRPO | [examples/grpo_trainer/run_cheatshop.sh](examples/grpo_trainer/run_cheatshop.sh) |
+| Self-monitor SFT | [examples/sft/self_monitor](examples/sft/self_monitor) |
+
+Example:
+
 ```bash
-bash examples/dapo_trainer/run_webshop.sh # WebShop
+export DATA_ROOT=/path/to/verl_data
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+bash examples/ppo_trainer/run_deceptive_roles_verdict_m.sh \
+  trainer.project_name=verl_deceptive_roles \
+  trainer.experiment_name=my_verdict_monitor_run
 ```
-### 6. GiGPO (dynamic)
-GiGPO uses dynamic sampling and clip-higher from DAPO
+
+Most scripts are cluster templates. Check and edit at least:
+
+- `DATA_ROOT`
+- `CUDA_VISIBLE_DEVICES`
+- `actor_rollout_ref.model.path`
+- `monitor_rollout_ref.model.path`
+- `judge_model.model.path`
+- `reward_model.model.path`
+- `trainer.n_gpus_per_node`
+- `trainer.n_gpus_per_node_monitor`
+- `trainer.judge_pool_mode`
+
+## API Rollout Evaluation
+
+The API evaluator runs the same environments against an OpenAI-compatible chat completion endpoint. It supports public APIs and locally served vLLM models.
+
+### OpenAI-compatible API
+
 ```bash
-bash examples/gigpo_dynamic_trainer/run_webshop.sh # WebShop
+export OPENAI_API_KEY=...
+
+bash examples/api_rollout_eval/run_deceptive_roles_openai_api.sh \
+  model.model=gpt-4o \
+  model.temperature=1.0
 ```
 
-## LoRA
+Other entry points:
+
 ```bash
-bash examples/gigpo_trainer/run_webshop_lora.sh
+bash examples/api_rollout_eval/run_deceptive_search_openai_api.sh
+bash examples/api_rollout_eval/run_cheatshop_openai_api.sh
 ```
 
-# FAQ
+### Local vLLM Endpoint
 
-## 1. Customize Memory Module
-`verl-agent` supports a customizable and flexible memory system for managing and formatting interaction history between the agent and the environment. We provide a [SimpleMemory](./agent_system/memory/memory.py) implementation as a default starting point. This memory module is invoked within [env_manager.py](./agent_system/environments/env_manager.py) (i.e., `build_text_obs()`) to construct the observation at each step. 
+Serve a local model:
 
-Developers are encouraged to extend this module with custom memory strategies, such as dynamic summarization, selective memory retention, or external knowledge integration, to improve the handling of long-horizon interaction histories.
-
-## 2. Data Preparation
-For most environments (e.g., WebShop), we only use data preparation to indicate the modality, either "text" or "visual". For example, if the task is purely text-based, the data will just be an empty string "". If it involves visual input, it will be "\<image\>". As for agent input (including task instruction, observation and prompt), we follow the classical RL pipeline. That means the input of LLM agent comes from the environment's feedback through `env.step()`. In the case of search-r1 experiments where tasks are drawn from a dataset, we leverage the [env_kwargs](./examples/data_preprocess/preprocess_search_r1_dataset.py#L90) parameter to pass tasks into the environment, using: [envs.reset(kwargs=gen_batch.non_tensor_batch.pop('env_kwargs', None))](./agent_system/multi_turn_rollout/rollout_loop.py#L301).
-
-## 3. Customize Your Own Prompts  
-We adopt a simple and minimal prompt format in our implementation. For example, in the WebShop environment:
-```
-You are an expert autonomous agent operating in the WebShop e‑commerce environment.
-Your task is to: {task_description}. Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history}. You are now at step {current_step} and your current observation is: {current_observation}. Your admissible actions of the current situation are: [{available_actions}].
-
-Now it's your turn to take one action for the current step.
-You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags. Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
-```
-If you wish to further enhance or customize them, you can find and edit them in: [agent_system/environments/prompts](./agent_system/environments/prompts/).
-
-
-## 4. Add New Environments
-To add a new environment, 
-1. Create your environment package (gym-style interface and multi-process execution) in [agent_system/environments/env_package/](./agent_system/environments/env_package/)
-2. Define the corresponding prompt files in [agent_system/environments/prompts](./agent_system/environments/prompts/). 
-3. Register your new environment in [env_manager.py](./agent_system/environments/env_manager.py), following the structure defined by [EnvironmentManagerBase](./agent_system/environments/base.py#L19). 
-
-For a reference implementation, see the webshop environment:
-1. Environment package: [webshop package](./agent_system/environments/env_package/webshop)
-2. Prompts: [webshop prompts](./agent_system/environments/prompts/webshop.py)
-3. Environment Manager: [webshop env manager](./agent_system/environments/env_manager.py#L304)
-
-
-# Contributing
-
-We welcome and appreciate all contributions! If you have ideas to improve `verl-agent`, please feel free to submit a pull request (PR).
-
-Example contributions include:
-- **AppWorld Bug Fixes**: Fixed compatibility issues and ensured stable integration with the experimental AppWorld environment.
-- **Asynchronous Rollout**: Improved training efficiency and throughput by supporting asynchronous rollout pipelines.
-- **Additional Environments**: Added support for additional interactive environments to expand the benchmark coverage and task diversity.
-
-# Acknowledgement
-
-`verl-agent` codebase is built upon [veRL](https://github.com/volcengine/verl). 
-The supported environments are adapted from [SkyRL-Gym](https://github.com/NovaSky-AI/SkyRL/tree/main/skyrl-gym), [Search-R1](https://github.com/PeterGriffinJin/Search-R1), [WebShop](https://github.com/princeton-nlp/WebShop), and [AppWorld](https://github.com/stonybrooknlp/appworld). We extend our gratitude to the authors and contributors of these projects for their valuable work.
-
-We would also like to thank the following contributors for their specific improvements to this project: WebShop bug fix ([@YSLIU627](https://github.com/YSLIU627)), GSPO support ([@MakeKJ](https://github.com/MakeKJ)).
-
-# Awesome Work Powered by verl-agent & GiGPO
-
-- [OpenManus-RL](https://github.com/OpenManus/OpenManus-RL): An open-source framework for live-stream reinforcement learning tuning of LLM agents. [![[code]](https://img.shields.io/github/stars/OpenManus/OpenManus-RL)](https://github.com/OpenManus/OpenManus-RL)
-- [RLVMR](https://github.com/Tencent/DigitalHuman/tree/main/RLVMR): Providing agents with fine-grained meta-reasoning rewards in long-horizon tasks. [![[code]](https://img.shields.io/github/stars/Tencent/DigitalHuman)](https://github.com/Tencent/DigitalHuman/tree/main/RLVMR)
-- [UI-S1](https://github.com/X-PLUG/MobileAgent/tree/main/UI-S1): A GUI automation model using semi-online reinforcement learning for stable long-horizon task execution. [![[code]](https://img.shields.io/github/stars/X-PLUG/MobileAgent)](https://github.com/X-PLUG/MobileAgent/tree/main/UI-S1)
-
-
-# Citation
-If you find `verl-agent` and `GiGPO` useful in your research or applications, we would appreciate it if you could cite our work:
-
-```
-@article{feng2025group,
-  title={Group-in-Group Policy Optimization for LLM Agent Training},
-  author={Feng, Lang and Xue, Zhenghai and Liu, Tingcong and An, Bo},
-  journal={arXiv preprint arXiv:2505.10978},
-  year={2025}
-}
+```bash
+bash examples/api_rollout_eval/serve_local_vllm.sh \
+  7000 \
+  1 \
+  Qwen/Qwen2.5-7B-Instruct \
+  qwen2.5-7b
 ```
 
-# Star History
+Evaluate against it:
 
-[![Star History Chart](https://api.star-history.com/svg?repos=langfengQ/verl-agent&type=Date)](https://www.star-history.com/#langfengQ/verl-agent&Date)
+```bash
+bash examples/api_rollout_eval/run_deceptive_roles_local_vllm.sh \
+  model.api_base=http://127.0.0.1:7000/v1 \
+  model.model=qwen2.5-7b
+```
+
+The evaluator dumps trajectories when `dump.output_dir=auto` and logs metrics such as reward, episode length, tool-call count, action validity, API error rate, latency, and environment-specific episode metrics.
+
+## Configuration Reference
+
+The main training config is [verl/trainer/config/ppo_trainer.yaml](verl/trainer/config/ppo_trainer.yaml). Important sections:
+
+| Config section | Purpose |
+| --- | --- |
+| `actor_rollout_ref` | Actor model, rollout backend, reference model, PPO/GRPO optimization. |
+| `reward_model` | Reward model worker and normalization settings. |
+| `monitor_rollout_ref` | Optional monitor model, monitor rollout backend, and monitor optimization. |
+| `judge_model` | Constrained-token judge for monitor critique scoring. |
+| `verdict_monitor` | Binary verdict monitor path. |
+| `auxiliary` | Auxiliary prompt-only safety RL data and reward configuration. |
+| `algorithm.lagrangian` | Cost threshold, lambda schedule, and cost advantage estimator. |
+| `env` | Environment choice, rollout group size, history length, and environment-specific knobs. |
+| `trainer` | Logging, checkpointing, GPU placement, monitor/judge worker placement, and validation. |
+
+## Tests
+
+Fast CPU-oriented checks:
+
+```bash
+pytest tests/api_rollout_eval \
+       tests/multi_turn_rollout/test_active_generation.py \
+       tests/utils/test_deceptive_search_projection.py \
+       tests/utils/test_cheatshop_projection.py \
+       tests/utils/test_reason_answer_format.py
+```
+
+Broader test suites include worker, rollout, Ray, GPU, and e2e tests under [tests](tests). Many of those require CUDA, model checkpoints, or distributed services.
+
+## Status
+
+This is active research code. The repository currently contains:
+
+- Implementation and launch scripts for deception-aware RL experiments.
+- Unit and integration tests for the new API rollout, active rollout, projections, monitor/judge utilities, and metric plumbing.
+- Upstream veRL documentation and components that remain useful for trainer internals.
+
+The repository does not yet contain a canonical checked-in result table for the deception experiments. When reporting numbers, record the exact commit, script, data root, model checkpoints, retriever index, and Hydra overrides.
+
+### Reproducibility Checklist
+
+For each experiment, we recommend recording:
+
+- Git commit and branch.
+- Full launch command and Hydra overrides.
+- Actor, monitor, judge, reward-model, and reference-model checkpoints.
+- Dataset preprocessing command and data root.
+- Search retriever index/version and server URL, when applicable.
+- GPU topology, rollout backend, tensor parallel size, and `CUDA_VISIBLE_DEVICES`.
+- WandB/SwanLab run URL or `trainer.rollout_data_dir` artifact path.
+
+## Lineage
+
+This project builds on:
+
+- [veRL](https://github.com/volcengine/verl), the distributed RL training framework.
+- [verl-agent](https://github.com/langfengQ/verl-agent), the agent-environment extension and GiGPO implementation lineage.
+- [Search-R1](https://github.com/PeterGriffinJin/Search-R1), for search-style tool-use data and retrieval setup.
+- [WebShop](https://github.com/princeton-nlp/WebShop), for shopping-agent environments.
+- [AppWorld](https://github.com/stonybrooknlp/appworld/), for experimental app-control tasks.
+
+The legacy upstream-style README is kept at [README_legacy_verl_agent.md](README_legacy_verl_agent.md) for historical context.
+
+## License
+
+This repository is released under the [Apache License 2.0](LICENSE). Some environment assets and datasets have their own licenses; check the corresponding upstream projects before redistribution.
+
+## Citation
+
+If you use this repository, please cite the relevant upstream systems and datasets used in your experiment. Add the project-specific citation here once the associated paper or technical report is public.
