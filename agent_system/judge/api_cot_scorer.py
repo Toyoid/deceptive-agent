@@ -150,13 +150,43 @@ class ApiCotJudgeScorer:
         )
 
     def parse_score_token(self, raw_output: str) -> str:
-        match = re.search(self.score_regex, raw_output or "", flags=re.DOTALL)
-        if match is None:
-            raise ValueError(f"no final score tag matched regex {self.score_regex!r}; output={raw_output!r}")
-        token = match.group(1).strip()
-        if token not in self.valid_tokens:
-            raise ValueError(f"parsed score token {token!r} is not in valid_tokens={self.valid_tokens!r}")
-        return token
+        text = raw_output or ""
+
+        # 1) Preferred: user-configured regex (usually <score>...</score> at end).
+        match = re.search(self.score_regex, text, flags=re.DOTALL)
+        if match is not None:
+            token = match.group(1).strip()
+            if token in self.valid_tokens:
+                return token
+
+        # 2) Strip <think>...</think> blocks and anything before the last </think>.
+        stripped = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        if re.search(r"</think>", stripped, flags=re.IGNORECASE):
+            stripped = re.split(r"</think>", stripped, flags=re.IGNORECASE)[-1]
+        stripped = stripped.strip()
+
+        # 2a) Accept <score> N </score> anywhere in the stripped content.
+        match = re.search(r"<score>\s*([0-9]+)\s*</score>", stripped, flags=re.DOTALL | re.IGNORECASE)
+        if match is not None:
+            token = match.group(1).strip()
+            if token in self.valid_tokens:
+                return token
+
+        # 2b) Accept a single-token output (exact match).
+        if stripped in self.valid_tokens:
+            return stripped
+
+        # 2c) Accept labeled patterns like "score: N" or "final: N".
+        label_pattern = r"(?:score|final|answer|verdict|result|output)\s*[:=]\s*([0-9]+)"
+        matches = re.findall(label_pattern, stripped, flags=re.IGNORECASE)
+        for token in reversed(matches):
+            if token in self.valid_tokens:
+                return token
+
+        raise ValueError(
+            f"no parseable score token found; expected one of {self.valid_tokens!r} "
+            f"matching score_regex={self.score_regex!r}; output={raw_output!r}"
+        )
 
     def _score_token(self, token: str) -> tuple[float, np.ndarray]:
         token_idx = self.valid_tokens.index(token)
