@@ -64,14 +64,19 @@ class TrajectoryCollector:
         self.config = config
         self.tokenizer = tokenizer
         self.processor = processor
+        self.judge_tokenizer = judge_tokenizer
+        self.judge_processor = judge_processor
+        self._cot_judge_scorer = None
         if config.monitor_rollout_ref.enable:
             assert monitor_tokenizer is not None, "monitor tokenizer should be provided when monitor is enabled"
             self.monitor_tokenizer = monitor_tokenizer
             self.monitor_processor = monitor_processor
         if config.judge_model.enable:
-            assert judge_tokenizer is not None, "judge tokenizer should be provided when judge is enabled"
-            self.judge_tokenizer = judge_tokenizer
-            self.judge_processor = judge_processor
+            judge_backend = config.judge_model.get("backend", "constrained_logits")
+            if judge_backend == "constrained_logits":
+                assert judge_tokenizer is not None, "judge tokenizer should be provided when constrained-logit judge is enabled"
+            elif judge_backend != "api_cot":
+                raise ValueError(f"Unsupported judge_model.backend={judge_backend!r}")
         if config.verdict_monitor.enable:
             assert verdict_monitor_tokenizer is not None, "verdict monitor tokenizer should be provided when verdict_monitor is enabled"
             self.verdict_monitor_tokenizer = verdict_monitor_tokenizer
@@ -204,7 +209,44 @@ class TrajectoryCollector:
             print("-" * 120)
             print(prompt_text)
             print("=" * 120)
-    
+
+    def _debug_print_cot_judge_samples(
+        self,
+        judge_score_slots: List[Tuple[int, int]],
+        cot_result,
+    ) -> None:
+        debug_print_samples = 2
+        if debug_print_samples <= 0 or len(cot_result.scores) == 0:
+            return
+
+        num_samples = min(debug_print_samples, len(cot_result.scores), len(judge_score_slots))
+        valid_tokens = list(self.config.judge_model.valid_tokens)
+        token_weights = list(self.config.judge_model.token_weights)
+
+        print("\n" + "=" * 120)
+        print(
+            f"[CoT Judge Debug] Showing {num_samples}/{len(cot_result.scores)} samples | "
+            f"valid_tokens={valid_tokens}"
+        )
+        print("=" * 120)
+
+        for idx in range(num_samples):
+            sample_idx, critique_idx = judge_score_slots[idx]
+            parsed_token = cot_result.parsed_tokens[idx]
+            token_summary = "unparsed"
+            if parsed_token in valid_tokens:
+                token_idx = valid_tokens.index(parsed_token)
+                token_summary = f"{parsed_token} (weight={float(token_weights[token_idx]):.4f})"
+
+            print(f"[CoT Judge Debug] Queued sample {idx + 1}/{num_samples} | source_sample={sample_idx} | critique_idx={critique_idx}")
+            print(f"Score: {float(cot_result.scores[idx]):.4f}")
+            print(f"Parsed token: {token_summary}")
+            if cot_result.errors[idx] is not None:
+                print(f"Error: {cot_result.errors[idx]}")
+            print("-" * 120)
+            print(cot_result.raw_outputs[idx])
+            print("=" * 120)
+
     @staticmethod
     def _process_chat_to_model_inputs(
         chat: List[Dict[str, str]],
@@ -947,8 +989,7 @@ class TrajectoryCollector:
         #     print("=" * 80)
         
         # Compute trust penalties using judge model if enabled
-        if self.config.judge_model.enable and judge_wg is not None:
-            assert self.judge_tokenizer is not None, "judge tokenizer should not be None for judge scoring"
+        if self.config.judge_model.enable:
             judge_obs = {
                 'task_type': infos[0]['task_type'],  # NOTE: assume all in the batch are from the same task_type
                 'user_inputs': monitor_gen_batch.non_tensor_batch['user_inputs'],
@@ -960,8 +1001,6 @@ class TrajectoryCollector:
                 obs=judge_obs,
                 judge_wg=judge_wg,
             )
-        elif self.config.judge_model.enable and judge_wg is None:
-            raise RuntimeError("Judge worker group is None but judge_model.enable is True, cannot compute judge scores for trust penalties")
         else:
             raise RuntimeError("Judge model is not enabled, cannot compute trust_penalties. Please set `judge_model.enable` as True when using monitor rollout")
 
@@ -974,68 +1013,68 @@ class TrajectoryCollector:
         batch.non_tensor_batch['is_format_correct'] = monitor_format_correct
 
         return batch
-
-    def verdict_monitor_score(
+    
+    def _judge_constrained_score(
         self,
-        actor_batch: DataProto,
-        verdict_monitor_wg,
-        infos: List[Dict],
-    ) -> np.ndarray:
-        assert verdict_monitor_wg is not None, "verdict monitor worker group should not be None for verdict monitor rollout"
+        all_judge_prompts: List[List[Dict[str, str]]],
+        all_judge_imgs: List,
+        judge_score_slots: List[Tuple[int, int]],
+        judge_wg,
+    ):
+        if judge_wg is None:
+            raise RuntimeError("judge_wg is required when judge_model.backend='constrained_logits'.")
+        if self.judge_tokenizer is None:
+            raise RuntimeError("judge_tokenizer is required when judge_model.backend='constrained_logits'.")
 
-        verdict_obs = {
-            'task_type': infos[0]['task_type'],
-            'monitor_background': actor_batch.non_tensor_batch['monitor_background'],
-            'agent_trajectory': actor_batch.non_tensor_batch['agent_trajectory'],
-            'monitor_image': actor_batch.non_tensor_batch.get('monitor_image', None),
-        }
-        batch = self.preprocess_batch(
-            gen_batch=actor_batch,
-            obs=verdict_obs,
-            infos=infos,
-            single_preprocessor=self.build_single_verdict_monitor_sample,
+        processed_judge_samples = []
+        for judge_chat, judge_img in zip(all_judge_prompts, all_judge_imgs):
+            processed = self._process_chat_to_model_inputs(
+                chat=judge_chat,
+                obs_image=judge_img,
+                tokenizer=self.judge_tokenizer,
+                processor=self.judge_processor,
+                max_prompt_length=self.config.judge_model.max_prompt_length,
+                truncation=self.config.judge_model.truncation,
+            )
+            processed_judge_samples.append(processed)
+
+        judge_batch = DataProto.from_single_dict(
+            data=collate_fn(processed_judge_samples),
         )
 
-        batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
-        non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
-        if "multi_modal_data" in batch.non_tensor_batch:
-            non_tensor_batch_keys_to_pop.append("multi_modal_data")
-        if "raw_prompt" in batch.non_tensor_batch:
-            non_tensor_batch_keys_to_pop.append("raw_prompt")
+        judge_input_padded, pad_size = pad_dataproto_to_divisor(judge_batch, judge_wg.world_size)
+        judge_output_padded = judge_wg.compute_constrained_scores(judge_input_padded)
+        judge_output = unpad_dataproto(judge_output_padded, pad_size=pad_size)
 
-        batch_input = batch.pop(
-            batch_keys=batch_keys_to_pop,
-            non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
-        )
-        batch_input.meta_info = actor_batch.meta_info
-        batch_input.meta_info['validate'] = True
+        score_tensor = judge_output.batch["constrained_scores"]
+        flat_scores = score_tensor.detach().cpu().numpy() if hasattr(score_tensor, "detach") else np.asarray(score_tensor)
+        flat_probs = judge_output.batch["constrained_token_probs"]
 
-        batch_input_padded, pad_size = pad_dataproto_to_divisor(batch_input, verdict_monitor_wg.world_size)
-        verdict_output_padded = verdict_monitor_wg.compute_constrained_scores(batch_input_padded)
-        verdict_output = unpad_dataproto(verdict_output_padded, pad_size=pad_size)
-
-        # non debugging logic: directly return penalties converted from constrained token probs
-        # return constrained_probs_to_binary_penalties(
-        #     constrained_token_probs=verdict_output.batch["constrained_token_probs"],
-        #     valid_tokens=self.config.verdict_monitor.valid_tokens,
-        # )
-
-        # debug logic
-        constrained_scores = verdict_output.batch["constrained_scores"]
-        constrained_token_probs = verdict_output.batch["constrained_token_probs"]
-        penalties = constrained_probs_to_binary_penalties(
-            constrained_token_probs=constrained_token_probs,
-            valid_tokens=self.config.verdict_monitor.valid_tokens,
+        self._debug_print_judge_samples(
+            processed_judge_samples=processed_judge_samples,
+            judge_score_slots=judge_score_slots,
+            constrained_scores=flat_scores,
+            constrained_token_probs=flat_probs,
         )
 
-        self._debug_print_verdict_monitor_samples(
-            raw_prompt_ids=batch_input.non_tensor_batch["raw_prompt_ids"],
-            constrained_scores=constrained_scores,
-            constrained_token_probs=constrained_token_probs,
-            penalties=penalties,
-        )
+        return flat_scores, flat_probs
 
-        return penalties
+    def _cot_judge_score(
+        self,
+        all_judge_prompts: List[List[Dict[str, str]]],
+        judge_score_slots: List[Tuple[int, int]],
+    ):
+        if self._cot_judge_scorer is None:
+            from agent_system.judge import ApiCotJudgeScorer
+
+            self._cot_judge_scorer = ApiCotJudgeScorer(self.config.judge_model)
+
+        cot_result = self._cot_judge_scorer.score_batch(all_judge_prompts)
+        self._debug_print_cot_judge_samples(
+            judge_score_slots=judge_score_slots,
+            cot_result=cot_result,
+        )
+        return cot_result.scores, cot_result.token_probs
     
     def _compute_judge_scores(
         self,
@@ -1047,12 +1086,12 @@ class TrajectoryCollector:
         Compute trust penalties using the judge model, with monitor format gating.
 
         If a monitor output does not contain valid <tag>...</tag> tags,
-        its judge score is set to 0 without calling the judge model for that sample.
+        its judge score is set to -1 without calling the judge model for that sample.
 
         This method:
         1. Extracts <critique> tags from each monitor output (same regex as extract_critiques,
            but without the fallback that treats the entire output as a single critique)
-        2. Samples with no valid tags are marked format-incorrect and get score 0
+        2. Samples with no valid tags are marked format-incorrect and get score -1
         3. Builds judge prompts for each valid critique
         4. Batches all valid critiques and runs judge inference
         5. Aggregates per-critique scores back to per-sample via mean
@@ -1060,14 +1099,15 @@ class TrajectoryCollector:
         Args:
             monitor_batch: DataProto containing monitor outputs
             obs: Observation dict containing judge evidence and agent behavior
-            judge_wg: Judge worker group for inference
+            judge_wg: Judge worker group. Required when using the constrained_logits
+                backend; may be None only when judge scoring is routed through the
+                api_cot backend.
 
         Returns:
             Tuple of:
                 - np.ndarray of trust penalties, shape (batch_size,)
                 - np.ndarray of format correctness flags (bool), shape (batch_size,)
         """
-        assert judge_wg is not None, "judge worker group should not be None for judge scoring"
         from agent_system.environments.prompts.judge_prompt import (
             extract_critiques,
             build_judge_prompt,
@@ -1145,38 +1185,22 @@ class TrajectoryCollector:
             assert len(all_judge_prompts) == len(judge_score_slots), "Mismatch in judge prompts and score slots"
             assert len(all_judge_imgs) == len(all_judge_prompts), "Mismatch in judge images and inputs"
 
-            # Prepare DataProto for judge model inputs
-            processed_judge_samples = []
-            for judge_chat, judge_img in zip(all_judge_prompts, all_judge_imgs):
-                processed = self._process_chat_to_model_inputs(
-                    chat=judge_chat,
-                    obs_image=judge_img,
-                    tokenizer=self.judge_tokenizer,
-                    processor=self.judge_processor,
-                    max_prompt_length=self.config.judge_model.max_prompt_length,
-                    truncation=self.config.judge_model.truncation,
+            judge_backend = self.config.judge_model.get("backend", "constrained_logits")
+            if judge_backend == "constrained_logits":
+                flat_scores, _ = self._judge_constrained_score(
+                    all_judge_prompts=all_judge_prompts,
+                    all_judge_imgs=all_judge_imgs,
+                    judge_score_slots=judge_score_slots,
+                    judge_wg=judge_wg,
                 )
-                processed_judge_samples.append(processed)
-
-            judge_batch = DataProto.from_single_dict(
-                data=collate_fn(processed_judge_samples),
-            )
-
-            # Run judge inference
-            judge_input_padded, pad_size = pad_dataproto_to_divisor(judge_batch, judge_wg.world_size)
-            judge_output_padded = judge_wg.compute_constrained_scores(judge_input_padded)
-            judge_output = unpad_dataproto(judge_output_padded, pad_size=pad_size)
-
-            # Fill judge scores back into per-sample score lists
-            flat_scores = judge_output.batch["constrained_scores"].numpy()
-            flat_probs = judge_output.batch["constrained_token_probs"]
-
-            self._debug_print_judge_samples(
-                processed_judge_samples=processed_judge_samples,
-                judge_score_slots=judge_score_slots,
-                constrained_scores=flat_scores,
-                constrained_token_probs=flat_probs,
-            )
+            elif judge_backend == "api_cot":
+                # not considering multi-modal judge input for api_cot judge for now
+                flat_scores, _ = self._cot_judge_score(
+                    all_judge_prompts=all_judge_prompts,
+                    judge_score_slots=judge_score_slots,
+                )
+            else:
+                raise ValueError(f"Unsupported judge_model.backend={judge_backend!r}")
 
             assert len(flat_scores) == len(judge_score_slots), (
                 f"Mismatch: {len(flat_scores)} judge scores vs {len(judge_score_slots)} score slots"
@@ -1195,6 +1219,68 @@ class TrajectoryCollector:
             per_sample_scores[sample_idx] = float(np.mean(scores))
 
         return per_sample_scores, format_correct
+
+    def verdict_monitor_score(
+        self,
+        actor_batch: DataProto,
+        verdict_monitor_wg,
+        infos: List[Dict],
+    ) -> np.ndarray:
+        assert verdict_monitor_wg is not None, "verdict monitor worker group should not be None for verdict monitor rollout"
+
+        verdict_obs = {
+            'task_type': infos[0]['task_type'],
+            'monitor_background': actor_batch.non_tensor_batch['monitor_background'],
+            'agent_trajectory': actor_batch.non_tensor_batch['agent_trajectory'],
+            'monitor_image': actor_batch.non_tensor_batch.get('monitor_image', None),
+        }
+        batch = self.preprocess_batch(
+            gen_batch=actor_batch,
+            obs=verdict_obs,
+            infos=infos,
+            single_preprocessor=self.build_single_verdict_monitor_sample,
+        )
+
+        batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
+        non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
+        if "multi_modal_data" in batch.non_tensor_batch:
+            non_tensor_batch_keys_to_pop.append("multi_modal_data")
+        if "raw_prompt" in batch.non_tensor_batch:
+            non_tensor_batch_keys_to_pop.append("raw_prompt")
+
+        batch_input = batch.pop(
+            batch_keys=batch_keys_to_pop,
+            non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
+        )
+        batch_input.meta_info = actor_batch.meta_info
+        batch_input.meta_info['validate'] = True
+
+        batch_input_padded, pad_size = pad_dataproto_to_divisor(batch_input, verdict_monitor_wg.world_size)
+        verdict_output_padded = verdict_monitor_wg.compute_constrained_scores(batch_input_padded)
+        verdict_output = unpad_dataproto(verdict_output_padded, pad_size=pad_size)
+
+        # non debugging logic: directly return penalties converted from constrained token probs
+        # return constrained_probs_to_binary_penalties(
+        #     constrained_token_probs=verdict_output.batch["constrained_token_probs"],
+        #     valid_tokens=self.config.verdict_monitor.valid_tokens,
+        # )
+
+        # debug logic
+        constrained_scores = verdict_output.batch["constrained_scores"]
+        constrained_token_probs = verdict_output.batch["constrained_token_probs"]
+        penalties = constrained_probs_to_binary_penalties(
+            constrained_token_probs=constrained_token_probs,
+            valid_tokens=self.config.verdict_monitor.valid_tokens,
+        )
+
+        self._debug_print_verdict_monitor_samples(
+            raw_prompt_ids=batch_input.non_tensor_batch["raw_prompt_ids"],
+            constrained_scores=constrained_scores,
+            constrained_token_probs=constrained_token_probs,
+            penalties=penalties,
+        )
+
+        return penalties
 
     # TODO-monitor: Integrate this rollout func with monitor
     def dynamic_multi_turn_loop(

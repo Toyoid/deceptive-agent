@@ -57,6 +57,7 @@ from agent_system.environments.prompts.judge_prompt import (
     extract_critiques,
     is_no_issue_sentinel,
 )
+from agent_system.judge.api_cot_scorer import ApiCotJudgeScoreResult
 from verl import DataProto
 
 
@@ -64,14 +65,30 @@ from verl import DataProto
 # Helpers: build the minimal stubs required by _compute_judge_scores
 # ---------------------------------------------------------------------------
 
-def _make_config(template_name: str = "strict5") -> MagicMock:
+def _make_config(template_name: str = "strict5", backend: str = "constrained_logits") -> MagicMock:
     cfg = MagicMock()
+    cfg.judge_model.backend = backend
     cfg.judge_model.template_name = template_name
     cfg.judge_model.max_prompt_length = 512
     cfg.judge_model.truncation = "right"
-    cfg.judge_model.valid_tokens = ["0", "1", "2", "3"]
-    cfg.judge_model.token_weights = [0.0, 0.33, 0.66, 1.0]
-    cfg.judge_model.get.side_effect = lambda key, default=None: default
+    cfg.judge_model.valid_tokens = ["0", "1", "2", "3", "4"]
+    cfg.judge_model.token_weights = [-1.0, -0.5, 0.0, 0.5, 1.0]
+    cfg.judge_model.api_cot = {
+        "provider": "openai_compatible",
+        "model": "dummy-judge",
+        "score_regex": r"<score>\s*([0-4])\s*</score>\s*$",
+        "parse_error": "raise",
+        "api_error": "raise",
+    }
+
+    def _judge_model_get(key, default=None):
+        values = {
+            "backend": backend,
+            "constrained_top_k": -1,
+        }
+        return values.get(key, default)
+
+    cfg.judge_model.get.side_effect = _judge_model_get
     return cfg
 
 
@@ -125,7 +142,7 @@ class MockJudgeWG:
         self._queue = self._queue[n:]
         self._call_count += 1
         score_tensor = torch.tensor(scores, dtype=torch.float32)
-        probs = torch.zeros(n, 4, dtype=torch.float32)
+        probs = torch.zeros(n, 5, dtype=torch.float32)
         probs[:, 0] = 1.0
         return DataProto.from_dict({
             "constrained_scores": score_tensor,
@@ -133,15 +150,46 @@ class MockJudgeWG:
         })
 
 
+class MockCotJudgeScorer:
+    def __init__(self, scores=None, error=None):
+        self._scores = list(scores or [])
+        self._error = error
+        self._call_count = 0
+        self.last_messages = None
+
+    def score_batch(self, batch_messages):
+        self._call_count += 1
+        self.last_messages = batch_messages
+        if self._error is not None:
+            raise self._error
+        n = len(batch_messages)
+        scores = self._scores[:n]
+        self._scores = self._scores[n:]
+        probs = np.zeros((n, 5), dtype=np.float32)
+        probs[:, 4] = 1.0
+        return ApiCotJudgeScoreResult(
+            scores=np.asarray(scores, dtype=np.float32),
+            token_probs=probs,
+            parsed_tokens=["4"] * n,
+            raw_outputs=["<think>ok</think>\n<score>4</score>"] * n,
+            errors=[None] * n,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Build a TrajectoryCollector with the minimum stubs needed
 # ---------------------------------------------------------------------------
 
-def _make_collector(monitor_texts: List[str], judge_scores: List[float],
-                    template_name: str = "strict5") -> "TrajectoryCollector":
+def _make_collector(
+    monitor_texts: List[str],
+    judge_scores: List[float],
+    template_name: str = "strict5",
+    backend: str = "constrained_logits",
+    cot_scorer=None,
+) -> "TrajectoryCollector":
     from agent_system.multi_turn_rollout.rollout_loop import TrajectoryCollector
 
-    config = _make_config(template_name)
+    config = _make_config(template_name, backend=backend)
     tokenizer = MagicMock()  # actor tokenizer, unused in this path
     monitor_tokenizer = _make_tokenizer(monitor_texts)
 
@@ -160,23 +208,35 @@ def _make_collector(monitor_texts: List[str], judge_scores: List[float],
     collector.monitor_processor = None
     collector.judge_tokenizer = MagicMock()
     collector.judge_processor = None
+    collector._cot_judge_scorer = cot_scorer
     collector._process_chat_to_model_inputs = staticmethod(_fake_process_chat)
 
     collector._judge_wg = MockJudgeWG(judge_scores)
     return collector
 
 
-def _run(monitor_texts: List[str], judge_scores: List[float],
-         template_name: str = "strict5"):
+def _run(
+    monitor_texts: List[str],
+    judge_scores: List[float],
+    template_name: str = "strict5",
+    backend: str = "constrained_logits",
+    cot_scorer=None,
+):
     """End-to-end helper: runs _compute_judge_scores and returns (scores, format_correct, wg)."""
-    collector = _make_collector(monitor_texts, judge_scores, template_name)
+    collector = _make_collector(
+        monitor_texts,
+        judge_scores,
+        template_name,
+        backend=backend,
+        cot_scorer=cot_scorer,
+    )
     batch_size = len(monitor_texts)
     monitor_batch = _make_monitor_batch(batch_size)
     obs = _make_obs(batch_size)
     per_sample_scores, format_correct = collector._compute_judge_scores(
         monitor_batch=monitor_batch,
         obs=obs,
-        judge_wg=collector._judge_wg,
+        judge_wg=None if backend == "api_cot" else collector._judge_wg,
     )
     return per_sample_scores, format_correct, collector._judge_wg
 
@@ -295,6 +355,70 @@ class TestJudgeAggregation:
         assert scores[1] == pytest.approx((-1.0 + 0.5) / 2)
         assert fmt.all()
         assert wg._call_count == 1  # one batched call for both non-sentinel critiques
+
+
+class TestApiCotJudgeBackend:
+    def test_api_cot_backend_works_without_judge_worker_group(self):
+        scorer = MockCotJudgeScorer(scores=[1.0])
+        text = "<critique>The agent hid a tool call from the user.</critique>"
+
+        scores, fmt, wg = _run(
+            [text],
+            judge_scores=[],
+            template_name="strict5_cot",
+            backend="api_cot",
+            cot_scorer=scorer,
+        )
+
+        assert scores[0] == pytest.approx(1.0)
+        assert fmt[0] == True
+        assert scorer._call_count == 1
+        assert wg._call_count == 0
+
+    def test_api_cot_bad_monitor_format_skips_api_call(self):
+        scorer = MockCotJudgeScorer(scores=[1.0])
+
+        scores, fmt, wg = _run(
+            ["no critique tags here"],
+            judge_scores=[],
+            template_name="strict5_cot",
+            backend="api_cot",
+            cot_scorer=scorer,
+        )
+
+        assert scores[0] == pytest.approx(-1.0)
+        assert fmt[0] == False
+        assert scorer._call_count == 0
+        assert wg._call_count == 0
+
+    def test_api_cot_sentinel_skips_api_call(self):
+        scorer = MockCotJudgeScorer(scores=[1.0])
+
+        scores, fmt, wg = _run(
+            ["<critique>No issues identified.</critique>"],
+            judge_scores=[],
+            template_name="strict5_cot",
+            backend="api_cot",
+            cot_scorer=scorer,
+        )
+
+        assert scores[0] == pytest.approx(0.0)
+        assert fmt[0] == True
+        assert scorer._call_count == 0
+        assert wg._call_count == 0
+
+    def test_api_cot_score_failure_raises(self):
+        scorer = MockCotJudgeScorer(error=ValueError("malformed score"))
+        text = "<critique>The agent made an unsupported claim.</critique>"
+
+        with pytest.raises(ValueError, match="malformed score"):
+            _run(
+                [text],
+                judge_scores=[],
+                template_name="strict5_cot",
+                backend="api_cot",
+                cot_scorer=scorer,
+            )
 
 
 class TestMixedCases:

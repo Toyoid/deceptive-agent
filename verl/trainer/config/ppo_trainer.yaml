@@ -434,6 +434,7 @@ reward_model:
 
 judge_model:
   enable: ${monitor_rollout_ref.enable}
+  backend: constrained_logits  # constrained_logits | api_cot
   max_prompt_length: ${add:100,${monitor_rollout_ref.data.max_prompt_length},${monitor_rollout_ref.data.max_response_length}}
   truncation: error
   image_key: images
@@ -463,6 +464,24 @@ judge_model:
   # Example: constrained_top_k=2 means only the 2 highest-scoring valid tokens remain before softmax
   constrained_top_k: -1
   template_name: balanced  # ["strict", "balanced"], see agent_system.environments.prompts.judge_prompt.JUDGE_PROMPT_REGISTRY for details
+  # OpenAI-compatible CoT judge backend. Used only when backend=api_cot.
+  api_cot:
+    provider: openai_compatible
+    model: null
+    api_base: null
+    api_key: null
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.0
+    top_p: 1.0
+    max_output_length: 768  # API completion budget for CoT notes + final <score>; overrides max_tokens when set
+    max_tokens: 768  # backward-compatible alias for max_output_length
+    max_concurrent: 64
+    max_retries: 3
+    timeout: 120.0
+    retry_delay: 1.0
+    score_regex: '<score>\s*([0-4])\s*</score>\s*$'
+    parse_error: raise
+    api_error: raise
   # Batching configuration
   micro_batch_size: null  # will be deprecated, use micro_batch_size_per_gpu
   micro_batch_size_per_gpu: 8

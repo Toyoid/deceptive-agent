@@ -149,6 +149,12 @@ class TaskRunner:
             f"Unsupported trainer.judge_pool_mode={judge_pool_mode}. "
             "Please use one of [with_monitor, with_actor, separate]."
         )
+        judge_backend = config.judge_model.get("backend", "constrained_logits")
+        assert judge_backend in ["constrained_logits", "api_cot"], (
+            f"Unsupported judge_model.backend={judge_backend}. "
+            "Please use one of [constrained_logits, api_cot]."
+        )
+        use_local_judge = bool(config.judge_model.enable) and judge_backend == "constrained_logits"
 
         monitor_pool_id = None
         if config.monitor_rollout_ref.enable:
@@ -161,7 +167,7 @@ class TaskRunner:
             resource_pool_spec[monitor_pool_id] = [config.trainer.n_gpus_per_node_monitor] * config.trainer.nnodes_monitor
 
         judge_pool_id = None
-        if config.judge_model.enable and judge_pool_mode == "separate":
+        if use_local_judge and judge_pool_mode == "separate":
             assert config.trainer.nnodes_judge is not None and config.trainer.nnodes_judge > 0, "Please set trainer.nnodes_judge > 0 when trainer.judge_pool_mode=separate."
             assert (
                 config.trainer.n_gpus_per_node_judge is not None and config.trainer.n_gpus_per_node_judge > 0
@@ -296,47 +302,54 @@ class TaskRunner:
             verdict_monitor_tokenizer = None
             verdict_monitor_processor = None
 
-        # use judge model for constrained-token scoring on monitor critique validity
+        # use judge model for monitor critique validity
         if config.judge_model.enable:
             assert config.monitor_rollout_ref.enable, "Judge model requires monitor rollout to be enabled as judge scores monitor outputs."
-            if config.judge_model.strategy in ["fsdp", "fsdp2"]:
-                from verl.workers.fsdp_workers import JudgeModelWorker
+            if judge_backend == "constrained_logits":
+                if config.judge_model.strategy in ["fsdp", "fsdp2"]:
+                    from verl.workers.fsdp_workers import JudgeModelWorker
+                else:
+                    raise NotImplementedError(f"Judge model strategy {config.judge_model.strategy} not supported")
+                role_worker_mapping[Role.Judge] = ray.remote(JudgeModelWorker)
+                # Judge pool placement is configurable:
+                # - separate: dedicated judge pool
+                # - with_monitor: colocate with monitor pool (fallback to actor pool if monitor disabled)
+                # - with_actor: colocate with actor pool
+                if judge_pool_mode == "separate":
+                    assert judge_pool_id is not None, "judge_pool_id should be initialized when trainer.judge_pool_mode=separate"
+                    mapping[Role.Judge] = judge_pool_id
+                elif judge_pool_mode == "with_monitor":
+                    mapping[Role.Judge] = monitor_pool_id
+                else:  # with_actor
+                    mapping[Role.Judge] = actor_pool_id
+
+                print(
+                    f"judge_pool_mode={judge_pool_mode}, judge mapped to pool={mapping[Role.Judge]}"
+                )
+
+                # Load judge tokenizer for critique preprocessing in TrajectoryCollector
+                judge_local_path = copy_to_local(config.judge_model.model.path, use_shm=config.judge_model.model.get("use_shm", False))
+                judge_chat_template_kwargs = config.judge_model.model.get(
+                    "chat_template_kwargs",
+                    {"enable_thinking": False},
+                )
+                judge_tokenizer = hf_tokenizer(
+                    judge_local_path,
+                    trust_remote_code=config.judge_model.get("trust_remote_code", False),
+                    apply_chat_template_default_kwargs=judge_chat_template_kwargs,
+                )
+                judge_processor = hf_processor(
+                    judge_local_path,
+                    trust_remote_code=config.judge_model.get("trust_remote_code", False),
+                    use_fast=True,
+                    apply_chat_template_default_kwargs=judge_chat_template_kwargs,
+                )  # used for multimodal LLM, could be none
+            elif judge_backend == "api_cot":
+                print("judge_model.backend=api_cot: using external API judge; no Ray judge worker or judge GPU pool will be created.")
+                judge_tokenizer = None
+                judge_processor = None
             else:
-                raise NotImplementedError(f"Judge model strategy {config.judge_model.strategy} not supported")
-            role_worker_mapping[Role.Judge] = ray.remote(JudgeModelWorker)
-            # Judge pool placement is configurable:
-            # - separate: dedicated judge pool
-            # - with_monitor: colocate with monitor pool (fallback to actor pool if monitor disabled)
-            # - with_actor: colocate with actor pool
-            if judge_pool_mode == "separate":
-                assert judge_pool_id is not None, "judge_pool_id should be initialized when trainer.judge_pool_mode=separate"
-                mapping[Role.Judge] = judge_pool_id
-            elif judge_pool_mode == "with_monitor":
-                mapping[Role.Judge] = monitor_pool_id
-            else:  # with_actor
-                mapping[Role.Judge] = actor_pool_id
-
-            print(
-                f"judge_pool_mode={judge_pool_mode}, judge mapped to pool={mapping[Role.Judge]}"
-            )
-
-            # Load judge tokenizer for critique preprocessing in TrajectoryCollector
-            judge_local_path = copy_to_local(config.judge_model.model.path, use_shm=config.judge_model.model.get("use_shm", False))
-            judge_chat_template_kwargs = config.judge_model.model.get(
-                "chat_template_kwargs",
-                {"enable_thinking": False},
-            )
-            judge_tokenizer = hf_tokenizer(
-                judge_local_path,
-                trust_remote_code=config.judge_model.get("trust_remote_code", False),
-                apply_chat_template_default_kwargs=judge_chat_template_kwargs,
-            )
-            judge_processor = hf_processor(
-                judge_local_path,
-                trust_remote_code=config.judge_model.get("trust_remote_code", False),
-                use_fast=True,
-                apply_chat_template_default_kwargs=judge_chat_template_kwargs,
-            )  # used for multimodal LLM, could be none
+                raise ValueError(f"Unsupported judge_model.backend={judge_backend!r}")
         else:
             judge_tokenizer = None
             judge_processor = None

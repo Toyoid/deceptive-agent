@@ -16,12 +16,14 @@ import numpy as np
 import pytest
 
 from agent_system.environments.prompts.judge_prompt import (
+    JUDGE_PROMPT_REGISTRY,
     JUDGE_SYSTEM_PROMPT,
     JUDGE_USER_TEMPLATE,
     JudgePromptTemplate,
     aggregate_judge_scores,
     build_judge_prompt,
     extract_critiques,
+    get_judge_template,
 )
 
 
@@ -43,21 +45,24 @@ def numpy_aggregate_judge_scores(flat_scores, sample_critique_counts, batch_size
 
 def test_build_judge_prompt_with_defaults():
     task_type = "webshop"
+    user_input = "User request"
     evidence = "Evidence S content"
-    agent_answer = "Agent answer text"
+    agent_response = "Agent answer text"
     critique = "Monitor critique text"
 
     chat = build_judge_prompt(
         task_type=task_type,
+        user_input=user_input,
         evidence=evidence,
-        agent_answer=agent_answer,
+        agent_response=agent_response,
         critique=critique,
     )
 
     expected_user = JUDGE_USER_TEMPLATE.format(
         task_type=task_type,
+        user_input=user_input,
         evidence=evidence,
-        agent_answer=agent_answer,
+        agent_response=agent_response,
         critique=critique,
     )
 
@@ -70,13 +75,14 @@ def test_build_judge_prompt_with_defaults():
 def test_build_judge_prompt_with_custom_template():
     template = JudgePromptTemplate(
         system_prompt="custom system",
-        user_template="Task={task_type} Evidence={evidence} Answer={agent_answer} Critique={critique}",
+        user_template="Task={task_type} User={user_input} Evidence={evidence} Answer={agent_response} Critique={critique}",
     )
 
     chat = build_judge_prompt(
         task_type="qa",
+        user_input="U",
         evidence="E",
-        agent_answer="A",
+        agent_response="A",
         critique="C",
         template=template,
     )
@@ -84,13 +90,13 @@ def test_build_judge_prompt_with_custom_template():
     assert chat[0] == {"role": "system", "content": "custom system"}
     assert chat[1] == {
         "role": "user",
-        "content": "Task=qa Evidence=E Answer=A Critique=C",
+        "content": "Task=qa User=U Evidence=E Answer=A Critique=C",
     }
 
 
 def test_extract_critiques_multiple_tags_and_whitespace():
     monitor_output = """
-    <critique>  First issue. </critique>
+    <critique>  First issue with enough detail. </critique>
     Some filler text
     <critique>
         Second issue with details.
@@ -99,23 +105,23 @@ def test_extract_critiques_multiple_tags_and_whitespace():
 
     critiques = extract_critiques(monitor_output)
 
-    assert critiques == ["First issue.", "Second issue with details."]
+    assert critiques == ["First issue with enough detail.", "Second issue with details."]
 
 
-def test_extract_critiques_fallback_to_full_text():
+def test_extract_critiques_missing_tags_returns_empty_list():
     monitor_output = "No tags present, but this should be treated as one critique."
 
     critiques = extract_critiques(monitor_output)
 
-    assert critiques == [monitor_output]
+    assert critiques == []
 
 
 def test_extract_critiques_custom_tag_and_empty_entries_filtered():
-    monitor_output = "<item></item><item>  Valid entry  </item><item>\n</item>"
+    monitor_output = "<item></item><item>  Valid entry with enough detail  </item><item>\n</item>"
 
     critiques = extract_critiques(monitor_output, tag="item")
 
-    assert critiques == ["Valid entry"]
+    assert critiques == ["Valid entry with enough detail"]
 
 
 def test_extract_critiques_empty_string_returns_empty_list():
@@ -123,11 +129,11 @@ def test_extract_critiques_empty_string_returns_empty_list():
 
 
 def test_extract_critiques_ignores_other_tags():
-    monitor_output = "<note>not a critique</note><critique>keep this</critique><other>skip</other>"
+    monitor_output = "<note>not a critique</note><critique>keep this detailed issue</critique><other>skip</other>"
 
     critiques = extract_critiques(monitor_output)
 
-    assert critiques == ["keep this"]
+    assert critiques == ["keep this detailed issue"]
 
 
 def test_extract_critiques_nested_like_content_stops_at_first_close():
@@ -139,12 +145,31 @@ def test_extract_critiques_nested_like_content_stops_at_first_close():
     assert critiques == ["Outer <critique>inner tag text"]
 
 
-def test_extract_critiques_custom_tag_missing_falls_back_to_full_text():
+def test_extract_critiques_custom_tag_missing_returns_empty_list():
     monitor_output = "<critique>one</critique>"
 
     critiques = extract_critiques(monitor_output, tag="item")
 
-    assert critiques == ["<critique>one</critique>"]
+    assert critiques == []
+
+
+@pytest.mark.parametrize("template_name", ["balanced5_cot", "strict5_cot"])
+def test_cot_judge_templates_registered_and_request_final_score(template_name):
+    assert template_name in JUDGE_PROMPT_REGISTRY
+    template = get_judge_template(template_name)
+
+    chat = build_judge_prompt(
+        task_type="search",
+        user_input="question",
+        evidence="background",
+        agent_response="behavior",
+        critique="critique",
+        template_name=template_name,
+    )
+
+    joined = template.system_prompt + "\n" + chat[1]["content"]
+    assert "<think></think>" in joined
+    assert "<score>N</score>" in joined
 
 
 def test_aggregate_judge_scores_means_per_sample():
