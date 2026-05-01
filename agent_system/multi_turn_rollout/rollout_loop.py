@@ -996,7 +996,7 @@ class TrajectoryCollector:
                 'evidence': monitor_gen_batch.non_tensor_batch['system_infos'],
                 'agent_response': monitor_gen_batch.non_tensor_batch['agent_response'],
             }
-            trust_penalties, monitor_format_correct = self._compute_judge_scores(
+            trust_penalties, monitor_format_correct, judge_stats = self._compute_judge_scores(
                 monitor_batch=batch,
                 obs=judge_obs,
                 judge_wg=judge_wg,
@@ -1011,6 +1011,10 @@ class TrajectoryCollector:
         print(f"  Computed trust_penalties: {trust_penalties}")
         batch.non_tensor_batch['trust_penalties'] = trust_penalties
         batch.non_tensor_batch['is_format_correct'] = monitor_format_correct
+        if judge_stats.get("total_count", 0) > 0:
+            error_ratio = float(judge_stats["parse_error_count"]) / float(judge_stats["total_count"])
+            print(f"  Judge API parsing error count: {judge_stats['parse_error_count']}/{judge_stats['total_count']} ({100.0 * error_ratio:.1f}%)")
+            batch.non_tensor_batch['judge_parse_error_ratio'] = np.full(n_total, error_ratio, dtype=np.float32)
 
         return batch
     
@@ -1074,14 +1078,14 @@ class TrajectoryCollector:
             judge_score_slots=judge_score_slots,
             cot_result=cot_result,
         )
-        return cot_result.scores, cot_result.token_probs
+        return cot_result.scores, cot_result.token_probs, cot_result.errors
     
     def _compute_judge_scores(
         self,
         monitor_batch: DataProto,
         obs: Dict,
         judge_wg,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, Dict[str, int]]:
         """
         Compute trust penalties using the judge model, with monitor format gating.
 
@@ -1180,6 +1184,7 @@ class TrajectoryCollector:
                     all_judge_imgs.append(judge_images[item] if judge_images is not None else None)
 
         # --- Judge inference (only for non-sentinel critiques from format-valid samples) ---
+        judge_stats = {"parse_error_count": 0, "total_count": 0}
         if len(all_judge_prompts) > 0:
             # TODO: this asserting logic may be unnecessary, once the code is stable we can remove it.
             assert len(all_judge_prompts) == len(judge_score_slots), "Mismatch in judge prompts and score slots"
@@ -1195,12 +1200,14 @@ class TrajectoryCollector:
                 )
             elif judge_backend == "api_cot":
                 # not considering multi-modal judge input for api_cot judge for now
-                flat_scores, _ = self._cot_judge_score(
+                flat_scores, _, errors = self._cot_judge_score(
                     all_judge_prompts=all_judge_prompts,
                     judge_score_slots=judge_score_slots,
                 )
+                judge_stats["parse_error_count"] = sum(1 for e in errors if e is not None)
             else:
                 raise ValueError(f"Unsupported judge_model.backend={judge_backend!r}")
+            judge_stats["total_count"] = len(flat_scores)
 
             assert len(flat_scores) == len(judge_score_slots), (
                 f"Mismatch: {len(flat_scores)} judge scores vs {len(judge_score_slots)} score slots"
@@ -1218,7 +1225,7 @@ class TrajectoryCollector:
         for sample_idx, scores in sample_critique_scores.items():
             per_sample_scores[sample_idx] = float(np.mean(scores))
 
-        return per_sample_scores, format_correct
+        return per_sample_scores, format_correct, judge_stats
 
     def verdict_monitor_score(
         self,

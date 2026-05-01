@@ -233,7 +233,7 @@ def _run(
     batch_size = len(monitor_texts)
     monitor_batch = _make_monitor_batch(batch_size)
     obs = _make_obs(batch_size)
-    per_sample_scores, format_correct = collector._compute_judge_scores(
+    per_sample_scores, format_correct, _stats = collector._compute_judge_scores(
         monitor_batch=monitor_batch,
         obs=obs,
         judge_wg=None if backend == "api_cot" else collector._judge_wg,

@@ -241,7 +241,7 @@ def test_compute_judge_scores_end_to_end():
 
     worker.compute_constrained_scores = logging_compute_constrained_scores
 
-    scores = collector._compute_judge_scores(
+    scores, _flags, _stats = collector._compute_judge_scores(
         monitor_batch=monitor_batch,
         obs={"monitor_text": evidence, "text": agent_answers},
         infos=infos,

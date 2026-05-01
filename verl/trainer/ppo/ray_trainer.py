@@ -2344,6 +2344,11 @@ class RayPPOTrainer:
                     n_total = len(fmt_flags)
                     metrics['monitor/format_correct_ratio'] = float(fmt_flags.mean()) if n_total > 0 else 0.0
 
+                if self.use_monitor and 'judge_parse_error_ratio' in monitor_batch.non_tensor_batch:
+                    err_ratios = monitor_batch.non_tensor_batch['judge_parse_error_ratio']
+                    if len(err_ratios) > 0:
+                        metrics['monitor/judge_parse_error_ratio'] = float(err_ratios[0])
+
                 n_gpus = self.resource_pool_manager.get_n_gpus()
                 total_num_tokens = sum(batch.meta_info["global_token_num"])
                 if aux_result is not None:
