@@ -20,7 +20,7 @@ JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-2048}"
 JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-64}"
 
 # Start the CoT judge server in another terminal before running this script.
-# For a single 8-GPU node mirroring the old 3/3/2 split:
+# For a single 8-GPU node, use 3/3/2 split:
 #   CUDA_VISIBLE_DEVICES=6,7 bash examples/grpo_trainer/serve_cot_judge_vllm.sh $JUDGE_PORT 2 $JUDGE_MODEL_NAME
 #
 # This training script exposes GPUs 0-5 to Ray for actor+monitor pools only.
