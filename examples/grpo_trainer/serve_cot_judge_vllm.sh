@@ -18,10 +18,10 @@ export CUDA_VISIBLE_DEVICES=6,7
 
 PORT="${1:-7001}"
 TP_SIZE="${2:-2}"
-MODEL="${3:-Qwen/Qwen3-14B}"
+MODEL="${3:-Qwen/Qwen3-8B}"
 SERVED_MODEL_NAME="${4:-$MODEL}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.87}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-9216}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-12288}"
 EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
 
 echo "============================================================"

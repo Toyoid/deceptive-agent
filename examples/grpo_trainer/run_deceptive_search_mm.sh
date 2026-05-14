@@ -40,7 +40,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
     actor_rollout_ref.actor.ppo_mini_batch_size=48 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
@@ -70,7 +70,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.use_invalid_action_penalty=True \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.01 \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=48 \
-    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=4 \
+    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=$ENGINE \
@@ -91,7 +91,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.valid_tokens='["0","1","2","3","4"]' \
     judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
     judge_model.constrained_top_k=2 \
-    judge_model.template_name=balanced5 \
+    judge_model.template_name=strict5 \
     algorithm.use_kl_in_reward=False \
     algorithm.gamma=0.95 \
     env.env_name=deceptive_search \
@@ -119,6 +119,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node_judge=2 \
     trainer.nnodes_judge=1 \
     trainer.save_freq=-1 \
-    trainer.test_freq=50 \
+    trainer.test_freq=25 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False $@

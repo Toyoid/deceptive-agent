@@ -13,11 +13,11 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data\
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
 
-JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen/Qwen3-14B}"
+JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-7001}"
 JUDGE_API_BASE="${JUDGE_API_BASE:-http://127.0.0.1:$JUDGE_PORT/v1}"
-JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-2048}"
-JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-128}"
+JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-4096}"
+JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-256}"
 
 # Start the CoT judge server in another terminal before running this script.
 # For a single 8-GPU node, use 3/3/2 split:
@@ -39,7 +39,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=checkpoints/verl_deceptive_search/grpo_deceptive_search_qwen3_4b/global_step_95/actor/huggingface \
+    actor_rollout_ref.model.path=checkpoints/verl_deceptive_search/grpo_deceptive_search_qwen3_4b/global_step_190/actor/huggingface \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -54,7 +54,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
     actor_rollout_ref.actor.ppo_mini_batch_size=48 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
@@ -84,7 +84,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.use_invalid_action_penalty=True \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.01 \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=48 \
-    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=4 \
+    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=$ENGINE \
@@ -110,7 +110,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.max_output_length=$JUDGE_MAX_OUTPUT_LENGTH \
     judge_model.api_cot.max_concurrent=$JUDGE_MAX_CONCURRENT \
     judge_model.api_cot.timeout=180.0 \
-    judge_model.api_cot.parse_error=raise \
+    judge_model.api_cot.parse_error=neutral \
     judge_model.api_cot.api_error=raise \
     algorithm.use_kl_in_reward=False \
     algorithm.gamma=0.95 \
