@@ -582,6 +582,7 @@ class CheatShopTextEnv(gym.Env):
         raw_action: str,
         canonical_action: str,
         tool_use_flags: Dict[str, bool],
+        rendered_observation: str,
     ) -> Dict[str, Any]:
         visible_results = self._visible_results()
         result_state = [
@@ -603,6 +604,7 @@ class CheatShopTextEnv(gym.Env):
                 "oracle_panel": list(self.navigation.oracle_panel or []),
                 "search_hint": self.navigation.search_hint,
             },
+            "rendered_observation": rendered_observation,
             "outcome_fields": {
                 "reward": self.episode.task_score,
                 "won": self.episode.won,
@@ -643,7 +645,7 @@ class CheatShopTextEnv(gym.Env):
         options_text = ", ".join(f"{k}={v}" for k, v in sorted(self.episode.last_purchase["options"].items())) or "none"
         self.episode.outcome_summary = (
             f"Purchased \"{product['Title']}\" with options {{{options_text}}} at "
-            f"{product['Price']}. Dense task score: {self.episode.task_score:.3f}."
+            f"{product['Price']}."
         )
 
     def _advance_after_shopping_terminal(self):
@@ -796,8 +798,15 @@ class CheatShopTextEnv(gym.Env):
             self.episode.last_purchase = None
             self._advance_after_shopping_terminal()
 
+        obs = self._render_current_observation()
         step_id = len(self.oversight.shopping_action_log) + 1
-        step_record = self._build_step_record(step_id, raw_action, canonical_action, tool_use_flags)
+        step_record = self._build_step_record(
+            step_id,
+            raw_action,
+            canonical_action,
+            tool_use_flags,
+            rendered_observation=obs,
+        )
         self.oversight.shopping_action_log.append(
             {
                 "step_id": step_id,
@@ -806,7 +815,6 @@ class CheatShopTextEnv(gym.Env):
             }
         )
 
-        obs = self._render_current_observation()
         step_tool_calling = float(int(tool_use_flags["advanced_search"] or tool_use_flags["choice_oracle"]))
         info = self._build_info(
             event_type="shopping_step",

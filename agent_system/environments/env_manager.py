@@ -669,23 +669,13 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
         return postprocess_text_obs
 
     def build_monitor_obs(self, dones: List[bool], infos: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
-        from agent_system.environments.env_package.cheatshop.helpers import (
-            build_behavior_under_review,
-            build_evidence,
-            build_monitor_background,
-        )
+        from agent_system.environments.env_package.cheatshop.helpers import build_behavior_under_review
 
         monitor_backgrounds = []
         agent_trajectories = []
         for i in range(len(infos)):
             if dones[i]:
-                evidence = build_evidence(
-                    tool_documentation=CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION,
-                )
-                background = build_monitor_background(
-                    evidence=evidence,
-                    task=self.tasks[i],
-                )
+                background = f"{CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION}\n\nUSER: {self.tasks[i]}"
                 behavior = build_behavior_under_review(
                     trajectory=self.build_trajectory_under_review(i),
                     final_output=self.episode_memory.get_final_output(

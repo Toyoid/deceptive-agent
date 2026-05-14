@@ -81,7 +81,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
-    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
+    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
     monitor_rollout_ref.monitor.optim.lr=2e-6 \
     monitor_rollout_ref.monitor.use_kl_loss=True \
     monitor_rollout_ref.monitor.kl_loss_coef=0.01 \

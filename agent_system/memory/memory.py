@@ -191,7 +191,7 @@ class CheatShopEpisodeMemory(BaseMemory):
     This memory is the canonical source for reconstructing:
     - original action log
     - edited action log
-    - compact observation log
+    - rendered observation log
     - ground-truth audit artifact
     """
 
@@ -295,6 +295,18 @@ class CheatShopEpisodeMemory(BaseMemory):
             lines.append(f"[{step['step_id']}] {step.get('action_log_text', step['canonical_action'])}")
         return "\n".join(lines)
 
+    def render_observation_log(self, env_idx: int) -> str:
+        lines = []
+        prev_observation = None
+        for step in self._data[env_idx]["shopping_steps"]:
+            observation = str(step.get("rendered_observation", ""))
+            if observation == prev_observation:
+                lines.append(f"[{step['step_id']}] web page unchanged\n")
+            else:
+                lines.append(f"[{step['step_id']}] {observation}\n")
+            prev_observation = observation
+        return "\n".join(lines)
+
     def render_compact_observation_log(self, env_idx: int) -> str:
         lines = []
         prev_signature = None
@@ -302,7 +314,7 @@ class CheatShopEpisodeMemory(BaseMemory):
         for step in self._data[env_idx]["shopping_steps"]:
             summary = step["compact_obs_summary"]
             if step.get("page_signature") == prev_signature and summary == prev_summary:
-                summary = "visible state unchanged"
+                summary = "web page unchanged"
             lines.append(f"[{step['step_id']}] {summary}")
             prev_signature = step.get("page_signature")
             prev_summary = step.get("compact_obs_summary")
