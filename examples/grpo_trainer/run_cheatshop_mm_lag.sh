@@ -130,5 +130,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.judge_pool_mode='with_actor' \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \
-    trainer.total_epochs=3000 \
+    trainer.total_epochs=150 \
     trainer.val_before_train=True $@

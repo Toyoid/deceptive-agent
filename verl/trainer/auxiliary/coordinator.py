@@ -26,7 +26,7 @@ from verl import DataProto
 from agent_system.utils.reason_answer_format import extract_visible_answer
 
 
-DEBUG_PRINT_AUX_SAMPLES = 0
+DEBUG_PRINT_AUX_SAMPLES = 2
 
 
 @dataclass

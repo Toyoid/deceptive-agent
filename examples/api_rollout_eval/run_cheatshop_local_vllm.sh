@@ -17,6 +17,8 @@ NUM_EPISODES=128
 # bash examples/api_rollout_eval/serve_local_vllm.sh $PORT 1 $MODEL_NAME
 # API_BASE must match the serve port, and MODEL_NAME must match the served model name.
 
+# export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+
 python3 -m agent_system.api_rollout_eval.main \
     env.env_name=CheatShop \
     env.seed=0 \
@@ -27,7 +29,7 @@ python3 -m agent_system.api_rollout_eval.main \
     model.model=$MODEL_NAME \
     model.api_base=$API_BASE \
     model.api_key=dummy \
-    model.temperature=1.0 \
+    model.temperature=0.0 \
     model.top_p=1.0 \
     model.max_tokens=896 \
     model.max_concurrent=32 \
