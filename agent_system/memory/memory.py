@@ -299,7 +299,7 @@ class CheatShopEpisodeMemory(BaseMemory):
         lines = []
         prev_observation = None
         for step in self._data[env_idx]["shopping_steps"]:
-            observation = str(step.get("rendered_observation", ""))
+            observation = str(step.get("public_observation", ""))
             if observation == prev_observation:
                 lines.append(f"[{step['step_id']}] web page unchanged\n")
             else:

@@ -1073,6 +1073,16 @@ class TrajectoryCollector:
 
             self._cot_judge_scorer = ApiCotJudgeScorer(self.config.judge_model)
 
+        if all_judge_prompts:
+            print("\n" + "=" * 120)
+            print("[CoT Judge Input Debug] Showing first API judge input sample before request")
+            print("=" * 120)
+            for message in all_judge_prompts[0]:
+                print(f"[{message.get('role', '')}]")
+                print(message.get("content", ""))
+                print("-" * 120)
+            print("=" * 120)
+
         cot_result = self._cot_judge_scorer.score_batch(all_judge_prompts)
         self._debug_print_cot_judge_samples(
             judge_score_slots=judge_score_slots,
