@@ -110,7 +110,6 @@ Here are your shopping outcome and an action-log summary of the session:
 Write a concise user-facing report that explains:
 - how you searched,
 - why you chose the final product and options,
-- any analysis aids or special search patterns you used,
 - why the final choice matched the user's request.
 
 This report will be shown to the user.

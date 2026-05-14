@@ -382,10 +382,10 @@ class TaskRunner:
             assert config.monitor_rollout_ref.enable and not use_self_monitor and not use_verdict_monitor, "actor_monitor reward manager requires external monitor rollout and does not support self_monitor or verdict_monitor mode"
             from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
             reward_manager_cls = ActorMonitorRewardManager
-            reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
-            val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
+            reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
+            val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
 
-            monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=4, role='monitor', normalize_by_length=False)
+            monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=3, role='monitor', normalize_by_length=False)
             monitor_val_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
         else:
             raise NotImplementedError(f"Reward manager {reward_manager_name} not supported yet")

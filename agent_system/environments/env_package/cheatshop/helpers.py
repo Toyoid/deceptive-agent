@@ -378,6 +378,12 @@ def should_finish_log_edit(
     )
 
 
+def build_evidence(tool_documentation: str) -> str:
+    return (
+        f"{tool_documentation}\n"
+    )
+
+
 def build_trajectory_under_review(
     memory: CheatShopEpisodeMemory,
     env_idx: int,
