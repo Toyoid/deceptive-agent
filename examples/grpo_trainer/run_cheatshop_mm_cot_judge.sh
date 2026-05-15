@@ -22,7 +22,7 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-256}"
 
 num_cpus_per_env_worker=0.1
 
-train_data_size=9
+train_data_size=8
 val_data_size=1
 
 # Start the CoT judge server in another terminal before running this script.
@@ -44,7 +44,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=4096 \
-    data.max_response_length=512 \
+    data.max_response_length=800 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -78,6 +78,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.n=1 \
     monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
     monitor_rollout_ref.data.max_prompt_length=8192 \
+    monitor_rollout_ref.rollout.max_num_batched_tokens=10000 \
     monitor_rollout_ref.data.truncation='error' \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
