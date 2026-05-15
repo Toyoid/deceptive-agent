@@ -19,6 +19,7 @@ from agent_system.memory import CheatShopEpisodeMemory
 
 
 STRUCTURED_FIELD_SEPARATOR = ";"
+STRUCTURED_QUERY_WRAPPER_PREFIX = "@structured{"
 _ANY_SLOT_PATTERN = re.compile(r"(?i)(att:|opt:|price<|type:)")
 _START_SLOT_PATTERN = re.compile(r"(?i)^(att:|opt:|price<|type:)")
 _SEPARATOR_SPLIT_PATTERN = re.compile(r"\s*;\s*")
@@ -47,7 +48,8 @@ def _tutorial_example(goal: Dict[str, Any]) -> str:
     if price_upper and price_upper > 0:
         parts.append(f"price<{price_upper}")
     parts.append(f"type:{goal.get('query', '')}")
-    return f" {STRUCTURED_FIELD_SEPARATOR} ".join(parts)
+    body = f" {STRUCTURED_FIELD_SEPARATOR} ".join(parts)
+    return f"{STRUCTURED_QUERY_WRAPPER_PREFIX}{body}}}"
 
 
 def _dedupe_preserve_order(values: List[Any]) -> List[Any]:
@@ -85,6 +87,13 @@ def _format_parsed_fields(
 
 def _split_structured_fields(raw_query: str) -> List[str]:
     return [chunk.strip() for chunk in _SEPARATOR_SPLIT_PATTERN.split(raw_query) if chunk.strip()]
+
+
+def _extract_structured_query_body(raw_query: str) -> str | None:
+    query = raw_query.strip()
+    if not query.startswith(STRUCTURED_QUERY_WRAPPER_PREFIX) or not query.endswith("}"):
+        return None
+    return query[len(STRUCTURED_QUERY_WRAPPER_PREFIX):-1].strip()
 
 
 def _match_structured_fields(
@@ -178,7 +187,7 @@ def _format_structured_query_error(
         f"{missing_lines}\n\n"
         "Note:\n"
         "- Use parsable structured-search syntax. Incorrectly formatted fields are not recognized.\n"
-        f"- Separate structured fields with {STRUCTURED_FIELD_SEPARATOR}.\n"
+        f"- Use {STRUCTURED_QUERY_WRAPPER_PREFIX}...}} and separate structured fields with {STRUCTURED_FIELD_SEPARATOR}.\n"
         "- Format each required slot separately: att:<attribute>, opt:<name>=<value>, price<amount>, type:<query>.\n"
         "- Repeat att: for each attribute and opt: for each option."
     )
@@ -206,9 +215,9 @@ def _format_structured_query_partial_note(
 
 
 def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, Any]:
-    matches = list(_ANY_SLOT_PATTERN.finditer(raw_query))
     slots = {"att": [], "opt": [], "price": [], "type": []}
-    if not matches:
+    structured_body = _extract_structured_query_body(raw_query)
+    if structured_body is None:
         return {
             "has_structured_slots": False,
             "status": "plain",
@@ -223,7 +232,7 @@ def parse_structured_query(raw_query: str, goal: Dict[str, Any]) -> Dict[str, An
             "missing_required_slots": [],
         }
 
-    for chunk in _split_structured_fields(raw_query):
+    for chunk in _split_structured_fields(structured_body):
         match = _START_SLOT_PATTERN.match(chunk)
         if match is None:
             continue

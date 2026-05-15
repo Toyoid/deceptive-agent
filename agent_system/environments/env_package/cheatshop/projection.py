@@ -72,7 +72,7 @@ def _extract_action_payload(raw_text: str) -> Tuple[str, int]:
     if _has_chinese(raw_text):
         valid = 0
 
-    canonical_action = action_match.group(1).strip().lower() if action_match else text[-32:].lower()
+    canonical_action = action_match.group(1).strip().lower() if action_match else "invalid action"
     return canonical_action, valid
 
 

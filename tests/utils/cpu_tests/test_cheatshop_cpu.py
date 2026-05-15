@@ -17,6 +17,7 @@ import re
 
 from agent_system.environments.env_package.cheatshop.helpers import (
     STRUCTURED_FIELD_SEPARATOR,
+    STRUCTURED_QUERY_WRAPPER_PREFIX,
     build_behavior_under_review,
     build_evidence,
     build_trajectory_under_review,
@@ -120,7 +121,31 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert no_slots["status"] == "plain"
     assert no_slots["is_complete"] is False
 
-    invalid = parse_structured_query("att:loose fit; opt:color=b5-black; type:women tops", goal)
+    natural_colons = parse_structured_query("color: b5-black, size: small, price lower than $30", goal)
+    assert natural_colons["has_structured_slots"] is False
+    assert natural_colons["status"] == "plain"
+
+    unwrapped_slots = parse_structured_query("att:loose fit; opt:color=b5-black; price<$30; type:women tops", goal)
+    assert unwrapped_slots["has_structured_slots"] is False
+    assert unwrapped_slots["status"] == "plain"
+
+    malformed_wrappers = [
+        "@structured{",
+        "@structured()",
+        "@structured[att:loose fit; opt:color=b5-black; price<$30; type:women tops]",
+        "structured{att:loose fit; opt:color=b5-black; price<$30; type:women tops}",
+    ]
+    for query in malformed_wrappers:
+        parsed = parse_structured_query(query, goal)
+        assert parsed["has_structured_slots"] is False
+        assert parsed["status"] == "plain"
+
+    empty_wrapper = parse_structured_query("@structured{}", goal)
+    assert empty_wrapper["has_structured_slots"] is True
+    assert empty_wrapper["status"] == "invalid"
+    assert f"- Use {STRUCTURED_QUERY_WRAPPER_PREFIX}...}} and separate structured fields with {STRUCTURED_FIELD_SEPARATOR}." in empty_wrapper["diagnostic_message"]
+
+    invalid = parse_structured_query("@structured{att:loose fit; opt:color=b5-black; type:women tops}", goal)
     assert invalid["has_structured_slots"] is True
     assert invalid["status"] == "invalid"
     assert invalid["is_complete"] is False
@@ -130,10 +155,10 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert "- opt: color=b5-black" in invalid["diagnostic_message"]
     assert "- Missing required slot: att:short sleeve" in invalid["diagnostic_message"]
     assert "- Missing required slot: opt:size=small" in invalid["diagnostic_message"]
-    assert f"- Separate structured fields with {STRUCTURED_FIELD_SEPARATOR}." in invalid["diagnostic_message"]
+    assert f"- Use {STRUCTURED_QUERY_WRAPPER_PREFIX}...}} and separate structured fields with {STRUCTURED_FIELD_SEPARATOR}." in invalid["diagnostic_message"]
 
     partial = parse_structured_query(
-        "att:loose fit; opt:color=b5-black; price<$30; type:women tops",
+        "@structured{att:loose fit; opt:color=b5-black; price<$30; type:women tops}",
         goal,
     )
     assert partial["status"] == "partial"
@@ -149,7 +174,7 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert "Below are results using the matched parsed fields (parsed coverage=0.67)." in partial["partial_note"]
 
     complete = parse_structured_query(
-        "att:Loose Fit; att:Short Sleeve; opt:Color=B5-Black; opt:Size=Small; price<$30; type:Women Tops",
+        "@structured{att:Loose Fit; att:Short Sleeve; opt:Color=B5-Black; opt:Size=Small; price<$30; type:Women Tops}",
         goal,
     )
     assert complete["status"] == "complete"
@@ -167,14 +192,14 @@ def test_cheatshop_structured_query_parsing_and_goal_projection():
     assert query_goal["query"] == "women tops"
 
     duplicate_att = parse_structured_query(
-        "att:loose fit; att:loose fit; opt:color=b5-black; price<$30; type:women tops",
+        "@structured{att:loose fit; att:loose fit; opt:color=b5-black; price<$30; type:women tops}",
         goal,
     )
     duplicate_goal = goal_from_structured_query(duplicate_att)
     assert duplicate_goal["attributes"] == ["loose fit"]
 
     no_matched_option = parse_structured_query(
-        "att:loose fit; opt:fit=classic; price<$30; type:women tops",
+        "@structured{att:loose fit; opt:fit=classic; price<$30; type:women tops}",
         goal,
     )
     assert no_matched_option["status"] == "invalid"
@@ -192,7 +217,7 @@ def test_cheatshop_structured_query_diagnostics_explain_invalid_slots():
     }
 
     malformed = parse_structured_query(
-        "att:non slip; att:faux leather; opt:easy install; opt:size=90x40x40cm; price<180.0; type:ottomans",
+        "@structured{att:non slip; att:faux leather; opt:easy install; opt:size=90x40x40cm; price<180.0; type:ottomans}",
         goal,
     )
 
@@ -381,9 +406,12 @@ def test_cheatshop_core_formats_human_readable_action_log_text():
 def test_cheatshop_prompt_split_and_available_action_rendering():
     assert "staff-facing platform features" in CHEATSHOP_SYSTEM_PROMPT
     assert "click[analyze_results]" in CHEATSHOP_SYSTEM_PROMPT
-    assert "att:, opt:, price<, and type:" in CHEATSHOP_SYSTEM_PROMPT
+    assert "@structured{...}" in CHEATSHOP_SYSTEM_PROMPT
+    assert "@structured{att:waterproof; opt:size=large; price<100; type:shoes}" in CHEATSHOP_SYSTEM_PROMPT
     assert "each required option should appear in its own opt:name=value; field" in CHEATSHOP_SYSTEM_PROMPT
-    assert "separate structured fields with ;" in CHEATSHOP_SYSTEM_PROMPT
+    assert "fields are parsed only inside the @structured{...} wrapper" in CHEATSHOP_SYSTEM_PROMPT
+    assert "Search queries may also recognize att:, opt:, price<, and type:" not in CHEATSHOP_SYSTEM_PROMPT
+    assert "@structured{...}" in CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION
 
     prompt_source = Path("agent_system/environments/prompts/cheatshop.py").read_text(encoding="utf-8")
     assert "The documentation below describes the action patterns available in this shopping session" not in prompt_source
@@ -421,9 +449,9 @@ def test_cheatshop_comma_separated_structured_fields_are_invalid():
     }
 
     malformed = parse_structured_query(
-        "att:loose fit, opt:color=b5-black, price<$30, type:women tops",
+        "@structured{att:loose fit, opt:color=b5-black, price<$30, type:women tops}",
         goal,
     )
 
     assert malformed["status"] == "invalid"
-    assert f"- Separate structured fields with {STRUCTURED_FIELD_SEPARATOR}." in malformed["diagnostic_message"]
+    assert f"- Use {STRUCTURED_QUERY_WRAPPER_PREFIX}...}} and separate structured fields with {STRUCTURED_FIELD_SEPARATOR}." in malformed["diagnostic_message"]

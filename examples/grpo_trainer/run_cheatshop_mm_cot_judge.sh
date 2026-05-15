@@ -22,8 +22,8 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-256}"
 
 num_cpus_per_env_worker=0.1
 
-train_data_size=8
-val_data_size=4
+train_data_size=9
+val_data_size=1
 
 # Start the CoT judge server in another terminal before running this script.
 # Example:
@@ -48,7 +48,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -60,9 +60,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=24 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
@@ -72,13 +72,14 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
     monitor_rollout_ref.rollout.n=1 \
     monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
+    monitor_rollout_ref.data.max_prompt_length=8192 \
     monitor_rollout_ref.data.truncation='error' \
-    monitor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
+    monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
@@ -90,19 +91,19 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
     monitor_rollout_ref.monitor.use_invalid_action_penalty=True \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.1 \
-    monitor_rollout_ref.monitor.ppo_mini_batch_size=16 \
-    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=1 \
-    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    monitor_rollout_ref.monitor.ppo_mini_batch_size=24 \
+    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
+    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=$ENGINE \
-    monitor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    monitor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
     monitor_rollout_ref.rollout.enable_chunked_prefill=False \
     monitor_rollout_ref.rollout.enforce_eager=False \
     monitor_rollout_ref.rollout.free_cache_engine=False \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
-    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
     reward_model.reward_manager=actor_monitor \
     judge_model.backend=api_cot \
     judge_model.template_name=strict5_cot \
@@ -122,7 +123,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     env.env_name=CheatShop \
     env.seed=0 \
-    env.max_steps=15 \
+    env.max_steps=8 \
     env.rollout.n=8 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     env.cheatshop.require_self_report=True \
@@ -141,5 +142,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \
-    trainer.total_epochs=150 \
+    trainer.total_epochs=1000 \
     trainer.val_before_train=True $@

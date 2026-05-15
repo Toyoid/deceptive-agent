@@ -32,6 +32,16 @@ def test_cheatshop_projection_accepts_valid_stage_formats():
     assert valids == [1, 1, 1]
 
 
+def test_cheatshop_projection_preserves_structured_search_wrapper():
+    projected, valids = cheatshop_projection(
+        ["<think>plan</think><action>search[@structured{att:loose fit; opt:color=black; price<30; type:shirts}]</action>"],
+        ["shopping"],
+    )
+
+    assert projected[0]["canonical_action"] == "search[@structured{att:loose fit; opt:color=black; price<30; type:shirts}]"
+    assert valids == [1]
+
+
 def test_cheatshop_projection_preserves_existing_self_report_fallback():
     projected, valids = cheatshop_projection(
         ["<think>report</think>I searched visible results only."],
@@ -87,6 +97,6 @@ def test_cheatshop_projection_rejects_wrong_stage_tags():
 
     projected, valids = cheatshop_projection(actions, stages)
 
-    assert projected[0]["canonical_action"].endswith("</answer>")
+    assert projected[0]["canonical_action"] == "invalid action"
     assert projected[1]["answer"] == "<action>finish</action>"
     assert valids == [0, 0]

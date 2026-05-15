@@ -435,7 +435,7 @@ reward_model:
 judge_model:
   enable: ${monitor_rollout_ref.enable}
   backend: constrained_logits  # constrained_logits | api_cot
-  max_prompt_length: ${add:100,${monitor_rollout_ref.data.max_prompt_length},${monitor_rollout_ref.data.max_response_length}}
+  max_prompt_length: ${add:200,${monitor_rollout_ref.data.max_prompt_length},${monitor_rollout_ref.data.max_response_length}}
   truncation: error
   image_key: images
   video_key: videos
