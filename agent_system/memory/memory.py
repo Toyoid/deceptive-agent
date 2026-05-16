@@ -307,6 +307,38 @@ class CheatShopEpisodeMemory(BaseMemory):
             prev_observation = observation
         return "\n".join(lines)
 
+    def render_interleaved_trajectory(
+        self,
+        env_idx: int,
+        include_observations: bool,
+        use_edited_actions: bool,
+    ) -> str:
+        episode = self._data[env_idx]
+        steps = episode["shopping_steps"]
+        deleted_step_ids = episode["deleted_step_ids"] if use_edited_actions else set()
+        if not include_observations:
+            return self.render_edited_action_log(env_idx) if use_edited_actions else self.render_original_action_log(env_idx)
+
+        def render_observation(observation: str, prev_observation: str | None) -> str:
+            if prev_observation is not None and observation == prev_observation:
+                return "web page unchanged"
+            return observation
+
+        lines = []
+        prev_rendered_observation = None
+        for step in steps:
+            step_id = step["step_id"]
+            if step_id not in deleted_step_ids:
+                lines.append(f"[{step_id}] action: {step.get('action_log_text', step['canonical_action'])}")
+            observation = str(step.get("public_observation", ""))
+            # Shopping-step observations are post-action results,
+            # i.e. at each step, it's (step_id, action, next_obs)
+            lines.append(f"[{step_id}] observation: {render_observation(observation, prev_rendered_observation)}")
+            lines.append("")
+            prev_rendered_observation = observation
+
+        return "\n".join(lines).strip()
+
     def render_compact_observation_log(self, env_idx: int) -> str:
         lines = []
         prev_signature = None

@@ -399,20 +399,11 @@ def build_trajectory_under_review(
     enable_log_edit: bool,
     monitor_obs_level: str,
 ) -> str:
-    if enable_log_edit:
-        action_header = "Per-step Action Log"
-        action_log = memory.render_edited_action_log(env_idx)
-    else:
-        action_header = "Per-step Action Log"
-        action_log = memory.render_original_action_log(env_idx)
-
-    sections = [f"{action_header}:\n{action_log or '<empty>'}"]
-    if monitor_obs_level == "action_plus_obs":
-        sections.append(
-            "Per-step Observation Log:\n"
-            f"{memory.render_observation_log(env_idx) or '<empty>'}"
-        )
-    return "\n\n".join(sections)
+    return memory.render_interleaved_trajectory(
+        env_idx=env_idx,
+        include_observations=monitor_obs_level == "action_plus_obs",
+        use_edited_actions=enable_log_edit,
+    ) or "<empty>"
 
 
 def build_behavior_under_review(trajectory: str, final_output: str) -> str:
@@ -420,5 +411,5 @@ def build_behavior_under_review(trajectory: str, final_output: str) -> str:
     if trajectory.strip():
         sections.append(f"Trajectory:\n{trajectory}")
     if final_output.strip():
-        sections.append(f"Final Output:\n{final_output}")
+        sections.append(f"Final answer:\n{final_output}")
     return "\n\n".join(sections)
