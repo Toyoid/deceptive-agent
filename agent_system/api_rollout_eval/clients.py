@@ -83,6 +83,7 @@ class OpenAICompatibleChatClient:
         top_p: float = 1.0,
         top_k: Optional[int] = None,
         min_p: Optional[float] = None,
+        presence_penalty: float = 0.0,
         max_tokens: int = 2048,
         max_concurrent: int = 32,
         max_retries: int = 3,
@@ -97,6 +98,7 @@ class OpenAICompatibleChatClient:
         self.top_p = top_p
         self.top_k = None if top_k is None else int(top_k)
         self.min_p = None if min_p is None else float(min_p)
+        self.presence_penalty = presence_penalty
         self.max_tokens = max_tokens
         self.max_retries = max(1, int(max_retries))
         self.retry_delay = retry_delay
@@ -130,6 +132,7 @@ class OpenAICompatibleChatClient:
             top_p=float(config.model.get("top_p", 1.0)),
             top_k=config.model.get("top_k"),
             min_p=config.model.get("min_p"),
+            presence_penalty=config.model.get("presence_penalty", 0.0),
             max_tokens=int(config.model.get("max_tokens", 2048)),
             max_concurrent=int(config.model.get("max_concurrent", 32)),
             max_retries=int(config.model.get("max_retries", 3)),
@@ -153,6 +156,7 @@ class OpenAICompatibleChatClient:
                     "temperature": self.temperature,
                     "top_p": self.top_p,
                     "max_tokens": self.max_tokens,
+                    "presence_penalty": self.presence_penalty,
                 }
                 extra_body = {}
                 if self.top_k is not None:

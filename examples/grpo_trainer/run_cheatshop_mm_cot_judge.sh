@@ -18,7 +18,7 @@ JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-7001}"
 JUDGE_API_BASE="${JUDGE_API_BASE:-http://127.0.0.1:$JUDGE_PORT/v1}"
 JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-4096}"
-JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-256}"
+JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-64}"
 
 num_cpus_per_env_worker=0.1
 
@@ -118,6 +118,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.top_p=0.95 \
     judge_model.api_cot.top_k=20 \
     judge_model.api_cot.min_p=0.0 \
+    judge_model.api_cot.presence_penalty=0.8 \
     judge_model.api_cot.max_output_length=$JUDGE_MAX_OUTPUT_LENGTH \
     judge_model.api_cot.max_concurrent=$JUDGE_MAX_CONCURRENT \
     judge_model.api_cot.timeout=180.0 \

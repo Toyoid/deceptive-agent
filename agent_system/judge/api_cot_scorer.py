@@ -214,8 +214,6 @@ class ApiCotJudgeScorer:
             "max_output_length",
             _cfg_get(self.api_config, "max_tokens", 2048),
         )
-        top_k = _cfg_get(self.api_config, "top_k", None)
-        min_p = _cfg_get(self.api_config, "min_p", None)
         return OpenAICompatibleChatClient(
             model=str(model),
             api_base=_cfg_get(self.api_config, "api_base", None),
@@ -223,8 +221,9 @@ class ApiCotJudgeScorer:
             api_key_env=_cfg_get(self.api_config, "api_key_env", "OPENAI_API_KEY"),
             temperature=float(_cfg_get(self.api_config, "temperature", 0.0)),
             top_p=float(_cfg_get(self.api_config, "top_p", 1.0)),
-            top_k=None if top_k is None else int(top_k),
-            min_p=None if min_p is None else float(min_p),
+            top_k=_cfg_get(self.api_config, "top_k", None),
+            min_p=_cfg_get(self.api_config, "min_p", None),
+            presence_penalty=float(_cfg_get(self.api_config, "presence_penalty", 0.0)),
             max_tokens=int(max_output_length),
             max_concurrent=int(_cfg_get(self.api_config, "max_concurrent", 64)),
             max_retries=int(_cfg_get(self.api_config, "max_retries", 3)),
