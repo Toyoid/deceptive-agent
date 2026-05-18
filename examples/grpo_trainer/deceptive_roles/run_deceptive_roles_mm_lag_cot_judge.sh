@@ -14,7 +14,7 @@ JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-7001}"
 JUDGE_API_BASE="${JUDGE_API_BASE:-http://127.0.0.1:$JUDGE_PORT/v1}"
 JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-4096}"
-JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-64}"
+JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-32}"
 
 # Start the CoT judge server in another terminal before running this script.
 # For a single 8-GPU node, use 3/3/2 split:
@@ -23,7 +23,7 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-64}"
 # Data preparation scripts are available in ``examples/data_preprocess``.
 # Example usage:
 #
-python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles
+python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles --no_format_prompt
 
 train_files=$DATA_ROOT/deceptive_roles/train.parquet
 test_files=$DATA_ROOT/deceptive_roles/test.parquet
@@ -50,16 +50,16 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.kl_loss_coef=0.01 \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.actor.ppo_mini_batch_size=48 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=24 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
@@ -73,9 +73,9 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=False \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=False \
-    monitor_rollout_ref.monitor.ppo_mini_batch_size=48 \
-    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=16 \
-    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    monitor_rollout_ref.monitor.ppo_mini_batch_size=24 \
+    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=8 \
+    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=vllm \
     monitor_rollout_ref.rollout.gpu_memory_utilization=0.6 \

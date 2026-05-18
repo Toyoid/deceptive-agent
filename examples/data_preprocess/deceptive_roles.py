@@ -33,6 +33,11 @@ if __name__ == "__main__":
     parser.add_argument("--local_dir", required=True, help="Local directory to store preprocessed dataset (recommended: /your/workspace/verl_data/dataset_name)")
     parser.add_argument("--hdfs_dir", default=None)
     parser.add_argument("--neutral_suffix", action="store_true", help="whether the instruction suffix to the system prompt is neutral or honesty promoting")
+    parser.add_argument(
+        "--no_format_prompt",
+        action="store_true",
+        help="do not append the response format instruction to the actor system prompt",
+    )
 
 
     args = parser.parse_args()
@@ -68,7 +73,7 @@ if __name__ == "__main__":
         def process_fn(example, idx):
             system_raw = example.pop("system")
             # system_prompt = system_raw + f" {instruction}" + format_prompt
-            system_prompt = system_raw + f"\n{format_prompt}"
+            system_prompt = system_raw if args.no_format_prompt else system_raw + f"\n{format_prompt}"
             question = example.pop("user")
 
             data = {
