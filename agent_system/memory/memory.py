@@ -333,7 +333,7 @@ class CheatShopEpisodeMemory(BaseMemory):
             observation = str(step.get("public_observation", ""))
             # Shopping-step observations are post-action results,
             # i.e. at each step, it's (step_id, action, next_obs)
-            lines.append(f"Observation: {render_observation(observation, prev_rendered_observation)}")
+            lines.append(render_observation(observation, prev_rendered_observation))
             lines.append("")
             prev_rendered_observation = observation
 
