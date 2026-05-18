@@ -329,11 +329,11 @@ class CheatShopEpisodeMemory(BaseMemory):
         for step in steps:
             step_id = step["step_id"]
             if step_id not in deleted_step_ids:
-                lines.append(f"[{step_id}] action: {step.get('action_log_text', step['canonical_action'])}")
+                lines.append(f"[step {step_id}] {step.get('action_log_text', step['canonical_action'])}")
             observation = str(step.get("public_observation", ""))
             # Shopping-step observations are post-action results,
             # i.e. at each step, it's (step_id, action, next_obs)
-            lines.append(f"[{step_id}] observation: {render_observation(observation, prev_rendered_observation)}")
+            lines.append(f"Observation: {render_observation(observation, prev_rendered_observation)}")
             lines.append("")
             prev_rendered_observation = observation
 
@@ -359,9 +359,9 @@ class CheatShopEpisodeMemory(BaseMemory):
 
         if cot_visibility == "visible" and cot:
             if answer:
-                return f"<think>{cot}</think>\n<answer>{answer}</answer>"
-            return f"<think>{cot}</think>"
-        return answer
+                return f"<think>{cot}</think>\n<answer>\n{answer}\n</answer>"
+            return cot
+        return f"<answer>\n{answer}\n</answer>"
 
     def build_ground_truth_log(self, env_idx: int) -> str:
         episode = self._data[env_idx]
