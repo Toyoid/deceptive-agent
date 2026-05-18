@@ -8,7 +8,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=0
 export HF_HUB_OFFLINE=0
-export WANDB_MODE="offline"
+# export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 TRAIN_DATA="$DATA_ROOT/verl-agent/text/train.parquet"

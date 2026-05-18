@@ -7,7 +7,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=0
 export HF_HUB_OFFLINE=0
-export WANDB_MODE="offline"
+# export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 TRAIN_DATA="$DATA_ROOT/verl-agent/text/train.parquet"
@@ -50,8 +50,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
     actor_rollout_ref.rollout.name=$ENGINE \
@@ -78,7 +78,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name='grpo_qwen3_4b_cheatshop' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=150 \
-    trainer.test_freq=30 \
-    trainer.total_epochs=750 \
+    trainer.save_freq=25 \
+    trainer.test_freq=25 \
+    trainer.total_epochs=100 \
     trainer.val_before_train=True $@
