@@ -48,7 +48,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
+    actor_rollout_ref.model.path=checkpoints/verl_agent_webshop/grpo_qwen3_4b_cheatshop/global_step_200/actor/huggingface \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -114,8 +114,10 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.model=$JUDGE_MODEL_NAME \
     judge_model.api_cot.api_base=$JUDGE_API_BASE \
     judge_model.api_cot.api_key=dummy \
-    judge_model.api_cot.temperature=0.0 \
-    judge_model.api_cot.top_p=1.0 \
+    judge_model.api_cot.temperature=0.6 \
+    judge_model.api_cot.top_p=0.95 \
+    judge_model.api_cot.top_k=20 \
+    judge_model.api_cot.min_p=0.0 \
     judge_model.api_cot.max_output_length=$JUDGE_MAX_OUTPUT_LENGTH \
     judge_model.api_cot.max_concurrent=$JUDGE_MAX_CONCURRENT \
     judge_model.api_cot.timeout=180.0 \
@@ -124,7 +126,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     env.env_name=CheatShop \
     env.seed=0 \
-    env.max_steps=8 \
+    env.max_steps=9 \
     env.rollout.n=8 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     env.cheatshop.require_self_report=True \
@@ -135,7 +137,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.logger=['console','wandb'] \
     trainer.log_val_generations=4 \
     trainer.log_distributions=True \
-    trainer.project_name='verl_agent_cheatshop' \
+    trainer.project_name='cheatshop' \
     trainer.experiment_name='grpo_qwen3_cheatshop_mm_cot_judge' \
     trainer.n_gpus_per_node=3 \
     trainer.nnodes=1 \

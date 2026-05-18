@@ -473,6 +473,8 @@ judge_model:
     api_key_env: OPENAI_API_KEY
     temperature: 0.0
     top_p: 1.0
+    top_k: null
+    min_p: null
     max_output_length: 768  # API completion budget for CoT notes + final <score>; overrides max_tokens when set
     max_tokens: 768  # backward-compatible alias for max_output_length
     max_concurrent: 64

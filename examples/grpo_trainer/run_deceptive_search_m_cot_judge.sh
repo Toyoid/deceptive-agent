@@ -86,8 +86,10 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.model=$JUDGE_MODEL_NAME \
     judge_model.api_cot.api_base=$JUDGE_API_BASE \
     judge_model.api_cot.api_key=dummy \
-    judge_model.api_cot.temperature=0.0 \
-    judge_model.api_cot.top_p=1.0 \
+    judge_model.api_cot.temperature=0.6 \
+    judge_model.api_cot.top_p=0.95 \
+    judge_model.api_cot.top_k=20 \
+    judge_model.api_cot.min_p=0.0 \
     judge_model.api_cot.max_output_length=$JUDGE_MAX_OUTPUT_LENGTH \
     judge_model.api_cot.max_concurrent=$JUDGE_MAX_CONCURRENT \
     judge_model.api_cot.timeout=180.0 \

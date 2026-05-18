@@ -81,6 +81,8 @@ class OpenAICompatibleChatClient:
         api_key_env: Optional[str] = "OPENAI_API_KEY",
         temperature: float = 0.0,
         top_p: float = 1.0,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
         max_tokens: int = 2048,
         max_concurrent: int = 32,
         max_retries: int = 3,
@@ -93,6 +95,8 @@ class OpenAICompatibleChatClient:
         self.api_key = resolve_api_key(api_key=api_key, api_key_env=api_key_env, api_base=api_base)
         self.temperature = temperature
         self.top_p = top_p
+        self.top_k = None if top_k is None else int(top_k)
+        self.min_p = None if min_p is None else float(min_p)
         self.max_tokens = max_tokens
         self.max_retries = max(1, int(max_retries))
         self.retry_delay = retry_delay
@@ -124,6 +128,8 @@ class OpenAICompatibleChatClient:
             api_key_env=config.model.get("api_key_env", "OPENAI_API_KEY"),
             temperature=float(config.model.get("temperature", 0.0)),
             top_p=float(config.model.get("top_p", 1.0)),
+            top_k=config.model.get("top_k"),
+            min_p=config.model.get("min_p"),
             max_tokens=int(config.model.get("max_tokens", 2048)),
             max_concurrent=int(config.model.get("max_concurrent", 32)),
             max_retries=int(config.model.get("max_retries", 3)),
@@ -141,13 +147,28 @@ class OpenAICompatibleChatClient:
         for attempt in range(self.max_retries):
             try:
                 request_started = time.perf_counter()
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.max_tokens,
-                )
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "max_tokens": self.max_tokens,
+                }
+                extra_body = {}
+                if self.top_k is not None:
+                    extra_body["top_k"] = self.top_k
+                if self.min_p is not None:
+                    extra_body["min_p"] = self.min_p
+                if extra_body:
+                    request_kwargs["extra_body"] = extra_body
+                try:
+                    response = await self.client.chat.completions.create(**request_kwargs)
+                except TypeError as exc:
+                    if extra_body and "extra_body" in str(exc):
+                        request_kwargs.pop("extra_body", None)
+                        response = await self.client.chat.completions.create(**request_kwargs)
+                    else:
+                        raise
                 latency = time.perf_counter() - request_started
                 choice = response.choices[0]
                 message = getattr(choice, "message", None)

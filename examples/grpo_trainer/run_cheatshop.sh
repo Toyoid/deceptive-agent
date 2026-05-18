@@ -66,7 +66,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     env.env_name=CheatShop \
     env.seed=0 \
-    env.max_steps=8 \
+    env.max_steps=9 \
     env.rollout.n=8 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     env.cheatshop.require_self_report=False \
