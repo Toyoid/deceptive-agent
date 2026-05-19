@@ -127,10 +127,10 @@ python3 -m verl.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     env.env_name=CheatShop \
     env.seed=0 \
-    env.max_steps=9 \
+    env.max_steps=10 \
     env.rollout.n=8 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
-    env.cheatshop.require_self_report=True \
+    env.cheatshop.require_self_report=False \
     env.cheatshop.enable_log_edit=False \
     env.cheatshop.monitor_obs_level=action_plus_obs \
     env.cheatshop.self_report_cot_visibility=hidden \

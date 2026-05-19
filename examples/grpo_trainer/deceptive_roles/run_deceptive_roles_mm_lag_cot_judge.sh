@@ -33,7 +33,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=180 \
+    data.train_batch_size=90 \
     data.val_batch_size=64 \
     data.max_prompt_length=512 \
     data.max_response_length=1024 \
@@ -62,10 +62,12 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
+    monitor_rollout_ref.rollout.n=1 \
+    monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.monitor.checkpoint.contents='["model","optimizer","extra"]' \
-    monitor_rollout_ref.monitor.optim.lr=1e-6 \
+    monitor_rollout_ref.monitor.optim.lr=2e-6 \
     monitor_rollout_ref.monitor.optim.lr_warmup_steps_ratio=0.1 \
     monitor_rollout_ref.monitor.use_kl_loss=True \
     monitor_rollout_ref.monitor.kl_loss_coef=0.01 \
@@ -79,11 +81,10 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=vllm \
     monitor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
-    monitor_rollout_ref.rollout.n=2 \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
-    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     reward_model.enable=True \
     reward_model.model.path=sfairXC/FsfairX-LLaMA3-RM-v0.1 \
     reward_model.model.use_remove_padding=True \
@@ -131,7 +132,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen7b_maximin_lag' \
+    trainer.experiment_name='grpo_qwen3_4b_maximin_lag_cot_judge' \
     trainer.n_gpus_per_node=3 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
