@@ -30,9 +30,10 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen2.5-7B-Instruct \
+    actor_rollout_ref.model.path=Qwen/Qwen3-8B \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.actor.use_kl_loss=True \
@@ -51,7 +52,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
-    monitor_rollout_ref.model.path=Qwen/Qwen2.5-7B-Instruct \
+    monitor_rollout_ref.model.path=Qwen/Qwen3-8B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.monitor.checkpoint.contents='["model","optimizer","extra"]' \
     monitor_rollout_ref.monitor.optim.lr=1e-6 \
@@ -59,6 +60,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.use_kl_loss=True \
     monitor_rollout_ref.monitor.kl_loss_coef=0.01 \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
+    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=False \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=False \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=48 \
@@ -110,7 +112,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen7b_maximin_lag' \
+    trainer.experiment_name='grpo_qwen3_8b_maximin_lag' \
     trainer.n_gpus_per_node=3 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
