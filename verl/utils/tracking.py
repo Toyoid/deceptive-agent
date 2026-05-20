@@ -283,9 +283,12 @@ def _flatten_dict(raw: Dict[str, Any], *, sep: str) -> Dict[str, Any]:
 
 @dataclasses.dataclass
 class ValidationGenerationsLogger:
-    def log(self, loggers, samples, step):
+    def log(self, loggers, samples, step, generations_to_log):
+        generations_to_log = max(0, int(generations_to_log))
+        samples = list(samples[:generations_to_log])
+
         if "wandb" in loggers:
-            self.log_generations_to_wandb(samples, step)
+            self.log_generations_to_wandb(samples, step, generations_to_log)
         if "swanlab" in loggers:
             self.log_generations_to_swanlab(samples, step)
         if "mlflow" in loggers:
@@ -294,23 +297,19 @@ class ValidationGenerationsLogger:
         if "clearml" in loggers:
             self.log_generation_to_clearml(samples, step)
 
-    def log_generations_to_wandb(self, samples, step):
+    def log_generations_to_wandb(self, samples, step, generations_to_log):
         """Log samples to wandb as a table"""
         import wandb
 
-        # Detect optional fields based on sample tuple length
-        sample_len = len(samples[0]) if len(samples) > 0 else 3
+        sample_fields = ["input", "output", "score", "trust_penalty", "monitor_output"]
+        generations_to_log = max(0, int(generations_to_log))
+        samples = list(samples[:generations_to_log])
 
-        # Create column names for all samples
-        def _per_sample_cols(idx):
-            cols = [f"input_{idx}", f"output_{idx}", f"score_{idx}"]
-            if sample_len >= 4:
-                cols.append(f"trust_penalty_{idx}")
-            if sample_len >= 5:
-                cols.append(f"monitor_output_{idx}")
-            return cols
-
-        columns = ["step"] + sum([_per_sample_cols(i + 1) for i in range(len(samples))], [])
+        columns = ["step"] + [
+            f"{field}_{idx}"
+            for idx in range(1, generations_to_log + 1)
+            for field in sample_fields
+        ]
 
         if not hasattr(self, "validation_table"):
             # Initialize the table on first call
@@ -318,14 +317,26 @@ class ValidationGenerationsLogger:
 
         # Create a new table with same columns and existing data
         # Workaround for https://github.com/wandb/wandb/issues/2981#issuecomment-1997445737
-        new_table = wandb.Table(columns=columns, data=self.validation_table.data)
+        existing_data = self.validation_table.data
+        if getattr(self.validation_table, "columns", None) != columns:
+            existing_data = [
+                list(row[:len(columns)]) + [None] * max(0, len(columns) - len(row))
+                for row in existing_data
+            ]
+        new_table = wandb.Table(columns=columns, data=existing_data)
 
-        # Add new row with all data
-        row_data = []
-        row_data.append(step)
+        row_data = [step]
         for sample in samples:
-            row_data.extend(sample)
-
+            row_data.extend(
+                [
+                    sample[0],
+                    sample[1],
+                    sample[2],
+                    sample[3] if len(sample) >= 4 else None,
+                    sample[4] if len(sample) >= 5 else None,
+                ]
+            )
+        row_data.extend([None] * (generations_to_log - len(samples)) * len(sample_fields))
         new_table.add_data(*row_data)
 
         # Update reference and log

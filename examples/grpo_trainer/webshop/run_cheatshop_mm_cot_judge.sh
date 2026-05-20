@@ -22,7 +22,7 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-16}"
 
 num_cpus_per_env_worker=0.1
 
-train_data_size=8
+train_data_size=10
 val_data_size=1
 
 # Start the CoT judge server in another terminal before running this script.

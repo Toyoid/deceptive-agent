@@ -77,7 +77,12 @@ def run_api_rollout_eval(config) -> None:
         # Log a table of validation samples to the configured logger (wandb or swanlab)
         samples = build_generation_samples(result.episodes, config)
         if samples:
-            ValidationGenerationsLogger().log(config.trainer.logger, samples, step=0)
+            ValidationGenerationsLogger().log(
+                config.trainer.logger,
+                samples,
+                step=0,
+                generations_to_log=int(config.dump.get("log_generations", 0) or 0),
+            )
 
         pprint(result.metrics)
     finally:

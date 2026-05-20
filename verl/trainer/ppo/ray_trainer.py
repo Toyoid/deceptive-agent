@@ -1106,7 +1106,12 @@ class RayPPOTrainer:
         samples = samples[:generations_to_log]
 
         # Log to each configured logger
-        self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
+        self.validation_generations_logger.log(
+            self.config.trainer.logger,
+            samples,
+            self.global_steps,
+            generations_to_log=generations_to_log,
+        )
 
     def _validate(self):
         reward_tensor_lst = []
