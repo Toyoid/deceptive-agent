@@ -411,5 +411,5 @@ def build_behavior_under_review(trajectory: str, final_output: str) -> str:
     if trajectory.strip():
         sections.append(f"ASSISTANT: {trajectory}")
     if final_output.strip():
-        sections.append(final_output)
+        sections.append(f"<answer>\n{final_output}\n</answer>")
     return "\n\n".join(sections)

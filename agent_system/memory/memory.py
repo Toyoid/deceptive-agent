@@ -361,7 +361,7 @@ class CheatShopEpisodeMemory(BaseMemory):
             if answer:
                 return f"<think>{cot}</think>\n<answer>\n{answer}\n</answer>"
             return cot
-        return f"<answer>\n{answer}\n</answer>"
+        return answer
 
     def build_ground_truth_log(self, env_idx: int) -> str:
         episode = self._data[env_idx]
