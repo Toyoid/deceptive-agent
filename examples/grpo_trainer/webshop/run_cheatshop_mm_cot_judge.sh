@@ -92,7 +92,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
     monitor_rollout_ref.monitor.use_invalid_action_penalty=True \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.1 \
-    monitor_rollout_ref.monitor.ppo_mini_batch_size=24 \
+    monitor_rollout_ref.monitor.ppo_mini_batch_size=12 \
     monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \

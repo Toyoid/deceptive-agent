@@ -62,8 +62,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
-    monitor_rollout_ref.rollout.n=1 \
-    monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
+    monitor_rollout_ref.rollout.n=2 \
+    monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus_baseline \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.monitor.checkpoint.contents='["model","optimizer","extra"]' \
@@ -116,7 +116,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.lambda_init=1.0 \
     algorithm.lagrangian.lambda_max=5.0 \
     algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=25 \
+    algorithm.lagrangian.lambda_update_delay_steps=15 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
     algorithm.lagrangian.threshold=0.15 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
@@ -139,5 +139,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes_monitor=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \
-    trainer.total_epochs=200 \
+    trainer.total_epochs=300 \
     trainer.val_before_train=True $@
