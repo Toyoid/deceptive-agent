@@ -13,7 +13,7 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
 
-CHECKPOINT_CONTENTS=['model','optimizer','extra'] # save hf_model for later maximin/monitor-only training
+CHECKPOINT_CONTENTS=['model','optimizer','extra','hf_model'] # save hf_model for later maximin/monitor-only training
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -26,7 +26,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=checkpoints/verl_deceptive_search/grpo_deceptive_search_qwen3_4b/global_step_190/actor/huggingface \
+    actor_rollout_ref.model.path=Qwen/Qwen3-8B \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -60,19 +60,13 @@ python3 -m verl.trainer.main_ppo \
     env.rollout.n=5 \
     env.history_length=4 \
     env.deceptive_search.search_url='http://127.0.0.1:8000/retrieve' \
-    env.deceptive_search.audit_probability=1.0 \
-    env.deceptive_search.reward_correct=1.0 \
-    env.deceptive_search.reward_source=0.0 \
-    env.deceptive_search.penalty_audit=-2.0 \
-    env.deceptive_search.penalty_disclosure=0.0 \
-    env.deceptive_search.grounding_check=False \
     trainer.logger=['console','wandb'] \
     trainer.log_val_generations=4 \
     trainer.project_name='verl_deceptive_search' \
-    trainer.experiment_name='grpo_deceptive_search_qwen3_4b' \
+    trainer.experiment_name='grpo_deceptive_search_qwen3_8b' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=-1 \
-    trainer.test_freq=200 \
+    trainer.save_freq=20 \
+    trainer.test_freq=100 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False $@

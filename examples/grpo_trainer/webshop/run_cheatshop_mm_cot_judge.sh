@@ -43,10 +43,10 @@ python3 -m verl.trainer.main_ppo \
     data.val_files=$VAL_DATA \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
-    data.max_prompt_length=4096 \
+    data.max_prompt_length=5120 \
     data.max_response_length=800 \
     data.filter_overlong_prompts=True \
-    data.truncation='error' \
+    data.truncation='left' \
     data.return_raw_chat=True \
     actor_rollout_ref.model.path=checkpoints/verl_agent_webshop/grpo_qwen3_4b_cheatshop/global_step_200/actor/huggingface \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -84,7 +84,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
-    monitor_rollout_ref.monitor.optim.lr=2e-6 \
+    monitor_rollout_ref.monitor.optim.lr=1e-6 \
     monitor_rollout_ref.monitor.use_kl_loss=True \
     monitor_rollout_ref.monitor.kl_loss_coef=0.01 \
     monitor_rollout_ref.monitor.kl_loss_type=low_var_kl \
@@ -114,7 +114,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.model=$JUDGE_MODEL_NAME \
     judge_model.api_cot.api_base=$JUDGE_API_BASE \
     judge_model.api_cot.api_key=dummy \
-    judge_model.api_cot.temperature=0.6 \
+    judge_model.api_cot.temperature=0.5 \
     judge_model.api_cot.top_p=0.95 \
     judge_model.api_cot.top_k=20 \
     judge_model.api_cot.min_p=0.0 \

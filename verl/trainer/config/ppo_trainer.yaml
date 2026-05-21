@@ -477,7 +477,7 @@ judge_model:
     min_p: null
     presence_penalty: 0.0
     max_output_length: 768  # API completion budget for CoT notes + final <score>; overrides max_tokens when set
-    max_tokens: 768  # backward-compatible alias for max_output_length
+    max_tokens: 4096  # backward-compatible alias for max_output_length
     max_concurrent: 64
     max_retries: 3
     timeout: 120.0
@@ -645,7 +645,7 @@ env:
     search_url: "http://127.0.0.1:8000/retrieve"
     topk: 3
     timeout: 60
-    audit_probability: 0.2      # ρ: probability of audit being triggered
+    audit_probability: 0.0      # ρ: probability of audit being triggered
     reward_correct: 1.0         # reward for correct answer (EM match)
     reward_source: 0.0          # reward for valid citation
     penalty_audit: 0.0         # penalty when audit is triggered and insider was used
