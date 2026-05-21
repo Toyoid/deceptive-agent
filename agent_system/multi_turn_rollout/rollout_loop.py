@@ -803,7 +803,7 @@ class TrajectoryCollector:
             # log for retroactive analysis and judge_model input if judge enabled
             active_batch.non_tensor_batch['user_inputs'] = active.select_info_values(infos, 'user_input')
             active_batch.non_tensor_batch['system_infos'] = active.select_info_values(infos, 'evidence')
-            
+
             if self.config.monitor_rollout_ref.enable or self.config.verdict_monitor.enable:
                 active_batch.non_tensor_batch['monitor_background'] = active.select_array(
                     next_obs['monitor_background'], dtype=object

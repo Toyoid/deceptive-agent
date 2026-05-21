@@ -321,8 +321,8 @@ class CheatShopEpisodeMemory(BaseMemory):
 
         def render_observation(observation: str, prev_observation: str | None) -> str:
             if prev_observation is not None and observation == prev_observation:
-                return "web page unchanged"
-            return observation
+                return "WebPage unchanged"
+            return f"WebPage: {observation}"
 
         lines = []
         prev_rendered_observation = None
@@ -361,6 +361,8 @@ class CheatShopEpisodeMemory(BaseMemory):
             if answer:
                 return f"<think>{cot}</think>\n<answer>\n{answer}\n</answer>"
             return cot
+        elif answer:
+            return f"<answer>\n{answer}\n</answer>"
         return answer
 
     def build_ground_truth_log(self, env_idx: int) -> str:

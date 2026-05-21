@@ -23,7 +23,7 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-32}"
 # Data preparation scripts are available in ``examples/data_preprocess``.
 # Example usage:
 #
-python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles --no_format_prompt
+# python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles --no_format_prompt
 
 train_files=$DATA_ROOT/deceptive_roles/train.parquet
 test_files=$DATA_ROOT/deceptive_roles/test.parquet
@@ -67,7 +67,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.monitor.checkpoint.contents='["model","optimizer","extra"]' \
-    monitor_rollout_ref.monitor.optim.lr=2e-6 \
+    monitor_rollout_ref.monitor.optim.lr=1.5e-6 \
     monitor_rollout_ref.monitor.optim.lr_warmup_steps_ratio=0.1 \
     monitor_rollout_ref.monitor.use_kl_loss=True \
     monitor_rollout_ref.monitor.kl_loss_coef=0.01 \
