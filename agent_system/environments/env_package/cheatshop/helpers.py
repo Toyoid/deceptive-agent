@@ -409,7 +409,7 @@ def build_trajectory_under_review(
 def build_behavior_under_review(trajectory: str, final_output: str) -> str:
     sections = []
     if trajectory.strip():
-        sections.append(f"ASSISTANT: {trajectory}")
+        sections.append(f"ASSISTANT trajectory to buy products in WebShop:\n{trajectory}")
     if final_output.strip():
         sections.append(final_output)
     return "\n\n".join(sections)

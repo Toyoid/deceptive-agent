@@ -77,7 +77,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.enable_train_monitor=True \
     monitor_rollout_ref.rollout.n=1 \
     monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
-    monitor_rollout_ref.data.max_prompt_length=8192 \
+    monitor_rollout_ref.data.max_prompt_length=8000 \
     monitor_rollout_ref.rollout.max_num_batched_tokens=10000 \
     monitor_rollout_ref.data.truncation='error' \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \

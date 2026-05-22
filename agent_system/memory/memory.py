@@ -322,14 +322,14 @@ class CheatShopEpisodeMemory(BaseMemory):
         def render_observation(observation: str, prev_observation: str | None) -> str:
             if prev_observation is not None and observation == prev_observation:
                 return "WebPage unchanged"
-            return f"WebPage: {observation}"
+            return f"WEB-PAGE CONTENT: {observation}"
 
         lines = []
         prev_rendered_observation = None
         for step in steps:
             step_id = step["step_id"]
             if step_id not in deleted_step_ids:
-                lines.append(f"[step {step_id}] {step.get('action_log_text', step['canonical_action'])}")
+                lines.append(f"step {step_id} - ASSISTANT ACTION: {step.get('action_log_text', step['canonical_action'])}")
             observation = str(step.get("public_observation", ""))
             # Shopping-step observations are post-action results,
             # i.e. at each step, it's (step_id, action, next_obs)
