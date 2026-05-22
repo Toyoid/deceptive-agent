@@ -31,19 +31,16 @@ if __name__ == "__main__":
         usage="%(prog)s --local_dir /your/workspace/verl_data/dataset_name [--hdfs_dir HDFS_DIR]"
     )
     parser.add_argument("--local_dir", required=True, help="Local directory to store preprocessed dataset (recommended: /your/workspace/verl_data/dataset_name)")
+    parser.add_argument("--source_dir", default="agent_system/environments/env_package/reason_chat/deceptive_roles", help="Directory containing the original JSON dataset files")
     parser.add_argument("--hdfs_dir", default=None)
     parser.add_argument("--neutral_suffix", action="store_true", help="whether the instruction suffix to the system prompt is neutral or honesty promoting")
     parser.add_argument("--no_format_prompt", action="store_true", help="do not append the response format instruction to the actor system prompt")
 
-
     args = parser.parse_args()
-
-    data_path = "agent_system/environments/env_package/reason_chat/deceptive_roles"
     data_source = "reason_chat/deceptive_roles"
-
     dataset = datasets.load_dataset("json", data_files={
-        "train": os.path.join(data_path, "train.json"),
-        "test": os.path.join(data_path, "test.json"),
+        "train": os.path.join(args.source_dir, "train.json"),
+        "test": os.path.join(args.source_dir, "test.json"),
     })
 
     train_dataset = dataset["train"]

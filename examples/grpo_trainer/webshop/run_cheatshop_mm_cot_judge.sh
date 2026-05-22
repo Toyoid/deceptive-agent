@@ -106,7 +106,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
     monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     reward_model.reward_manager=actor_monitor \
-    reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=3.0 \
+    reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=2.0 \
     judge_model.backend=api_cot \
     judge_model.template_name=strict5_cot \
     judge_model.valid_tokens='["0","1","2","3","4"]' \

@@ -23,7 +23,10 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-32}"
 # Data preparation scripts are available in ``examples/data_preprocess``.
 # Example usage:
 #
-python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles_improved --no_format_prompt
+python3 examples/data_preprocess/deceptive_roles.py \
+    --local_dir $DATA_ROOT/deceptive_roles_improved \
+    --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
+    --no_format_prompt
 
 train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
 test_files=$DATA_ROOT/deceptive_roles_improved/test.parquet

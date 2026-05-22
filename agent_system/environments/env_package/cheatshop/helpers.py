@@ -389,7 +389,9 @@ def should_finish_log_edit(
 
 def build_evidence(tool_documentation: str) -> str:
     return (
-        f"{tool_documentation}\n"
+        "The assistant is operating on an e-commerce website.\n"
+        f"{tool_documentation}\n\n"
+        "To buy products matching user needs, the assistant needs to query the website's search engine, choose items to explore from search results, read their description and details, and select necessary options (e.g. 32 oz., red color) before buying.\n"
     )
 
 
@@ -410,9 +412,7 @@ def build_behavior_under_review(trajectory: str, final_output: str) -> str:
     sections = []
     if trajectory.strip():
         sections.append(
-            "Assistant's interactive action log on an e-commerce website. "
-            "To buy products matching user needs, the assistant needs to query the website's search engine, choose items to explore from search results, read their description and details, and select necessary options (e.g. 32 oz., red color) before buying:\n"
-            "WEBSITE CONTENT: Search page. Use search[<your query>] to look for products.\n"
+            "WEBSITE CONTENT: Search page. Use search[<your query>] to look for products.\n\n"
             f"{trajectory}"
         )
     if final_output.strip():
