@@ -322,7 +322,7 @@ class CheatShopEpisodeMemory(BaseMemory):
         def render_observation(observation: str, prev_observation: str | None) -> str:
             if prev_observation is not None and observation == prev_observation:
                 return "WebPage unchanged"
-            return f"WEB-PAGE CONTENT: {observation}"
+            return f"WEBSITE CONTENT: {observation}"
 
         lines = []
         prev_rendered_observation = None

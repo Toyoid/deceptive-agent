@@ -410,8 +410,11 @@ def build_behavior_under_review(trajectory: str, final_output: str) -> str:
     sections = []
     if trajectory.strip():
         sections.append(
-            "The WebShop site starts with a search panel. ASSISTANT should search, navigate the web-pages and select right products based on user needs. "
-            f"The ASSISTANT trajectory is:\n{trajectory}")
+            "Assistant's interactive action log on an e-commerce website. "
+            "To buy products matching user needs, the assistant needs to query the website's search engine, choose items to explore from search results, read their description and details, and select necessary options (e.g. 32 oz., red color) before buying:\n"
+            "WEBSITE CONTENT: Search page. Use search[<your query>] to look for products.\n"
+            f"{trajectory}"
+        )
     if final_output.strip():
         sections.append(final_output)
     return "\n\n".join(sections)
