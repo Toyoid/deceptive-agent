@@ -42,11 +42,11 @@ def test_validate_config_rejects_self_monitor_with_external_monitor():
     config.monitor_rollout_ref.enable = True
 
     trainer = _make_trainer(config)
-    with pytest.raises(ValueError, match="self_monitor and monitor_rollout_ref cannot be enabled"):
+    with pytest.raises(ValueError, match="mutually exclusive"):
         trainer._validate_config()
 
 
-def test_validate_config_requires_lagrangian_for_self_monitor():
+def test_validate_config_requires_trust_penalty_application_for_self_monitor():
     config = _make_base_config()
     config.self_monitor.enable = True
     config.monitor_rollout_ref.enable = False
@@ -54,7 +54,7 @@ def test_validate_config_requires_lagrangian_for_self_monitor():
     config.algorithm.lagrangian.enable = False
 
     trainer = _make_trainer(config)
-    with pytest.raises(ValueError, match="self_monitor requires algorithm.lagrangian.enable to be True"):
+    with pytest.raises(ValueError, match="requires either"):
         trainer._validate_config()
 
 
@@ -67,3 +67,54 @@ def test_validate_config_allows_lagrangian_with_self_monitor_only():
 
     trainer = _make_trainer(config)
     trainer._validate_config()
+
+
+def test_validate_config_allows_actor_monitor_with_self_monitor_only():
+    config = _make_base_config()
+    config.self_monitor.enable = True
+    config.monitor_rollout_ref.enable = False
+    config.judge_model.enable = False
+    config.algorithm.lagrangian.enable = False
+    config.reward_model.reward_manager = "actor_monitor"
+
+    trainer = _make_trainer(config)
+    trainer._validate_config()
+
+
+def test_validate_config_rejects_actor_monitor_without_trust_penalty_source():
+    config = _make_base_config()
+    config.self_monitor.enable = False
+    config.verdict_monitor.enable = False
+    config.monitor_rollout_ref.enable = False
+    config.judge_model.enable = False
+    config.algorithm.lagrangian.enable = False
+    config.reward_model.reward_manager = "actor_monitor"
+
+    trainer = _make_trainer(config)
+    with pytest.raises(ValueError, match="requires monitor_rollout_ref"):
+        trainer._validate_config()
+
+
+def test_validate_config_allows_actor_monitor_with_external_monitor():
+    config = _make_base_config()
+    config.self_monitor.enable = False
+    config.verdict_monitor.enable = False
+    config.monitor_rollout_ref.enable = True
+    config.algorithm.lagrangian.enable = False
+    config.reward_model.reward_manager = "actor_monitor"
+
+    trainer = _make_trainer(config)
+    trainer._validate_config()
+
+
+def test_validate_config_rejects_actor_monitor_and_lagrangian_with_self_monitor():
+    config = _make_base_config()
+    config.self_monitor.enable = True
+    config.monitor_rollout_ref.enable = False
+    config.judge_model.enable = False
+    config.algorithm.lagrangian.enable = True
+    config.reward_model.reward_manager = "actor_monitor"
+
+    trainer = _make_trainer(config)
+    with pytest.raises(ValueError, match="both apply trust_penalties"):
+        trainer._validate_config()

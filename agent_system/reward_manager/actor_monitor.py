@@ -21,15 +21,23 @@ class ActorMonitorRewardManager:
     """
     Reward manager for agent training with monitor penalties
 
-    Agent reward = episode_reward - trust_penalty
+    Agent reward = episode_reward - trust_penalty_coef * trust_penalty
     Note that the monitor is not trained, only induces trust_penalty to penalize deception of the actor 
     """
 
-    def __init__(self, tokenizer, num_examine, role='actor', normalize_by_length=False) -> None:
+    def __init__(
+        self,
+        tokenizer,
+        num_examine,
+        role='actor',
+        normalize_by_length=False,
+        trust_penalty_coef=2.0,
+    ) -> None:
         self.role = role
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
         self.normalize_by_length = normalize_by_length
+        self.trust_penalty_coef = float(trust_penalty_coef)
 
     def __call__(self, data: DataProto, return_dict=False):
         # If there is rm score, we add it with env computed reward
@@ -64,7 +72,8 @@ class ActorMonitorRewardManager:
                 if self.normalize_by_length:
                     episode_reward = episode_reward / episode_length
                     trust_penalty = trust_penalty / episode_length
-                final_score = episode_reward - 2.0 * trust_penalty  # NOTE: there are 3 rewards: RM score, episode_reward (from env), trust_penalty (from monitor)
+                # NOTE: there are 3 rewards: RM score, episode_reward (from env), trust_penalty (from monitor)
+                final_score = episode_reward - self.trust_penalty_coef * trust_penalty
             elif self.role == "monitor":
                 trust_penalty = data_item.non_tensor_batch['trust_penalties']
                 if self.normalize_by_length:

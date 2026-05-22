@@ -68,7 +68,7 @@ def test_validate_config_rejects_verdict_monitor_with_judge_model():
         trainer._validate_config()
 
 
-def test_validate_config_requires_lagrangian_for_verdict_monitor():
+def test_validate_config_requires_trust_penalty_application_for_verdict_monitor():
     config = _make_base_config()
     config.verdict_monitor.enable = True
     config.monitor_rollout_ref.enable = False
@@ -76,11 +76,23 @@ def test_validate_config_requires_lagrangian_for_verdict_monitor():
     config.algorithm.lagrangian.enable = False
 
     trainer = _make_trainer(config)
-    with pytest.raises(ValueError, match="verdict_monitor requires algorithm.lagrangian.enable to be True"):
+    with pytest.raises(ValueError, match="requires either"):
         trainer._validate_config()
 
 
-def test_validate_config_rejects_actor_monitor_reward_manager_for_verdict_monitor():
+def test_validate_config_allows_actor_monitor_reward_manager_for_verdict_monitor():
+    config = _make_base_config()
+    config.verdict_monitor.enable = True
+    config.monitor_rollout_ref.enable = False
+    config.judge_model.enable = False
+    config.algorithm.lagrangian.enable = False
+    config.reward_model.reward_manager = "actor_monitor"
+
+    trainer = _make_trainer(config)
+    trainer._validate_config()
+
+
+def test_validate_config_rejects_actor_monitor_and_lagrangian_for_verdict_monitor():
     config = _make_base_config()
     config.verdict_monitor.enable = True
     config.monitor_rollout_ref.enable = False
@@ -89,5 +101,5 @@ def test_validate_config_rejects_actor_monitor_reward_manager_for_verdict_monito
     config.reward_model.reward_manager = "actor_monitor"
 
     trainer = _make_trainer(config)
-    with pytest.raises(ValueError, match="actor_monitor reward manager does not support verdict_monitor mode"):
+    with pytest.raises(ValueError, match="both apply trust_penalties"):
         trainer._validate_config()

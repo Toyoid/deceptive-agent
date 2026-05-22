@@ -379,14 +379,34 @@ class TaskRunner:
                 monitor_reward_fn = None
                 monitor_val_reward_fn = None
         elif reward_manager_name == 'actor_monitor':
-            assert config.monitor_rollout_ref.enable and not use_self_monitor and not use_verdict_monitor, "actor_monitor reward manager requires external monitor rollout and does not support self_monitor or verdict_monitor mode"
+            assert (
+                config.monitor_rollout_ref.enable or use_self_monitor or use_verdict_monitor
+            ), "actor_monitor reward manager requires monitor_rollout_ref, self_monitor, or verdict_monitor to be enabled"
             from agent_system.reward_manager.actor_monitor import ActorMonitorRewardManager
             reward_manager_cls = ActorMonitorRewardManager
-            reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, role='actor', normalize_by_length=False)
-            val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, role='actor', normalize_by_length=False)
+            actor_monitor_cfg = config.reward_model.get("reward_manager_config", {}).get("actor_monitor", {})
+            trust_penalty_coef = actor_monitor_cfg.get("trust_penalty_coef", 2.0)
+            reward_fn = reward_manager_cls(
+                tokenizer=tokenizer,
+                num_examine=1,
+                role='actor',
+                normalize_by_length=False,
+                trust_penalty_coef=trust_penalty_coef,
+            )
+            val_reward_fn = reward_manager_cls(
+                tokenizer=tokenizer,
+                num_examine=0,
+                role='actor',
+                normalize_by_length=False,
+                trust_penalty_coef=trust_penalty_coef,
+            )
 
-            monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=3, role='monitor', normalize_by_length=False)
-            monitor_val_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
+            if config.monitor_rollout_ref.enable:
+                monitor_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=3, role='monitor', normalize_by_length=False)
+                monitor_val_reward_fn = reward_manager_cls(tokenizer=monitor_tokenizer, num_examine=0, role='monitor', normalize_by_length=False)
+            else:
+                monitor_reward_fn = None
+                monitor_val_reward_fn = None
         else:
             raise NotImplementedError(f"Reward manager {reward_manager_name} not supported yet")
 

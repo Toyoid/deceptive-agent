@@ -418,6 +418,9 @@ reward_model:
   use_dynamic_bsz: ${critic.use_dynamic_bsz}
   forward_max_token_len_per_gpu: ${critic.forward_max_token_len_per_gpu}
   reward_manager: episode
+  reward_manager_config:
+    actor_monitor:
+      trust_penalty_coef: 2.0  # actor_score = episode_reward - coef * trust_penalty.
   launch_reward_fn_async: False # custom reward function executed async on CPU, during log_prob
   normalization:
     enable: False

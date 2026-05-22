@@ -753,15 +753,31 @@ class RayPPOTrainer:
         if config.verdict_monitor.enable and config.judge_model.enable:
             raise ValueError("judge_model and verdict_monitor cannot be enabled at the same time.")
 
-        if config.self_monitor.enable and not config.algorithm.lagrangian.enable:
-            raise ValueError("self_monitor requires algorithm.lagrangian.enable to be True.")
+        reward_manager_name = config.reward_model.get("reward_manager", "episode")
+        use_actor_monitor_reward = reward_manager_name == "actor_monitor"
+        use_lagrangian = bool(config.algorithm.lagrangian.enable)
+        has_trust_penalty_source = bool(config.monitor_rollout_ref.enable or config.self_monitor.enable or config.verdict_monitor.enable)
 
-        if config.verdict_monitor.enable and not config.algorithm.lagrangian.enable:
-            raise ValueError("verdict_monitor requires algorithm.lagrangian.enable to be True.")
+        if use_actor_monitor_reward and use_lagrangian:
+            raise ValueError(
+                "reward_model.reward_manager=actor_monitor and algorithm.lagrangian.enable=True both apply trust_penalties; "
+                "enable only one trust-penalty application method."
+            )
 
-        if config.algorithm.lagrangian.enable and not (config.monitor_rollout_ref.enable or config.self_monitor.enable or config.verdict_monitor.enable):
+        if use_actor_monitor_reward and not has_trust_penalty_source:
+            raise ValueError(
+                "reward_model.reward_manager=actor_monitor requires monitor_rollout_ref, self_monitor, or verdict_monitor to be enabled."
+            )
+
+        if use_lagrangian and not has_trust_penalty_source:
             raise ValueError("Lagrangian RL requires external monitor, self_monitor, or verdict_monitor to be enabled.")
 
+        if has_trust_penalty_source and not (use_lagrangian or use_actor_monitor_reward):
+            raise ValueError(
+                "monitor_rollout_ref, self_monitor, and verdict_monitor require either "
+                "algorithm.lagrangian.enable=True or reward_model.reward_manager=actor_monitor."
+            )
+        
         if config.auxiliary.enable:
             auxiliary_adv_estimator = config.algorithm.adv_estimator
             auxiliary_incompatible_estimators = {

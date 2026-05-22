@@ -1,5 +1,6 @@
 dev_notes/
-AGENT.md
+AGENTS.md
+deceptive_roles_improved_original/
 
 **/*.pt
 **/checkpoints
