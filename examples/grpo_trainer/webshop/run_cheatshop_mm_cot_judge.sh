@@ -77,9 +77,9 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.enable_train_monitor=True \
     monitor_rollout_ref.rollout.n=1 \
     monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
-    monitor_rollout_ref.data.max_prompt_length=8000 \
+    monitor_rollout_ref.data.max_prompt_length=8960 \
     monitor_rollout_ref.rollout.max_num_batched_tokens=10000 \
-    monitor_rollout_ref.data.truncation='error' \
+    monitor_rollout_ref.data.truncation='left' \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
@@ -92,7 +92,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
     monitor_rollout_ref.monitor.use_invalid_action_penalty=True \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.1 \
-    monitor_rollout_ref.monitor.ppo_mini_batch_size=12 \
+    monitor_rollout_ref.monitor.ppo_mini_batch_size=6 \
     monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \

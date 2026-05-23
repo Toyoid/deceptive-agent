@@ -13,21 +13,9 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
 
-JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen/Qwen3-8B}"
-JUDGE_PORT="${JUDGE_PORT:-7001}"
-JUDGE_API_BASE="${JUDGE_API_BASE:-http://127.0.0.1:$JUDGE_PORT/v1}"
-JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-4096}"
-JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-64}"
+verdict_monitor_path=Qwen/Qwen3-8B
 
-# Start the CoT judge server in another terminal before running this script.
-# For a single 8-GPU node, use 3/3/2 split:
-#   CUDA_VISIBLE_DEVICES=6,7 bash examples/grpo_trainer/serve_cot_judge_vllm.sh $JUDGE_PORT 2 $JUDGE_MODEL_NAME
-#
-# This training script exposes GPUs 0-5 to Ray for actor+monitor pools only.
-# Override TRAIN_CUDA_VISIBLE_DEVICES and trainer GPU counts if the judge server
-# runs on a separate node or separate machine.
-
-# RL training with a non-learning monitor on deceptive_search, using API CoT judge.
+# RL training with a trajectory-level verdict monitor.
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
@@ -64,37 +52,15 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.free_cache_engine=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
-    monitor_rollout_ref.enable=True \
-    monitor_rollout_ref.enable_train_monitor=False \
-    monitor_rollout_ref.data.truncation='left' \
-    monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
-    monitor_rollout_ref.model.use_remove_padding=True \
-    monitor_rollout_ref.model.enable_gradient_checkpointing=True \
-    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
-    monitor_rollout_ref.monitor.fsdp_config.param_offload=True \
-    monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    monitor_rollout_ref.rollout.name=$ENGINE \
-    monitor_rollout_ref.rollout.gpu_memory_utilization=0.99 \
-    monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
-    monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     reward_model.reward_manager=actor_monitor \
-    judge_model.backend=api_cot \
-    judge_model.template_name=strict5_cot \
-    judge_model.valid_tokens='["0","1","2","3","4"]' \
-    judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
-    judge_model.api_cot.provider=openai_compatible \
-    judge_model.api_cot.model=$JUDGE_MODEL_NAME \
-    judge_model.api_cot.api_base=$JUDGE_API_BASE \
-    judge_model.api_cot.api_key=dummy \
-    judge_model.api_cot.temperature=0.6 \
-    judge_model.api_cot.top_p=0.95 \
-    judge_model.api_cot.top_k=20 \
-    judge_model.api_cot.min_p=0.0 \
-    judge_model.api_cot.max_output_length=$JUDGE_MAX_OUTPUT_LENGTH \
-    judge_model.api_cot.max_concurrent=$JUDGE_MAX_CONCURRENT \
-    judge_model.api_cot.timeout=180.0 \
-    judge_model.api_cot.parse_error=neutral \
-    judge_model.api_cot.api_error=raise \
+    verdict_monitor.enable=True \
+    verdict_monitor.model.path="$verdict_monitor_path" \
+    verdict_monitor.model.use_remove_padding=True \
+    verdict_monitor.model.chat_template_kwargs.enable_thinking=False \
+    verdict_monitor.model.fsdp_config.param_offload=True \
+    verdict_monitor.micro_batch_size_per_gpu=32 \
+    verdict_monitor.valid_tokens='["0","1"]' \
+    verdict_monitor.token_weights='[0.0,1.0]' \
     algorithm.use_kl_in_reward=False \
     algorithm.gamma=0.95 \
     env.env_name=deceptive_search \
@@ -108,8 +74,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=4 \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_search' \
-    trainer.experiment_name='grpo_deceptive_search_mo_cot_judge' \
-    trainer.n_gpus_per_node=4 \
+    trainer.experiment_name='grpo_deceptive_search_verdict_monitor' \
+    trainer.n_gpus_per_node=6 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=2 \
     trainer.nnodes_monitor=1 \

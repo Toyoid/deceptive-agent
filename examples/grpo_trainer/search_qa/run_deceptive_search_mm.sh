@@ -83,7 +83,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
     monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
     reward_model.reward_manager=actor_monitor \
-    judge_model.model.path=Qwen/Qwen3-14B \
+    judge_model.model.path=Qwen/Qwen2.5-72B-Instruct \
     judge_model.truncation='left' \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
@@ -100,12 +100,7 @@ python3 -m verl.trainer.main_ppo \
     env.rollout.n=5 \
     env.history_length=4 \
     env.deceptive_search.search_url='http://127.0.0.1:8000/retrieve' \
-    env.deceptive_search.audit_probability=1.0 \
     env.deceptive_search.reward_correct=1.0 \
-    env.deceptive_search.reward_source=0.0 \
-    env.deceptive_search.penalty_audit=0.0 \
-    env.deceptive_search.penalty_disclosure=0.0 \
-    env.deceptive_search.grounding_check=False \
     trainer.logger=['console','wandb'] \
     trainer.log_val_generations=4 \
     trainer.log_distributions=True \

@@ -119,7 +119,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.lambda_init=1.0 \
     algorithm.lagrangian.lambda_max=5.0 \
     algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=15 \
+    algorithm.lagrangian.lambda_update_delay_steps=10 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
     algorithm.lagrangian.threshold=0.15 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \

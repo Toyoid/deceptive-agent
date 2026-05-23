@@ -8,7 +8,7 @@ export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 # export WANDB_MODE="offline"
-DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data\
+DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
