@@ -36,9 +36,9 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=90 \
+    data.train_batch_size=180 \
     data.val_batch_size=64 \
-    data.max_prompt_length=512 \
+    data.max_prompt_length=256 \
     data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
@@ -51,8 +51,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.01 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=24 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
@@ -76,8 +76,8 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.kl_loss_coef=0.01 \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
-    monitor_rollout_ref.monitor.fsdp_config.param_offload=False \
-    monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=False \
+    monitor_rollout_ref.monitor.fsdp_config.param_offload=True \
+    monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=24 \
     monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
@@ -119,7 +119,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lagrangian.lambda_init=1.0 \
     algorithm.lagrangian.lambda_max=5.0 \
     algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=10 \
+    algorithm.lagrangian.lambda_update_delay_steps=1 \
     algorithm.lagrangian.episode_cost_window_size=1500 \
     algorithm.lagrangian.threshold=0.15 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
@@ -131,7 +131,7 @@ python3 -m verl.trainer.main_ppo \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \
     trainer.logger='["console","wandb"]' \
-    trainer.log_val_generations=6 \
+    trainer.log_val_generations=4 \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \

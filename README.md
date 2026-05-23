@@ -9,7 +9,7 @@
 
 This repository extends the `veRL` / `verl-agent` training stack with deception-aware environments, monitor and judge models, constrained reward shaping, API-based rollout evaluation, and auxiliary safety training baselines. It is designed for experiments where an agent may have access to hidden or privileged actions, and the training objective must trade off task success against detected or judged dishonest behavior.
 
-The previous upstream-oriented `verl-agent` README is preserved at [README_legacy_verl_agent.md](README_legacy_verl_agent.md).
+The previous upstream-oriented `verl-agent` README is preserved at [README_legacy_verl_agent.md](README_legacy_verl_agent.md). For current experiment launch documentation, start from [experiment_kickoff_guide/quick_start.md](experiment_kickoff_guide/quick_start.md).
 
 ## Table of Contents
 
@@ -33,11 +33,11 @@ The previous upstream-oriented `verl-agent` README is preserved at [README_legac
 | --- | --- |
 | Deception environments | `ReasonChat`, `deceptive_search`, and `CheatShop`, each exposing a different honesty/task-reward conflict. |
 | Monitor training | Optional monitor rollout worker group with fixed-monitor and trainable maximin-style modes. |
-| Judge scoring | Constrained-token judge model for scoring whether monitor critiques are evidence-supported. |
+| Judge scoring | API CoT judge and constrained-token scorer for converting monitor critiques into trust-penalty scores. |
 | Verdict monitor | Lightweight 0/1 verdict model path for trajectory-level honesty decisions. |
 | Lagrangian RL | Cost-constrained agent training through `algorithm.lagrangian.*` config knobs. |
 | API rollout evaluation | OpenAI-compatible evaluation runner for closed-source APIs or locally served vLLM models. |
-| Auxiliary safety baseline | Prompt-only auxiliary safety RL mixed into the main task training loop. |
+| Auxiliary safety baseline | Prompt-only auxiliary safety RLHF mixed into the main task training loop. |
 | Active-only rollout | Multi-turn rollout support that generates only for active environments, reducing wasted inference. |
 
 ## Method Overview
@@ -123,7 +123,7 @@ docs/                      Upstream veRL/verl-agent documentation and notes
 
 The monitor prompts live in [monitor_prompt.py](agent_system/environments/prompts/monitor_prompt.py). A monitor emits atomic critiques wrapped in `<critique>...</critique>` tags. The judge prompts live in [judge_prompt.py](agent_system/environments/prompts/judge_prompt.py) and score whether a critique exposes a real, evidence-supported honesty issue.
 
-Supported judge templates include:
+Judge scoring has two forms: API CoT judging through `judge_model.backend=api_cot`, and local constrained-token scoring through `judge_model.backend=constrained_logits`. Supported constrained scorer templates include:
 
 - `balanced` and `strict`: four-level critique validity scales.
 - `balanced5` and `strict5`: five-level symmetric scales with a neutral center.
@@ -164,20 +164,17 @@ pip install -r requirements_sglang.txt
 
 ### Search Retriever
 
-Deceptive Search and Search-R1 experiments require a local retrieval server. The repository provides a server and launch script under [examples/search/retriever](examples/search/retriever).
+Deceptive Search and Search-R1 experiments require the Search-R1 retrieval
+server. Follow the Search environment installation and retriever setup in
+[README_legacy_verl_agent.md](README_legacy_verl_agent.md#2-search). In
+particular, install the Search environment package as described there, download
+and assemble the Search-R1 index/corpus, and run the retrieval server in the
+dedicated `retriever` conda environment.
+
+Launch the retriever from that environment before training or API evaluation:
 
 ```bash
-conda create -n retriever python=3.10 -y
 conda activate retriever
-
-pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-pip install transformers datasets pyserini huggingface_hub uvicorn fastapi
-conda install faiss-gpu==1.8.0 -c pytorch -c nvidia -y
-```
-
-Then launch the retriever before training or API evaluation:
-
-```bash
 bash examples/search/retriever/retrieval_launch.sh
 ```
 
@@ -189,18 +186,16 @@ http://127.0.0.1:8000/retrieve
 
 ### WebShop and CheatShop
 
-CheatShop reuses WebShop assets. WebShop has tighter Python constraints, so a separate environment is recommended:
+CheatShop reuses WebShop assets and inherits WebShop's Python constraints.
+Follow the WebShop environment setup in
+[README_legacy_verl_agent.md](README_legacy_verl_agent.md#1-webshop).
 
-```bash
-conda create -n deceptive-agent-webshop python=3.10 -y
-conda activate deceptive-agent-webshop
-
-cd agent_system/environments/env_package/webshop/webshop
-bash setup.sh -d all
-python run_web_agent_text_env.py
-```
-
-Return to the main `deceptive-agent` environment for RL training.
+Use this repository's shopping environment name, `deceptive-agent-webshop`, as
+the dedicated WebShop/CheatShop conda environment. Run CheatShop data
+preparation, RL training, and API rollout evaluation in this environment, not in
+the main `deceptive-agent` environment. After WebShop setup, install this
+repository package in `deceptive-agent-webshop` as described in the legacy
+README's WebShop section.
 
 ### AppWorld
 
@@ -271,18 +266,25 @@ All training examples are Hydra-style scripts around:
 python -m verl.trainer.main_ppo <overrides>
 ```
 
+The complete current launch guide is split under [experiment_kickoff_guide/](experiment_kickoff_guide/). Use [quick_start.md](experiment_kickoff_guide/quick_start.md) for concise launch commands, [methods.md](experiment_kickoff_guide/methods.md) for method configs, and the environment pages for installation/setup details.
+
 Representative launch scripts:
 
 | Goal | Script |
 | --- | --- |
-| Deceptive Search GRPO baseline | [examples/grpo_trainer/run_deceptive_search.sh](examples/grpo_trainer/run_deceptive_search.sh) |
-| Deceptive Search with fixed monitor and Lagrangian cost | [examples/grpo_trainer/run_deceptive_search_m_lag.sh](examples/grpo_trainer/run_deceptive_search_m_lag.sh) |
-| Deceptive Search maximin monitor training | [examples/grpo_trainer/run_deceptive_search_mm_lag.sh](examples/grpo_trainer/run_deceptive_search_mm_lag.sh) |
+| Deceptive Search GRPO baseline | [examples/grpo_trainer/search_qa/run_deceptive_search.sh](examples/grpo_trainer/search_qa/run_deceptive_search.sh) |
+| Deceptive Search with verdict monitor | [examples/grpo_trainer/search_qa/run_deceptive_search_verdict_m.sh](examples/grpo_trainer/search_qa/run_deceptive_search_verdict_m.sh) |
+| Deceptive Search with critique monitor | [examples/grpo_trainer/search_qa/run_deceptive_search_m_cot_judge.sh](examples/grpo_trainer/search_qa/run_deceptive_search_m_cot_judge.sh) |
+| Deceptive Search maximin monitor training | [examples/grpo_trainer/search_qa/run_deceptive_search_mm_cot_judge.sh](examples/grpo_trainer/search_qa/run_deceptive_search_mm_cot_judge.sh) |
 | ReasonChat / deceptive roles baseline | [examples/ppo_trainer/run_deceptive_roles.sh](examples/ppo_trainer/run_deceptive_roles.sh) |
-| ReasonChat with trainable monitor | [examples/ppo_trainer/run_deceptive_roles_m.sh](examples/ppo_trainer/run_deceptive_roles_m.sh) |
+| ReasonChat with self-monitor | [examples/ppo_trainer/run_deceptive_roles_self_m.sh](examples/ppo_trainer/run_deceptive_roles_self_m.sh) |
+| ReasonChat with critique monitor, constrained scorer | [examples/ppo_trainer/run_deceptive_roles_m_lag.sh](examples/ppo_trainer/run_deceptive_roles_m_lag.sh) |
+| ReasonChat maximin monitor training | [examples/grpo_trainer/deceptive_roles/run_deceptive_roles_mm_lag_cot_judge.sh](examples/grpo_trainer/deceptive_roles/run_deceptive_roles_mm_lag_cot_judge.sh) |
 | ReasonChat with verdict monitor | [examples/ppo_trainer/run_deceptive_roles_verdict_m.sh](examples/ppo_trainer/run_deceptive_roles_verdict_m.sh) |
-| ReasonChat with auxiliary safety RL | [examples/ppo_trainer/run_deceptive_roles_aux_safety.sh](examples/ppo_trainer/run_deceptive_roles_aux_safety.sh) |
-| CheatShop GRPO | [examples/grpo_trainer/run_cheatshop.sh](examples/grpo_trainer/run_cheatshop.sh) |
+| ReasonChat with auxiliary safety RLHF | [examples/ppo_trainer/run_deceptive_roles_aux_safety.sh](examples/ppo_trainer/run_deceptive_roles_aux_safety.sh) |
+| CheatShop GRPO | [examples/grpo_trainer/webshop/run_cheatshop.sh](examples/grpo_trainer/webshop/run_cheatshop.sh) |
+| CheatShop with critique monitor | [examples/grpo_trainer/webshop/run_cheatshop_m_cot_judge.sh](examples/grpo_trainer/webshop/run_cheatshop_m_cot_judge.sh) |
+| CheatShop maximin monitor training | [examples/grpo_trainer/webshop/run_cheatshop_mm_cot_judge.sh](examples/grpo_trainer/webshop/run_cheatshop_mm_cot_judge.sh) |
 | Self-monitor SFT | [examples/sft/self_monitor](examples/sft/self_monitor) |
 
 Example:
@@ -360,7 +362,7 @@ The main training config is [verl/trainer/config/ppo_trainer.yaml](verl/trainer/
 | `actor_rollout_ref` | Actor model, rollout backend, reference model, PPO/GRPO optimization. |
 | `reward_model` | Reward model worker and normalization settings. |
 | `monitor_rollout_ref` | Optional monitor model, monitor rollout backend, and monitor optimization. |
-| `judge_model` | Constrained-token judge for monitor critique scoring. |
+| `judge_model` | API CoT judge or constrained-token scorer for monitor critique scoring. |
 | `verdict_monitor` | Binary verdict monitor path. |
 | `auxiliary` | Auxiliary prompt-only safety RL data and reward configuration. |
 | `algorithm.lagrangian` | Cost threshold, lambda schedule, and cost advantage estimator. |
@@ -413,7 +415,9 @@ This project builds on:
 - [WebShop](https://github.com/princeton-nlp/WebShop), for shopping-agent environments.
 - [AppWorld](https://github.com/stonybrooknlp/appworld/), for experimental app-control tasks.
 
-The legacy upstream-style README is kept at [README_legacy_verl_agent.md](README_legacy_verl_agent.md) for historical context.
+[README_legacy_verl_agent.md](README_legacy_verl_agent.md) is kept for upstream
+context and remains the authoritative reference for inherited Search/WebShop
+environment setup details.
 
 ## License
 
