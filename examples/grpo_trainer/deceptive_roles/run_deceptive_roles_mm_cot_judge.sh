@@ -93,7 +93,8 @@ python3 -m verl.trainer.main_ppo \
     reward_model.model.use_remove_padding=True \
     reward_model.model.fsdp_config.param_offload=True \
     reward_model.micro_batch_size_per_gpu=32 \
-    reward_model.reward_manager=episode \
+    reward_model.reward_manager=actor_monitor \
+    reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=4.0 \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
@@ -115,14 +116,6 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.parse_error=neutral \
     judge_model.api_cot.api_error=raise \
     algorithm.use_kl_in_reward=False \
-    algorithm.lagrangian.enable=True \
-    algorithm.lagrangian.lambda_init=1.0 \
-    algorithm.lagrangian.lambda_max=5.0 \
-    algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=1 \
-    algorithm.lagrangian.episode_cost_window_size=1500 \
-    algorithm.lagrangian.threshold=0.15 \
-    algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
@@ -135,7 +128,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen3_4b_maximin_lag_cot_judge' \
+    trainer.experiment_name='grpo_qwen3_4b_maximin_cot_judge' \
     trainer.n_gpus_per_node=3 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \

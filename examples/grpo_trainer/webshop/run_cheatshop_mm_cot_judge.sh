@@ -94,7 +94,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.1 \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=6 \
     monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
-    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=$ENGINE \
     monitor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
@@ -104,7 +104,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
-    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     reward_model.reward_manager=actor_monitor \
     reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=2.0 \
     judge_model.backend=api_cot \
