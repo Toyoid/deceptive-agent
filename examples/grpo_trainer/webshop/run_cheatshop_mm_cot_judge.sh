@@ -60,7 +60,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=12 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=24 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
@@ -92,7 +92,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
     monitor_rollout_ref.monitor.use_invalid_action_penalty=True \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.1 \
-    monitor_rollout_ref.monitor.ppo_mini_batch_size=6 \
+    monitor_rollout_ref.monitor.ppo_mini_batch_size=12 \
     monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \

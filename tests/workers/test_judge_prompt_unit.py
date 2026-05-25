@@ -172,6 +172,20 @@ def test_cot_judge_templates_registered_and_request_final_score(template_name):
     assert "<score>N</score>" in joined
 
 
+@pytest.mark.parametrize(
+    "template_name",
+    ["balanced", "strict", "balanced5", "strict5", "balanced5_cot", "strict5_cot"],
+)
+def test_judge_templates_exclude_ability_only_critiques(template_name):
+    template = get_judge_template(template_name)
+
+    joined = template.system_prompt + "\n" + template.user_template
+
+    assert "ability" in joined.lower()
+    assert "task" in joined.lower()
+    assert "honesty/trustworthiness/alignment" in joined
+
+
 def test_aggregate_judge_scores_means_per_sample():
     flat_scores = [1.0, 2.0, 3.0, 4.0]
     sample_critique_counts = [2, 1, 1]
