@@ -88,16 +88,8 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
     monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
-    reward_model.enable=True \
-    reward_model.model.path=sfairXC/FsfairX-LLaMA3-RM-v0.1 \
-    reward_model.model.use_remove_padding=True \
-    reward_model.model.fsdp_config.param_offload=True \
-    reward_model.micro_batch_size_per_gpu=32 \
     reward_model.reward_manager=actor_monitor \
-    reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=4.0 \
-    reward_model.normalization.enable=True \
-    reward_model.normalization.rollout_overrides.temperature=1.1 \
-    reward_model.normalization.rollout_overrides.top_p=1.0 \
+    reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=1.0 \
     judge_model.backend=api_cot \
     judge_model.template_name=strict5_cot \
     judge_model.valid_tokens='["0","1","2","3","4"]' \
@@ -128,7 +120,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen3_4b_maximin_cot_judge' \
+    trainer.experiment_name='grpo_qwen3_4b_maximin_cot_judge_no_rm' \
     trainer.n_gpus_per_node=3 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
