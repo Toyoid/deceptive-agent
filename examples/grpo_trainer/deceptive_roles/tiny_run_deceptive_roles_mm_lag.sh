@@ -16,7 +16,8 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 python3 examples/data_preprocess/deceptive_roles.py \
     --local_dir $DATA_ROOT/deceptive_roles_improved \
     --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
-    --no_format_prompt
+    --no_format_prompt \
+    --suffix_prompt
 
 train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
 test_files=$DATA_ROOT/deceptive_roles_improved/test.parquet
@@ -29,7 +30,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_batch_size=3 \
     data.val_batch_size=64 \
     data.max_prompt_length=256 \
-    data.max_response_length=512 \
+    data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -44,15 +45,16 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=48 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.temperature=1.2 \
     actor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
@@ -69,15 +71,15 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=False \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=False \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=48 \
-    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=16 \
-    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=4 \
+    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=vllm \
     monitor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
-    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     reward_model.enable=True \
     reward_model.model.path=sfairXC/FsfairX-LLaMA3-RM-v0.1 \
     reward_model.model.use_remove_padding=True \
@@ -88,7 +90,7 @@ python3 -m verl.trainer.main_ppo \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
     judge_model.model.path=Qwen/Qwen3-32B \
-    judge_model.backekend=constrained_logits \
+    judge_model.backend=constrained_logits \
     judge_model.model.use_remove_padding=True \
     judge_model.model.fsdp_config.param_offload=True \
     judge_model.micro_batch_size_per_gpu=16 \
@@ -97,6 +99,8 @@ python3 -m verl.trainer.main_ppo \
     judge_model.constrained_top_k=2 \
     judge_model.template_name=strict5 \
     algorithm.use_kl_in_reward=False \
+    algorithm.kl_ctrl.type=fixed \
+    algorithm.kl_ctrl.kl_coef=2e-5 \
     algorithm.lagrangian.enable=True \
     algorithm.lagrangian.lambda_init=1.0 \
     algorithm.lagrangian.lambda_max=5.0 \
