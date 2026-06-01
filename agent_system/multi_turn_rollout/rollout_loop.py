@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import copy
+from dataclasses import dataclass
 import torch
 import numpy as np
 from verl import DataProto
@@ -33,8 +34,35 @@ from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.utils.active_rollout import ActiveIndexMap
 from agent_system.self_monitor import parse_self_monitor_batch
 from agent_system.verdict_monitor import constrained_probs_to_binary_penalties
-from typing import List, Dict, Callable, Tuple, Optional
+from agent_system.monitor_action import (
+    correct_no_issue_from_probs,
+    correct_no_issue_from_token,
+    parse_monitor_action,
+)
+from agent_system.judge.score_profiles import (
+    ISSUE_ACTION_SCORE_PROFILE,
+    NO_ISSUE_ACTION_SCORE_PROFILE,
+    resolve_score_profile,
+)
+from typing import Any, List, Dict, Callable, Tuple, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
+
+
+@dataclass(frozen=True)
+class JudgeRequests:
+    sample_idx: int
+    action_type: str
+    score_profile_name: str
+    prompt: List[Dict[str, str]]
+    image: Any = None
+
+
+@dataclass(frozen=True)
+class JudgeBatchResult:
+    scores: np.ndarray
+    score_tokens: List[Optional[str]]
+    errors: List[Optional[str]]
+    correct_no_issue: np.ndarray
 
 class TrajectoryCollector:
     def __init__(
@@ -81,7 +109,21 @@ class TrajectoryCollector:
             assert verdict_monitor_tokenizer is not None, "verdict monitor tokenizer should be provided when verdict_monitor is enabled"
             self.verdict_monitor_tokenizer = verdict_monitor_tokenizer
             self.verdict_monitor_processor = verdict_monitor_processor
-    
+
+    def _judge_score_profiles(self):
+        from agent_system.judge.score_profiles import load_score_profiles
+
+        return load_score_profiles(self.config.judge_model)
+
+    @staticmethod
+    def _group_judge_requests_by_profile(
+        judge_requests: List[JudgeRequests],
+    ) -> Dict[str, List[JudgeRequests]]:
+        grouped: Dict[str, List[JudgeRequests]] = {}
+        for request in judge_requests:
+            grouped.setdefault(request.score_profile_name, []).append(request)
+        return grouped
+
     @staticmethod
     def _create_uid_batch(
         batch_size: int,
@@ -117,7 +159,8 @@ class TrajectoryCollector:
     def _debug_print_judge_samples(
         self,
         processed_judge_samples: List[dict],
-        judge_score_slots: List[Tuple[int, int]],
+        judge_requests: List[JudgeRequests],
+        score_profile_name: str,
         constrained_scores,
         constrained_token_probs,
     ) -> None:
@@ -125,21 +168,22 @@ class TrajectoryCollector:
         if debug_print_samples <= 0 or len(processed_judge_samples) == 0:
             return
 
-        num_samples = min(debug_print_samples, len(processed_judge_samples), len(judge_score_slots))
+        num_samples = min(debug_print_samples, len(processed_judge_samples), len(judge_requests))
         probs_array = constrained_token_probs.numpy() if hasattr(constrained_token_probs, "numpy") else np.asarray(constrained_token_probs)
-        valid_tokens = list(self.config.judge_model.valid_tokens)
-        token_weights = list(self.config.judge_model.token_weights)
+        profile = resolve_score_profile(self._judge_score_profiles(), score_profile_name)
+        valid_tokens = list(profile.valid_tokens)
+        token_weights = list(profile.token_weights)
         constrained_top_k = self.config.judge_model.get("constrained_top_k", -1)
 
         print("\n" + "=" * 120)
         print(
             f"[Judge Debug] Showing {num_samples}/{len(processed_judge_samples)} samples | "
-            f"valid_tokens={valid_tokens} | constrained_top_k={constrained_top_k}"
+            f"score_profile={score_profile_name} | valid_tokens={valid_tokens} | constrained_top_k={constrained_top_k}"
         )
         print("=" * 120)
 
         for idx in range(num_samples):
-            sample_idx, critique_idx = judge_score_slots[idx]
+            request = judge_requests[idx]
             prompt_ids = processed_judge_samples[idx]["raw_prompt_ids"]
             if hasattr(prompt_ids, "tolist"):
                 prompt_ids = prompt_ids.tolist()
@@ -151,7 +195,10 @@ class TrajectoryCollector:
                 f"{token}={prob:.4f}" for token, prob in zip(valid_tokens, prob_row)
             )
 
-            print(f"[Judge Debug] Queued sample {idx + 1}/{num_samples} | source_sample={sample_idx} | critique_idx={critique_idx}")
+            print(
+                f"[Judge Debug] Queued sample {idx + 1}/{num_samples} | "
+                f"source_sample={request.sample_idx} | action_type={request.action_type}"
+            )
             print(f"Score: {float(constrained_scores[idx]):.4f}")
             print(
                 f"Argmax token: {valid_tokens[best_idx]} "
@@ -212,33 +259,38 @@ class TrajectoryCollector:
 
     def _debug_print_cot_judge_samples(
         self,
-        judge_score_slots: List[Tuple[int, int]],
+        judge_requests: List[JudgeRequests],
+        score_profile_name: str,
         cot_result,
     ) -> None:
         debug_print_samples = 2
         if debug_print_samples <= 0 or len(cot_result.scores) == 0:
             return
 
-        num_samples = min(debug_print_samples, len(cot_result.scores), len(judge_score_slots))
-        valid_tokens = list(self.config.judge_model.valid_tokens)
-        token_weights = list(self.config.judge_model.token_weights)
+        num_samples = min(debug_print_samples, len(cot_result.scores), len(judge_requests))
+        profile = resolve_score_profile(self._judge_score_profiles(), score_profile_name)
+        valid_tokens = list(profile.valid_tokens)
+        token_weights = list(profile.token_weights)
 
         print("\n" + "=" * 120)
         print(
             f"[CoT Judge Debug] Showing {num_samples}/{len(cot_result.scores)} samples | "
-            f"valid_tokens={valid_tokens}"
+            f"score_profile={score_profile_name} | valid_tokens={valid_tokens}"
         )
         print("=" * 120)
 
         for idx in range(num_samples):
-            sample_idx, critique_idx = judge_score_slots[idx]
+            request = judge_requests[idx]
             parsed_token = cot_result.parsed_tokens[idx]
             token_summary = "unparsed"
             if parsed_token in valid_tokens:
                 token_idx = valid_tokens.index(parsed_token)
                 token_summary = f"{parsed_token} (weight={float(token_weights[token_idx]):.4f})"
 
-            print(f"[CoT Judge Debug] Queued sample {idx + 1}/{num_samples} | source_sample={sample_idx} | critique_idx={critique_idx}")
+            print(
+                f"[CoT Judge Debug] Queued sample {idx + 1}/{num_samples} | "
+                f"source_sample={request.sample_idx} | action_type={request.action_type}"
+            )
             print(f"Score: {float(cot_result.scores[idx]):.4f}")
             print(f"Parsed token: {token_summary}")
             if cot_result.errors[idx] is not None:
@@ -473,6 +525,7 @@ class TrajectoryCollector:
             'raw_prompt': copy.deepcopy(chat),
             'data_source': gen_batch.non_tensor_batch['data_source'][item], 
             'episode_rewards': gen_batch.non_tensor_batch['episode_rewards'][item],
+            'agent_trajectory': agent_trajectory,
         })
         
         return row_dict
@@ -815,8 +868,6 @@ class TrajectoryCollector:
                     active_batch.non_tensor_batch['monitor_image'] = active.select_array(
                         next_obs['monitor_image'], dtype=object
                     )
-                if self.config.judge_model.enable:
-                    active_batch.non_tensor_batch['agent_response'] = active.select_info_values(infos, 'agent_response')
             
             active_batch.check_consistency()
 
@@ -994,9 +1045,16 @@ class TrajectoryCollector:
                 'task_type': infos[0]['task_type'],  # NOTE: assume all in the batch are from the same task_type
                 'user_inputs': monitor_gen_batch.non_tensor_batch['user_inputs'],
                 'evidence': monitor_gen_batch.non_tensor_batch['system_infos'],
-                'agent_response': monitor_gen_batch.non_tensor_batch['agent_response'],
+                'agent_trajectory': monitor_gen_batch.non_tensor_batch['agent_trajectory'],
             }
-            trust_penalties, monitor_format_correct, judge_stats = self._compute_judge_scores(
+            (
+                trust_penalties,
+                monitor_action_types,
+                correct_no_issue,
+                judge_score_tokens,
+                monitor_invalid_reasons,
+                judge_stats,
+            ) = self._compute_judge_scores(
                 monitor_batch=batch,
                 obs=judge_obs,
                 judge_wg=judge_wg,
@@ -1004,13 +1062,15 @@ class TrajectoryCollector:
         else:
             raise RuntimeError("Judge model is not enabled, cannot compute trust_penalties. Please set `judge_model.enable` as True when using monitor rollout")
 
-        n_correct = int(monitor_format_correct.sum())
-        n_total = len(monitor_format_correct)
-        print(f"  Monitor format check: {n_correct}/{n_total} correct "
-              f"({100.0 * n_correct / max(n_total, 1):.1f}%)")
+        n_total = len(monitor_action_types)
+        n_invalid = int(np.sum(monitor_action_types == "invalid"))
+        print(f"  Monitor action parse: {n_total - n_invalid}/{n_total} valid "
+              f"({100.0 * (n_total - n_invalid) / max(n_total, 1):.1f}%)")
         print(f"  Computed trust_penalties: {trust_penalties}")
         batch.non_tensor_batch['trust_penalties'] = trust_penalties
-        batch.non_tensor_batch['is_format_correct'] = monitor_format_correct
+        batch.non_tensor_batch['monitor_action_type'] = monitor_action_types
+        batch.non_tensor_batch['correct_no_issue'] = correct_no_issue
+        batch.non_tensor_batch['judge_score_token'] = judge_score_tokens
         if judge_stats.get("total_count", 0) > 0:
             error_ratio = float(judge_stats["parse_error_count"]) / float(judge_stats["total_count"])
             print(f"  Judge API parsing error count: {judge_stats['parse_error_count']}/{judge_stats['total_count']} ({100.0 * error_ratio:.1f}%)")
@@ -1020,21 +1080,20 @@ class TrajectoryCollector:
     
     def _judge_constrained_score(
         self,
-        all_judge_prompts: List[List[Dict[str, str]]],
-        all_judge_imgs: List,
-        judge_score_slots: List[Tuple[int, int]],
+        judge_requests: List[JudgeRequests],
+        score_profile_name: str,
         judge_wg,
-    ):
+    ) -> JudgeBatchResult:
         if judge_wg is None:
             raise RuntimeError("judge_wg is required when judge_model.backend='constrained_logits'.")
         if self.judge_tokenizer is None:
             raise RuntimeError("judge_tokenizer is required when judge_model.backend='constrained_logits'.")
 
         processed_judge_samples = []
-        for judge_chat, judge_img in zip(all_judge_prompts, all_judge_imgs):
+        for request in judge_requests:
             processed = self._process_chat_to_model_inputs(
-                chat=judge_chat,
-                obs_image=judge_img,
+                chat=request.prompt,
+                obs_image=request.image,
                 tokenizer=self.judge_tokenizer,
                 processor=self.judge_processor,
                 max_prompt_length=self.config.judge_model.max_prompt_length,
@@ -1045,6 +1104,7 @@ class TrajectoryCollector:
         judge_batch = DataProto.from_single_dict(
             data=collate_fn(processed_judge_samples),
         )
+        judge_batch.meta_info["score_profile_name"] = score_profile_name
 
         judge_input_padded, pad_size = pad_dataproto_to_divisor(judge_batch, judge_wg.world_size)
         judge_output_padded = judge_wg.compute_constrained_scores(judge_input_padded)
@@ -1053,189 +1113,208 @@ class TrajectoryCollector:
         score_tensor = judge_output.batch["constrained_scores"]
         flat_scores = score_tensor.detach().cpu().numpy() if hasattr(score_tensor, "detach") else np.asarray(score_tensor)
         flat_probs = judge_output.batch["constrained_token_probs"]
+        probs_array = flat_probs.detach().cpu().numpy() if hasattr(flat_probs, "detach") else np.asarray(flat_probs)
+        profile = resolve_score_profile(self._judge_score_profiles(), score_profile_name)
+        valid_tokens = list(profile.valid_tokens)
+        flat_tokens = [str(valid_tokens[int(np.argmax(row))]) for row in probs_array]
+        correct_no_issue = np.full(len(judge_requests), -1.0, dtype=np.float32)
+        for idx, request in enumerate(judge_requests):
+            if request.action_type == "no_issue":
+                correct_no_issue[idx] = correct_no_issue_from_probs(
+                    valid_tokens=valid_tokens,
+                    token_probs=probs_array[idx],
+                )
 
         self._debug_print_judge_samples(
             processed_judge_samples=processed_judge_samples,
-            judge_score_slots=judge_score_slots,
+            judge_requests=judge_requests,
+            score_profile_name=score_profile_name,
             constrained_scores=flat_scores,
             constrained_token_probs=flat_probs,
         )
 
-        return flat_scores, flat_probs
+        return JudgeBatchResult(
+            scores=np.asarray(flat_scores, dtype=np.float32),
+            score_tokens=flat_tokens,
+            errors=[None] * len(judge_requests),
+            correct_no_issue=correct_no_issue,
+        )
 
     def _cot_judge_score(
         self,
-        all_judge_prompts: List[List[Dict[str, str]]],
-        judge_score_slots: List[Tuple[int, int]],
-    ):
+        judge_requests: List[JudgeRequests],
+        score_profile_name: str,
+    ) -> JudgeBatchResult:
         if self._cot_judge_scorer is None:
             from agent_system.judge import ApiCotJudgeScorer
 
             self._cot_judge_scorer = ApiCotJudgeScorer(self.config.judge_model)
 
-        if all_judge_prompts:
+        if judge_requests:
             print("\n" + "=" * 120)
             print("[CoT Judge Input Debug] Showing first API judge input sample before request")
             print("=" * 120)
-            for message in all_judge_prompts[0]:
+            for message in judge_requests[0].prompt:
                 print(f"[{message.get('role', '')}]")
                 print(message.get("content", ""))
                 print("-" * 120)
             print("=" * 120)
 
-        cot_result = self._cot_judge_scorer.score_batch(all_judge_prompts)
+        cot_result = self._cot_judge_scorer.score_batch(
+            [request.prompt for request in judge_requests],
+            score_profile_name=score_profile_name,
+        )
         self._debug_print_cot_judge_samples(
-            judge_score_slots=judge_score_slots,
+            judge_requests=judge_requests,
+            score_profile_name=score_profile_name,
             cot_result=cot_result,
         )
-        return cot_result.scores, cot_result.token_probs, cot_result.errors
+        correct_no_issue = np.full(len(judge_requests), -1.0, dtype=np.float32)
+        for idx, request in enumerate(judge_requests):
+            if request.action_type == "no_issue" and cot_result.errors[idx] is None:
+                correct_no_issue[idx] = correct_no_issue_from_token(cot_result.parsed_tokens[idx])
+        return JudgeBatchResult(
+            scores=np.asarray(cot_result.scores, dtype=np.float32),
+            score_tokens=cot_result.parsed_tokens,
+            errors=list(cot_result.errors),
+            correct_no_issue=correct_no_issue,
+        )
     
     def _compute_judge_scores(
         self,
         monitor_batch: DataProto,
         obs: Dict,
         judge_wg,
-    ) -> tuple[np.ndarray, np.ndarray, Dict[str, int]]:
-        """
-        Compute trust penalties using the judge model, with monitor format gating.
-
-        If a monitor output does not contain valid <tag>...</tag> tags,
-        its judge score is set to -1 without calling the judge model for that sample.
-
-        This method:
-        1. Extracts <critique> tags from each monitor output (same regex as extract_critiques,
-           but without the fallback that treats the entire output as a single critique)
-        2. Samples with no valid tags are marked format-incorrect and get score -1
-        3. Builds judge prompts for each valid critique
-        4. Batches all valid critiques and runs judge inference
-        5. Aggregates per-critique scores back to per-sample via mean
-
-        Args:
-            monitor_batch: DataProto containing monitor outputs
-            obs: Observation dict containing judge evidence and agent behavior
-            judge_wg: Judge worker group. Required when using the constrained_logits
-                backend; may be None only when judge scoring is routed through the
-                api_cot backend.
-
-        Returns:
-            Tuple of:
-                - np.ndarray of trust penalties, shape (batch_size,)
-                - np.ndarray of format correctness flags (bool), shape (batch_size,)
-        """
-        from agent_system.environments.prompts.judge_prompt import (
-            extract_critiques,
-            build_judge_prompt,
-            is_no_issue_sentinel,
-        )
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, int]]:
+        """Compute monitor rewards from anchored monitor actions and judge labels."""
+        from agent_system.environments.prompts.judge_prompt import build_judge_prompt
 
         batch_size = len(monitor_batch.batch)
-
-        # Extract evidence and task types from obs/infos
         task_types = [obs['task_type']] * batch_size  # NOTE: assume all in the batch are from the same task_type
         user_inputs = obs['user_inputs']
         evidences = obs['evidence']
-        # TODO: Consider should agent responses exclude reasoning/tool-calling steps?
-        agent_resps = obs['agent_response']
+        agent_trajs = obs['agent_trajectory']
         assert len(user_inputs) == batch_size, "Mismatch in user_inputs and monitor batch size"
         assert len(evidences) == batch_size, "Mismatch in evidences and monitor batch size"
-        assert len(agent_resps) == batch_size, "Mismatch in agent_resps and monitor batch size"
+        assert len(agent_trajs) == batch_size, "Mismatch in agent_trajectories and monitor batch size"
 
         monitor_output_texts = self.monitor_tokenizer.batch_decode(
             monitor_batch.batch['responses'], skip_special_tokens=True
         )
 
-        per_sample_scores = np.zeros(batch_size, dtype=np.float32)
-        format_correct = np.zeros(batch_size, dtype=bool)
+        monitor_rewards = np.zeros(batch_size, dtype=np.float32)
+        monitor_action_types = np.full(batch_size, "invalid", dtype=object)
+        correct_no_issue = np.full(batch_size, -1.0, dtype=np.float32)
+        judge_score_tokens = np.full(batch_size, "", dtype=object)
+        invalid_reasons = np.full(batch_size, "", dtype=object)
 
-        # Per-sample critique score lists. Sentinel entries are pre-filled with 0.0;
-        # non-sentinel entries start as None and are filled after judge inference.
-        # All critiques (sentinel + non-sentinel) are included in the per-sample mean.
-        sample_critique_scores: Dict[int, List] = {}
-        # Maps each queued judge call → (sample_idx, position in sample_critique_scores[sample_idx])
-        judge_score_slots: List[Tuple[int, int]] = []
-        all_judge_prompts = []
-        all_judge_imgs = []
-        # TODO: The multi-modal processing has not been tested yet
+        judge_requests: List[JudgeRequests] = []
         judge_images = obs.get('judge_image', None)
+        judge_backend = self.config.judge_model.get("backend", "constrained_logits")
+        issue_template_name = (
+            "strict5_cot"
+            if judge_backend == "api_cot"
+            else self.config.judge_model.get("template_name", "strict5")
+        )
+        no_issue_template_name = (
+            "no_issue_verification_cot"
+            if judge_backend == "api_cot"
+            else "no_issue_verification"
+        )
 
-        for item, (monitor_out, user_input, evidence, resp, task_type) in enumerate(zip(
-            monitor_output_texts, user_inputs, evidences, agent_resps, task_types
+        for item, (monitor_out, user_input, evidence, agent_trajectory, task_type) in enumerate(zip(
+            monitor_output_texts, user_inputs, evidences, agent_trajs, task_types
         )):
-            # Extract <critique> tags — empty list means bad format
-            critiques = extract_critiques(monitor_out)
-            count = len(critiques)
-            if count <= 0:
-                per_sample_scores[item] = -1.0
-                print(f"[FORMAT CHECK] Sample {item}: monitor output has invalid format, "
-                      f"judge score forced to -1.0. Output snippet: {monitor_out!r}")
-                continue  # format_correct[item] stays False
+            parsed = parse_monitor_action(monitor_out)
+            monitor_action_types[item] = parsed.action_type
 
-            format_correct[item] = True
-            sample_critique_scores[item] = []
+            if parsed.action_type == "invalid":
+                monitor_rewards[item] = -2.0
+                invalid_reasons[item] = parsed.invalid_reason
+                print(f"[MONITOR ACTION] Sample {item}: invalid action ({parsed.invalid_reason}); "
+                      f"monitor reward forced to -2.0. Output snippet: {monitor_out!r}")
+                continue
 
-            for critique in critiques:
-                pos = len(sample_critique_scores[item])
-                if is_no_issue_sentinel(critique):
-                    # Exact sentinel phrase → 0.0 immediately, skip judge call but keep in mean
-                    sample_critique_scores[item].append(0.0)
-                else:
-                    # Non-sentinel → queue to judge; placeholder filled after inference
-                    sample_critique_scores[item].append(None)
-                    judge_score_slots.append((item, pos))
-                    judge_chat = build_judge_prompt(
-                        task_type=task_type,
-                        user_input=user_input,
-                        evidence=evidence,
-                        agent_response=resp,
-                        critique=critique,
-                        template_name=self.config.judge_model.template_name,
-                    )
-                    all_judge_prompts.append(judge_chat)
-                    all_judge_imgs.append(judge_images[item] if judge_images is not None else None)
+            if parsed.action_type == "no_issue":
+                judge_chat = build_judge_prompt(
+                    task_type=task_type,
+                    user_input=user_input,
+                    evidence=evidence,
+                    agent_response=agent_trajectory,
+                    critique="<no_issue/>",
+                    template_name=no_issue_template_name,
+                )
+                score_profile_name = NO_ISSUE_ACTION_SCORE_PROFILE
+            else:
+                judge_chat = build_judge_prompt(
+                    task_type=task_type,
+                    user_input=user_input,
+                    evidence=evidence,
+                    agent_response=agent_trajectory,
+                    critique=parsed.serialized_issue,
+                    template_name=issue_template_name,
+                )
+                score_profile_name = ISSUE_ACTION_SCORE_PROFILE
 
-        # --- Judge inference (only for non-sentinel critiques from format-valid samples) ---
+            judge_requests.append(JudgeRequests(
+                sample_idx=item,
+                action_type=parsed.action_type,
+                score_profile_name=score_profile_name,
+                prompt=judge_chat,
+                image=judge_images[item] if judge_images is not None else None,
+            ))
+
+        # --- Judge inference (only for format-valid samples) ---
         judge_stats = {"parse_error_count": 0, "total_count": 0}
-        if len(all_judge_prompts) > 0:
-            # TODO: this asserting logic may be unnecessary, once the code is stable we can remove it.
-            assert len(all_judge_prompts) == len(judge_score_slots), "Mismatch in judge prompts and score slots"
-            assert len(all_judge_imgs) == len(all_judge_prompts), "Mismatch in judge images and inputs"
+        if len(judge_requests) > 0:
+            for score_profile_name, profile_requests in self._group_judge_requests_by_profile(judge_requests).items():
+                if judge_backend == "constrained_logits":
+                    judge_result = self._judge_constrained_score(
+                        judge_requests=profile_requests,
+                        score_profile_name=score_profile_name,
+                        judge_wg=judge_wg,
+                    )
+                elif judge_backend == "api_cot":
+                    # not considering multi-modal judge input for api_cot judge for now
+                    judge_result = self._cot_judge_score(
+                        judge_requests=profile_requests,
+                        score_profile_name=score_profile_name,
+                    )
+                else:
+                    raise ValueError(f"Unsupported judge_model.backend={judge_backend!r}")
 
-            judge_backend = self.config.judge_model.get("backend", "constrained_logits")
-            if judge_backend == "constrained_logits":
-                flat_scores, _ = self._judge_constrained_score(
-                    all_judge_prompts=all_judge_prompts,
-                    all_judge_imgs=all_judge_imgs,
-                    judge_score_slots=judge_score_slots,
-                    judge_wg=judge_wg,
-                )
-            elif judge_backend == "api_cot":
-                # not considering multi-modal judge input for api_cot judge for now
-                flat_scores, _, errors = self._cot_judge_score(
-                    all_judge_prompts=all_judge_prompts,
-                    judge_score_slots=judge_score_slots,
-                )
-                judge_stats["parse_error_count"] = sum(1 for e in errors if e is not None)
-            else:
-                raise ValueError(f"Unsupported judge_model.backend={judge_backend!r}")
-            judge_stats["total_count"] = len(flat_scores)
+                judge_stats["parse_error_count"] += sum(1 for e in judge_result.errors if e is not None)
+                judge_stats["total_count"] += len(judge_result.score_tokens)
 
-            assert len(flat_scores) == len(judge_score_slots), (
-                f"Mismatch: {len(flat_scores)} judge scores vs {len(judge_score_slots)} score slots"
-            )
-            for judge_idx, (sample_idx, pos) in enumerate(judge_score_slots):
-                assert sample_critique_scores[sample_idx][pos] is None, "Score slot already filled, logic error"
-                sample_critique_scores[sample_idx][pos] = float(flat_scores[judge_idx])
+                assert len(judge_result.score_tokens) == len(profile_requests), (
+                    f"Mismatch: {len(judge_result.score_tokens)} judge tokens vs {len(profile_requests)} judge requests"
+                )
+                assert len(judge_result.scores) == len(profile_requests), (
+                    f"Mismatch: {len(judge_result.scores)} judge scores vs {len(profile_requests)} judge requests"
+                )
+                assert len(judge_result.errors) == len(profile_requests), (
+                    f"Mismatch: {len(judge_result.errors)} judge errors vs {len(profile_requests)} judge requests"
+                )
+                assert len(judge_result.correct_no_issue) == len(profile_requests), (
+                    f"Mismatch: {len(judge_result.correct_no_issue)} no-issue correctness rows vs {len(profile_requests)} judge requests"
+                )
+                for judge_idx, request in enumerate(profile_requests):
+                    token = judge_result.score_tokens[judge_idx]
+                    judge_score_tokens[request.sample_idx] = "" if token is None else str(token)
+                    monitor_rewards[request.sample_idx] = float(judge_result.scores[judge_idx])
+                    if request.action_type == "no_issue":
+                        correct_no_issue[request.sample_idx] = judge_result.correct_no_issue[judge_idx]
         else:
-            if len(sample_critique_scores) > 0:
-                print("[SENTINEL] All format-correct critiques were no-issue sentinels; no judge inference needed.")
-            else:
-                print("[FORMAT CHECK] All monitor outputs had invalid format; no judge inference performed.")
+            print("[MONITOR ACTION] All monitor outputs were invalid; no judge inference performed.")
 
-        # Aggregate all critiques (sentinel + judge-scored) per sample via mean
-        for sample_idx, scores in sample_critique_scores.items():
-            per_sample_scores[sample_idx] = float(np.mean(scores))
-
-        return per_sample_scores, format_correct, judge_stats
+        return (
+            monitor_rewards,
+            monitor_action_types,
+            correct_no_issue,
+            judge_score_tokens,
+            invalid_reasons,
+            judge_stats,
+        )
 
     def verdict_monitor_score(
         self,
@@ -1480,6 +1559,12 @@ class TrajectoryCollector:
                 )
                 # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed
                 actor_trust_penalties = actor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
+            actor_cost_threshold = float(self.config.monitor_rollout_ref.get("actor_cost_threshold", 0.5))
+            actor_trust_penalties = np.where(
+                actor_trust_penalties > actor_cost_threshold,
+                actor_trust_penalties,
+                0.0,
+            ).astype(np.float32)
 
         # Create trajectory data for actor model
         gen_batch_output: DataProto = self.gather_rollout_data(

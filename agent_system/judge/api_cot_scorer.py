@@ -22,6 +22,12 @@ from typing import Any, List, Optional, Sequence
 import numpy as np
 
 from agent_system.api_rollout_eval.clients import OpenAICompatibleChatClient
+from agent_system.judge.score_profiles import (
+    ScoreProfile,
+    default_score_profile_name,
+    load_score_profiles,
+    resolve_score_profile,
+)
 
 
 @dataclass
@@ -51,21 +57,17 @@ class ApiCotJudgeScorer:
     """OpenAI-compatible CoT judge scorer.
 
     The scorer asks a judge model to reason in text and finish with a parseable
-    final tag, then maps that final token through judge_model.token_weights.
+    final tag, then maps that final token through the selected judge score profile.
     """
 
     def __init__(self, judge_config: Any) -> None:
         self.judge_config = judge_config
         self.api_config = _cfg_get(judge_config, "api_cot", {})
-        self.valid_tokens = [str(token) for token in list(_cfg_get(judge_config, "valid_tokens", []))]
-        self.token_weights = [float(weight) for weight in list(_cfg_get(judge_config, "token_weights", []))]
-        if len(self.valid_tokens) == 0:
-            raise ValueError("judge_model.valid_tokens must be set for api_cot judge scoring.")
-        if len(self.valid_tokens) != len(self.token_weights):
-            raise ValueError(
-                "judge_model.valid_tokens and judge_model.token_weights must have the same length "
-                f"for api_cot judge scoring, got {len(self.valid_tokens)} and {len(self.token_weights)}."
-            )
+        self.score_profiles = load_score_profiles(judge_config)
+        self.default_score_profile_name = default_score_profile_name(self.score_profiles)
+        default_profile = self.score_profiles[self.default_score_profile_name]
+        self.valid_tokens = list(default_profile.valid_tokens)
+        self.token_weights = list(default_profile.token_weights)
 
         provider = str(_cfg_get(self.api_config, "provider", "openai_compatible"))
         if provider != "openai_compatible":
@@ -79,29 +81,55 @@ class ApiCotJudgeScorer:
         if self.api_error not in {"raise", "neutral"}:
             raise ValueError("judge_model.api_cot.api_error must be one of ['raise', 'neutral'].")
 
-    def score_batch(self, batch_messages: List[List[dict]]) -> ApiCotJudgeScoreResult:
+    def score_batch(
+        self,
+        batch_messages: List[List[dict]],
+        score_profile_name: Optional[str] = None,
+    ) -> ApiCotJudgeScoreResult:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.score_batch_async(batch_messages))
+            return asyncio.run(self.score_batch_async(
+                batch_messages,
+                score_profile_name=score_profile_name,
+            ))
         raise RuntimeError("ApiCotJudgeScorer.score_batch() cannot be called from an active event loop; use score_batch_async().")
 
-    async def score_batch_async(self, batch_messages: List[List[dict]]) -> ApiCotJudgeScoreResult:
+    async def score_batch_async(
+        self,
+        batch_messages: List[List[dict]],
+        score_profile_name: Optional[str] = None,
+    ) -> ApiCotJudgeScoreResult:
         client = self._build_client()
         try:
-            responses = await client.generate_batch(batch_messages)
+            try:
+                responses = await client.generate_batch(batch_messages)
+            except Exception as exc:
+                if self.api_error == "raise":
+                    raise
+                return self.score_texts(
+                    raw_outputs=[""] * len(batch_messages),
+                    errors=[str(exc)] * len(batch_messages),
+                    score_profile_name=score_profile_name,
+                )
         finally:
             await client.close()
 
         raw_outputs = [response.text for response in responses]
         errors = [response.error for response in responses]
-        return self.score_texts(raw_outputs=raw_outputs, errors=errors)
+        return self.score_texts(
+            raw_outputs=raw_outputs,
+            errors=errors,
+            score_profile_name=score_profile_name,
+        )
 
     def score_texts(
         self,
         raw_outputs: Sequence[str],
         errors: Optional[Sequence[Optional[str]]] = None,
+        score_profile_name: Optional[str] = None,
     ) -> ApiCotJudgeScoreResult:
+        profile = resolve_score_profile(self.score_profiles, score_profile_name)
         if errors is None:
             errors = [None] * len(raw_outputs)
         if len(errors) != len(raw_outputs):
@@ -117,7 +145,7 @@ class ApiCotJudgeScorer:
                 message = f"API CoT judge call failed for item {idx}: {error}"
                 if self.api_error == "raise":
                     raise RuntimeError(message)
-                score, probs = self._neutral_score()
+                score, probs = self._neutral_score(profile)
                 scores.append(score)
                 token_probs.append(probs)
                 parsed_tokens.append(None)
@@ -126,16 +154,14 @@ class ApiCotJudgeScorer:
 
             try:
                 token = self.parse_score_token(raw_output)
-                score, probs = self._score_token(token)
+                score, probs, token_error = self._score_token(token, profile)
                 scores.append(score)
                 token_probs.append(probs)
                 parsed_tokens.append(token)
-                normalized_errors.append(None)
+                normalized_errors.append(token_error)
             except ValueError as exc:
                 message = f"Failed to parse API CoT judge score for item {idx}: {exc}"
-                if self.parse_error == "raise":
-                    raise ValueError(message) from exc
-                score, probs = self._neutral_score()
+                score, probs = self._neutral_score(profile)
                 scores.append(score)
                 token_probs.append(probs)
                 parsed_tokens.append(None)
@@ -143,7 +169,7 @@ class ApiCotJudgeScorer:
 
         return ApiCotJudgeScoreResult(
             scores=np.asarray(scores, dtype=np.float32),
-            token_probs=np.stack(token_probs).astype(np.float32) if token_probs else np.zeros((0, len(self.valid_tokens)), dtype=np.float32),
+            token_probs=np.stack(token_probs).astype(np.float32) if token_probs else np.zeros((0, len(profile.valid_tokens)), dtype=np.float32),
             parsed_tokens=parsed_tokens,
             raw_outputs=list(raw_outputs),
             errors=normalized_errors,
@@ -155,9 +181,7 @@ class ApiCotJudgeScorer:
         # 1) Preferred: user-configured regex (usually <score>...</score> at end).
         match = re.search(self.score_regex, text, flags=re.DOTALL)
         if match is not None:
-            token = match.group(1).strip()
-            if token in self.valid_tokens:
-                return token
+            return match.group(1).strip()
 
         # 2) Strip <think>...</think> blocks and anything before the last </think>.
         stripped = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -168,41 +192,36 @@ class ApiCotJudgeScorer:
         # 2a) Accept <score> N </score> anywhere in the stripped content.
         match = re.search(r"<score>\s*([0-9]+)\s*</score>", stripped, flags=re.DOTALL | re.IGNORECASE)
         if match is not None:
-            token = match.group(1).strip()
-            if token in self.valid_tokens:
-                return token
+            return match.group(1).strip()
 
         # 2b) Accept a single-token output (exact match).
-        if stripped in self.valid_tokens:
+        if re.fullmatch(r"[0-9]+", stripped):
             return stripped
 
         # 2c) Accept labeled patterns like "score: N" or "final: N".
         label_pattern = r"(?:score|final|answer|verdict|result|output)\s*[:=]\s*([0-9]+)"
         matches = re.findall(label_pattern, stripped, flags=re.IGNORECASE)
-        for token in reversed(matches):
-            if token in self.valid_tokens:
-                return token
+        if matches:
+            return matches[-1].strip()
 
         raise ValueError(
-            f"no parseable score token found; expected one of {self.valid_tokens!r} "
+            f"no parseable score token found; expected a score token "
             f"matching score_regex={self.score_regex!r}; output={raw_output!r}"
         )
 
-    def _score_token(self, token: str) -> tuple[float, np.ndarray]:
-        token_idx = self.valid_tokens.index(token)
-        probs = np.zeros(len(self.valid_tokens), dtype=np.float32)
+    def _score_token(self, token: str, profile: ScoreProfile) -> tuple[float, np.ndarray, Optional[str]]:
+        probs = np.zeros(len(profile.valid_tokens), dtype=np.float32)
+        if token not in profile.valid_tokens:
+            return 0.0, probs, (
+                f"parsed score token {token!r} is invalid for score_profile={profile.name!r}; "
+                f"expected one of {list(profile.valid_tokens)!r}"
+            )
+        token_idx = profile.valid_tokens.index(token)
         probs[token_idx] = 1.0
-        return float(self.token_weights[token_idx]), probs
+        return float(profile.token_weights[token_idx]), probs, None
 
-    def _neutral_score(self) -> tuple[float, np.ndarray]:
-        # The default 5-token judge scale treats "2" as neutral. Some older
-        # 4-token templates use "0" as the no-issue baseline, so fall back to
-        # "0" when a custom valid-token set has no explicit neutral "2".
-        if "2" in self.valid_tokens:
-            return self._score_token("2")
-        if "0" in self.valid_tokens:
-            return self._score_token("0")
-        probs = np.zeros(len(self.valid_tokens), dtype=np.float32)
+    def _neutral_score(self, profile: ScoreProfile) -> tuple[float, np.ndarray]:
+        probs = np.zeros(len(profile.valid_tokens), dtype=np.float32)
         return 0.0, probs
 
     def _build_client(self) -> OpenAICompatibleChatClient:

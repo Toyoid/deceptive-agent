@@ -136,7 +136,6 @@ class ReasonChatMultiProcessEnv(gym.Env):
                 "won": False,
                 "user_input": episode["user_input"],  # for judge input
                 "evidence": episode["evidence"],  # for judge input
-                "agent_response": CHAT_TEMPLATE.format_assistant(assistant_resp),  # for judge input
                 "monitor_background": episode["monitor_background"] if done else "",
                 "agent_trajectory": CHAT_TEMPLATE.format_assistant(assistant_resp) if done else "",
             }

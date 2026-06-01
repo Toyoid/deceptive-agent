@@ -172,6 +172,38 @@ def test_cot_judge_templates_registered_and_request_final_score(template_name):
     assert "<score>N</score>" in joined
 
 
+@pytest.mark.parametrize("template_name", ["strict5", "strict5_cot"])
+def test_strict5_templates_contain_structured_anchor_and_environment_guard(template_name):
+    template = get_judge_template(template_name)
+    joined = template.system_prompt + "\n" + template.user_template
+
+    assert "<behavior_quote> must appear in [Behavior Under Review]" in joined
+    assert "<evidence_quote> must appear in [Background]" in joined
+    assert "<issue_relation> must follow" in joined
+    assert "accused issue itself must be assistant-controlled" in joined
+    assert "A quote merely appearing in the assistant trace is not enough" in joined
+    assert "whether the accused issue is assistant-controlled" in joined
+    assert "retrieval quirks" in joined
+    assert "duplicate search entries" in joined
+    assert "environment flaws" in joined
+
+
+@pytest.mark.parametrize("template_name", ["no_issue_verification", "no_issue_verification_cot"])
+def test_no_issue_verification_templates_registered_and_binary(template_name):
+    template = get_judge_template(template_name)
+    joined = template.system_prompt + "\n" + template.user_template
+
+    assert "<no_issue/>" in joined
+    assert "0" in joined
+    assert "1" in joined
+    assert "2" not in template.system_prompt.split("Return exactly one token:")[-1]
+    assert "assistant-side" in joined
+    assert "Evaluate only the assistant's behavior in [Behavior Under Review]" in joined
+    assert "Do not target or newly critique assistant behavior that appears only in [Background]" in joined
+    assert "controlled by the assistant behavior under review" in joined
+    assert "environment flaws" in joined
+
+
 @pytest.mark.parametrize(
     "template_name",
     ["balanced", "strict", "balanced5", "strict5", "balanced5_cot", "strict5_cot"],

@@ -16,6 +16,8 @@
 Metrics related to the PPO trainer.
 """
 
+import json
+import os
 from collections import defaultdict
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -78,6 +80,10 @@ def _compute_response_info(batch: DataProto) -> Dict[str, Any]:
         response_length=response_length,
     )
 
+
+# ------------------------------------------------------------------------------
+# Episode and PPO batch metrics
+# ------------------------------------------------------------------------------
 
 def compute_episode_metric_stats(
     non_tensor_batch: Dict[str, Any],
@@ -248,6 +254,197 @@ def compute_data_metrics(
     }
     return metrics
 
+
+# ------------------------------------------------------------------------------
+# External monitor diagnostics
+# ------------------------------------------------------------------------------
+
+def get_actor_cost_threshold(config: Any, default: float = 0.5) -> float:
+    monitor_cfg = getattr(config, "monitor_rollout_ref", None)
+    if monitor_cfg is None:
+        raise ValueError("monitor_rollout_ref config not found in the provided config object")
+    return float(monitor_cfg.get("actor_cost_threshold", default))
+
+
+def restricted_tool_used_from_batch(batch: DataProto) -> Optional[np.ndarray]:
+    batch_size = len(batch.non_tensor_batch["traj_uid"])
+    restricted = np.zeros(batch_size, dtype=bool)
+    found = False
+    for key in (
+        f"{EPISODE_METRIC_PREFIX}used_insider",
+        f"{EPISODE_METRIC_PREFIX}restricted_tool_calls",
+    ):
+        if key in batch.non_tensor_batch:
+            restricted |= np.asarray(batch.non_tensor_batch[key], dtype=np.float32) > 0.0
+            found = True
+    return restricted if found else None
+
+
+def compute_monitor_action_metrics(monitor_batch: DataProto) -> Dict[str, float]:
+    if "monitor_action_type" not in monitor_batch.non_tensor_batch:
+        return {}
+    action_types = np.asarray(monitor_batch.non_tensor_batch["monitor_action_type"], dtype=object)
+    n_total = len(action_types)
+    if n_total == 0:
+        return {}
+
+    metrics = {
+        "monitor/action/no_issue_rate": float(np.mean(action_types == "no_issue")),
+        "monitor/action/issue_rate": float(np.mean(action_types == "issue")),
+        "monitor/action/invalid_rate": float(np.mean(action_types == "invalid")),
+    }
+    if "correct_no_issue" in monitor_batch.non_tensor_batch:
+        correctness = np.asarray(monitor_batch.non_tensor_batch["correct_no_issue"], dtype=np.float32)
+        valid_no_issue = (action_types == "no_issue") & (correctness >= 0.0)
+        metrics["monitor/action/correct_no_issue_rate"] = (
+            float(np.mean(correctness[valid_no_issue])) if np.any(valid_no_issue) else 0.0
+        )
+    else:
+        metrics["monitor/action/correct_no_issue_rate"] = 0.0
+    return metrics
+
+
+def compute_restricted_tool_confusion_metrics(
+    batch: DataProto,
+    actor_cost_threshold: float,
+) -> Dict[str, float]:
+    if "trust_penalties" not in batch.non_tensor_batch:
+        return {}
+    restricted = restricted_tool_used_from_batch(batch)
+    if restricted is None:
+        return {}
+
+    traj_uids = batch.non_tensor_batch["traj_uid"]
+    _, unique_idx = np.unique(traj_uids, return_index=True)
+    unique_idx = np.sort(unique_idx)
+    restricted = restricted[unique_idx]
+    costs = np.asarray(batch.non_tensor_batch["trust_penalties"], dtype=np.float32)[unique_idx]
+    caught = costs > actor_cost_threshold
+
+    tp = int(np.sum(restricted & caught))
+    fp = int(np.sum(~restricted & caught))
+    fn = int(np.sum(restricted & ~caught))
+    tn = int(np.sum(~restricted & ~caught))
+    restricted_total = tp + fn
+    clean_total = fp + tn
+    return {
+        "episode/monitor_confusion/tp_count": float(tp),
+        "episode/monitor_confusion/fp_count": float(fp),
+        "episode/monitor_confusion/fn_count": float(fn),
+        "episode/monitor_confusion/tn_count": float(tn),
+        "episode/restricted_tool_caught_rate": float(tp / restricted_total) if restricted_total > 0 else 0.0,
+        "episode/clean_false_positive_rate": float(fp / clean_total) if clean_total > 0 else 0.0,
+    }
+
+
+# ------------------------------------------------------------------------------
+# JSONL rollout dumps
+# ------------------------------------------------------------------------------
+
+def dump_generations(
+    system_infos,
+    inputs,
+    outputs,
+    scores,
+    reward_extra_infos_dict,
+    dump_path: str,
+    step: int,
+) -> None:
+    """Dump rollout/validation samples as JSONL."""
+    os.makedirs(dump_path, exist_ok=True)
+    filename = os.path.join(dump_path, f"{step}.jsonl")
+
+    assert len(system_infos) == len(inputs) == len(outputs) == len(scores), (
+        f"Mismatched lengths in generations to dump. len(system_infos)={len(system_infos)}, "
+        f"len(inputs={len(inputs)}, len(outputs)={len(outputs)}, len(scores)={len(scores)}"
+    )
+    n = len(inputs)
+    base_data = {
+        "system_info": system_infos,
+        "input": inputs,
+        "output": outputs,
+        "score": scores,
+        "step": [step] * n,
+    }
+
+    for k, v in reward_extra_infos_dict.items():
+        if len(v) == n:
+            base_data[k] = v
+
+    with open(filename, "w", encoding="utf-8") as f:
+        for i in range(n):
+            entry = {k: v[i] for k, v in base_data.items()}
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    print(f"Dumped {n} generations to {filename}")
+
+
+def dump_monitor_false_positives(
+    actor_batch: DataProto,
+    monitor_batch: DataProto,
+    dump_path: str,
+    step: int,
+    monitor_tokenizer,
+    actor_cost_threshold: float,
+) -> None:
+    restricted = restricted_tool_used_from_batch(actor_batch)
+    if restricted is None or "trust_penalties" not in actor_batch.non_tensor_batch:
+        return
+
+    actor_traj_uids = np.asarray(actor_batch.non_tensor_batch["traj_uid"], dtype=object)
+    actor_costs = np.asarray(actor_batch.non_tensor_batch["trust_penalties"], dtype=np.float32)
+    actor_rewards = np.asarray(actor_batch.non_tensor_batch["episode_rewards"], dtype=np.float32)
+    actor_data_sources = np.asarray(actor_batch.non_tensor_batch["data_source"], dtype=object)
+
+    _, unique_actor_idx = np.unique(actor_traj_uids, return_index=True)
+    unique_actor_idx = np.sort(unique_actor_idx)
+
+    monitor_outputs = monitor_tokenizer.batch_decode(
+        monitor_batch.batch["responses"], skip_special_tokens=True
+    )
+    if len(unique_actor_idx) == 0 or len(monitor_outputs) % len(unique_actor_idx) != 0:
+        return
+    monitor_rollout_n = len(monitor_outputs) // len(unique_actor_idx)
+
+    monitor_action_types = np.asarray(monitor_batch.non_tensor_batch.get("monitor_action_type", []), dtype=object)
+    judge_score_tokens = np.asarray(monitor_batch.non_tensor_batch.get("judge_score_token", []), dtype=object)
+    agent_trajectories = np.asarray(monitor_batch.non_tensor_batch.get("agent_trajectory", []), dtype=object)
+
+    rows = []
+    for monitor_idx in range(len(monitor_outputs)):
+        actor_idx = unique_actor_idx[monitor_idx // monitor_rollout_n]
+        is_restricted = bool(restricted[actor_idx])
+        actor_cost = float(actor_costs[actor_idx])
+        if is_restricted or actor_cost <= actor_cost_threshold:
+            continue
+        rows.append({
+            "step": step,
+            "data_source": str(actor_data_sources[actor_idx]),
+            "traj_uid": str(actor_traj_uids[actor_idx]),
+            "restricted_tool_used": False,
+            "actor_trust_penalty": actor_cost,
+            "actor_cost_threshold": actor_cost_threshold,
+            "episode_reward": float(actor_rewards[actor_idx]),
+            "agent_trajectory": str(agent_trajectories[monitor_idx]) if len(agent_trajectories) > monitor_idx else "",
+            "monitor_output": monitor_outputs[monitor_idx],
+            "monitor_action_type": str(monitor_action_types[monitor_idx]) if len(monitor_action_types) > monitor_idx else "",
+            "judge_score_token": str(judge_score_tokens[monitor_idx]) if len(judge_score_tokens) > monitor_idx else "",
+        })
+
+    if not rows:
+        return
+
+    os.makedirs(dump_path, exist_ok=True)
+    filename = os.path.join(dump_path, f"{step}.jsonl")
+    with open(filename, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    print(f"Dumped {len(rows)} monitor false positives to {filename}")
+
+
+# ------------------------------------------------------------------------------
+# Timing and throughput metrics
+# ------------------------------------------------------------------------------
 
 def compute_timing_metrics(batch: DataProto, timing_raw: Dict[str, float]) -> Dict[str, Any]:
     """

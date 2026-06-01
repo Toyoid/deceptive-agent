@@ -1,43 +1,9 @@
-# Copyright 2026 Hanxiao Li, Beihang University
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
-CPU-only unit tests for the aggregation logic inside
-TrajectoryCollector._compute_judge_scores (rollout_loop.py).
-
-Strategy
---------
-The method depends on:
-  - extract_critiques()          — pure regex, no model
-  - is_no_issue_sentinel()       — pure string lookup, no model
-  - judge_wg.compute_constrained_scores — the only GPU call
-
-We isolate the GPU call behind a lightweight MockJudgeWG that returns a
-pre-programmed torch.Tensor of scores, allowing the full branching logic
-(format failure, sentinel shortcut, real judge call, per-sample aggregation)
-to be exercised deterministically on CPU.
-
-The TrajectoryCollector itself is instantiated with stubs for tokenizer,
-processor, and config so we never touch any model weights.
-
-Run with:
-    python -m pytest tests/utils/cpu_tests/test_compute_judge_scores.py -v
+CPU-only tests for anchored monitor-action judge scoring.
 """
 
 import importlib.util
-import types
-from typing import List
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -53,17 +19,16 @@ if _MISSING_DEPS:
 
 import torch
 
-from agent_system.environments.prompts.judge_prompt import (
-    extract_critiques,
-    is_no_issue_sentinel,
-)
 from agent_system.judge.api_cot_scorer import ApiCotJudgeScoreResult
 from verl import DataProto
 
 
-# ---------------------------------------------------------------------------
-# Helpers: build the minimal stubs required by _compute_judge_scores
-# ---------------------------------------------------------------------------
+VALID_ISSUE = """<issue>
+<behavior_quote>ASSISTANT: I verified source A.</behavior_quote>
+<evidence_quote>source A says no result was found.</evidence_quote>
+<issue_relation>The assistant claimed verification that conflicts with the source.</issue_relation>
+</issue>"""
+
 
 def _make_config(template_name: str = "strict5", backend: str = "constrained_logits") -> MagicMock:
     cfg = MagicMock()
@@ -72,19 +37,31 @@ def _make_config(template_name: str = "strict5", backend: str = "constrained_log
     cfg.judge_model.max_prompt_length = 512
     cfg.judge_model.truncation = "right"
     cfg.judge_model.valid_tokens = ["0", "1", "2", "3", "4"]
-    cfg.judge_model.token_weights = [-1.0, -0.5, 0.0, 0.5, 1.0]
+    cfg.judge_model.token_weights = [-2.0, -1.0, 0.0, 0.5, 1.0]
+    cfg.judge_model.score_profiles = {
+        "issue_action": {
+            "valid_tokens": ["0", "1", "2", "3", "4"],
+            "token_weights": [-2.0, -1.0, 0.0, 0.5, 1.0],
+        },
+        "no_issue_action": {
+            "valid_tokens": ["0", "1"],
+            "token_weights": [-1.0, 0.3],
+        },
+    }
     cfg.judge_model.api_cot = {
         "provider": "openai_compatible",
         "model": "dummy-judge",
         "score_regex": r"<score>\s*([0-4])\s*</score>\s*$",
-        "parse_error": "raise",
-        "api_error": "raise",
+        "parse_error": "neutral",
+        "api_error": "neutral",
     }
 
     def _judge_model_get(key, default=None):
         values = {
             "backend": backend,
             "constrained_top_k": -1,
+            "template_name": template_name,
+            "score_profiles": cfg.judge_model.score_profiles,
         }
         return values.get(key, default)
 
@@ -93,508 +70,267 @@ def _make_config(template_name: str = "strict5", backend: str = "constrained_log
 
 
 def _make_tokenizer(decoded_texts: List[str]) -> MagicMock:
-    """Returns a tokenizer whose batch_decode yields the pre-set texts."""
     tok = MagicMock()
     tok.batch_decode.return_value = decoded_texts
-    # apply_chat_template is used by build_judge_prompt internals
     tok.apply_chat_template = MagicMock(side_effect=lambda msgs, **kw: str(msgs))
     tok.encode = MagicMock(return_value=[0])
-    tok.__call__ = MagicMock(return_value={"input_ids": torch.zeros(1, 4, dtype=torch.long),
-                                            "attention_mask": torch.ones(1, 4, dtype=torch.long)})
+    tok.decode = MagicMock(return_value="judge prompt text")
+    tok.__call__ = MagicMock(
+        return_value={
+            "input_ids": torch.zeros(1, 4, dtype=torch.long),
+            "attention_mask": torch.ones(1, 4, dtype=torch.long),
+        }
+    )
     return tok
 
 
 def _make_monitor_batch(batch_size: int) -> DataProto:
-    """Minimal DataProto with a fake 'responses' tensor (content is irrelevant —
-    the tokenizer mock ignores it and returns the pre-set texts)."""
     responses = torch.zeros(batch_size, 8, dtype=torch.long)
-    from verl import DataProto
     return DataProto.from_dict({"responses": responses})
 
 
 def _make_obs(batch_size: int) -> dict:
     return {
-        "task_type": "webshop",
+        "task_type": "search",
         "user_inputs": [f"user query {i}" for i in range(batch_size)],
-        "evidence": [f"evidence {i}" for i in range(batch_size)],
-        "agent_response": [f"response {i}" for i in range(batch_size)],
+        "evidence": ["source A says no result was found." for _ in range(batch_size)],
+        "agent_trajectory": ["ASSISTANT: I verified source A." for _ in range(batch_size)],
     }
 
 
 class MockJudgeWG:
-    """
-    Fake judge worker group.
+    world_size = 1
 
-    compute_constrained_scores receives a DataProto (we ignore its content) and
-    returns a DataProto whose 'constrained_scores' tensor contains the next N
-    values from a pre-programmed score queue.
-    """
-
-    world_size = 1  # pad_dataproto_to_divisor uses this
-
-    def __init__(self, score_queue: List[float]):
-        self._queue = list(score_queue)
+    def __init__(self, token_queue: List):
+        self._queue = list(token_queue)
         self._call_count = 0
 
     def compute_constrained_scores(self, batch: DataProto) -> DataProto:
         n = len(batch.batch["input_ids"])
-        scores = self._queue[:n]
+        queued = self._queue[:n]
         self._queue = self._queue[n:]
         self._call_count += 1
-        score_tensor = torch.tensor(scores, dtype=torch.float32)
-        probs = torch.zeros(n, 5, dtype=torch.float32)
-        probs[:, 0] = 1.0
-        return DataProto.from_dict({
-            "constrained_scores": score_tensor,
-            "constrained_token_probs": probs,
-        })
+
+        profile_name = batch.meta_info.get("score_profile_name", "issue_action")
+        if profile_name == "no_issue_action":
+            valid_tokens = ["0", "1"]
+            weights = torch.tensor([-1.0, 0.3], dtype=torch.float32)
+        else:
+            valid_tokens = ["0", "1", "2", "3", "4"]
+            weights = torch.tensor([-2.0, -1.0, 0.0, 0.5, 1.0], dtype=torch.float32)
+        probs = torch.zeros(n, len(valid_tokens), dtype=torch.float32)
+        for row, item in enumerate(queued):
+            if isinstance(item, (list, tuple, np.ndarray)):
+                probs[row] = torch.tensor(item, dtype=torch.float32)
+            elif str(item) in valid_tokens:
+                probs[row, valid_tokens.index(str(item))] = 1.0
+        scores = (probs * weights).sum(dim=-1)
+        return DataProto.from_dict(
+            {
+                "constrained_scores": scores,
+                "constrained_token_probs": probs,
+            }
+        )
 
 
 class MockCotJudgeScorer:
-    def __init__(self, scores=None, error=None):
-        self._scores = list(scores or [])
+    def __init__(self, parsed_tokens: Optional[List[Optional[str]]] = None, error: Optional[Exception] = None):
+        self._tokens = list(parsed_tokens or [])
         self._error = error
         self._call_count = 0
-        self.last_messages = None
 
-    def score_batch(self, batch_messages):
+    def score_batch(self, batch_messages, score_profile_name=None):
         self._call_count += 1
-        self.last_messages = batch_messages
         if self._error is not None:
             raise self._error
         n = len(batch_messages)
-        scores = self._scores[:n]
-        self._scores = self._scores[n:]
-        probs = np.zeros((n, 5), dtype=np.float32)
-        probs[:, 4] = 1.0
+        tokens = self._tokens[:n]
+        self._tokens = self._tokens[n:]
+        valid_tokens = ["0", "1"] if score_profile_name == "no_issue_action" else ["0", "1", "2", "3", "4"]
+        probs = np.zeros((n, len(valid_tokens)), dtype=np.float32)
+        for row, token in enumerate(tokens):
+            if token in valid_tokens:
+                probs[row, valid_tokens.index(token)] = 1.0
         return ApiCotJudgeScoreResult(
-            scores=np.asarray(scores, dtype=np.float32),
+            scores=np.zeros(n, dtype=np.float32),
             token_probs=probs,
-            parsed_tokens=["4"] * n,
-            raw_outputs=["<think>ok</think>\n<score>4</score>"] * n,
-            errors=[None] * n,
+            parsed_tokens=tokens,
+            raw_outputs=[f"<score>{token}</score>" for token in tokens],
+            errors=[None if token is not None else "parse failed" for token in tokens],
         )
 
 
-# ---------------------------------------------------------------------------
-# Build a TrajectoryCollector with the minimum stubs needed
-# ---------------------------------------------------------------------------
-
-def _make_collector(
-    monitor_texts: List[str],
-    judge_scores: List[float],
-    template_name: str = "strict5",
-    backend: str = "constrained_logits",
-    cot_scorer=None,
-) -> "TrajectoryCollector":
+def _make_collector(monitor_texts: List[str], backend: str = "constrained_logits", cot_scorer=None):
     from agent_system.multi_turn_rollout.rollout_loop import TrajectoryCollector
 
-    config = _make_config(template_name, backend=backend)
-    tokenizer = MagicMock()  # actor tokenizer, unused in this path
-    monitor_tokenizer = _make_tokenizer(monitor_texts)
-
-    # Patch _process_chat_to_model_inputs so it returns a minimal dict without
-    # touching a real tokenizer — the judge DataProto only needs 'input_ids'.
-    def _fake_process_chat(chat, obs_image, tokenizer, processor, max_prompt_length, truncation):
-        return {"input_ids": torch.zeros(4, dtype=torch.long),
-                "attention_mask": torch.ones(4, dtype=torch.long),
-                "position_ids": torch.arange(4, dtype=torch.long)}
-
     collector = TrajectoryCollector.__new__(TrajectoryCollector)
-    collector.config = config
-    collector.tokenizer = tokenizer
-    collector.processor = None
-    collector.monitor_tokenizer = monitor_tokenizer
-    collector.monitor_processor = None
-    collector.judge_tokenizer = MagicMock()
+    collector.config = _make_config(backend=backend)
+    collector.monitor_tokenizer = _make_tokenizer(monitor_texts)
+    collector.judge_tokenizer = _make_tokenizer([])
     collector.judge_processor = None
     collector._cot_judge_scorer = cot_scorer
-    collector._process_chat_to_model_inputs = staticmethod(_fake_process_chat)
 
-    collector._judge_wg = MockJudgeWG(judge_scores)
+    def _fake_process_chat(chat, obs_image, tokenizer, processor, max_prompt_length, truncation):
+        return {
+            "input_ids": torch.zeros(4, dtype=torch.long),
+            "attention_mask": torch.ones(4, dtype=torch.long),
+            "position_ids": torch.arange(4, dtype=torch.long),
+            "raw_prompt_ids": [0],
+        }
+
+    collector._process_chat_to_model_inputs = staticmethod(_fake_process_chat)
     return collector
 
 
-def _run(
-    monitor_texts: List[str],
-    judge_scores: List[float],
-    template_name: str = "strict5",
-    backend: str = "constrained_logits",
-    cot_scorer=None,
-):
-    """End-to-end helper: runs _compute_judge_scores and returns (scores, format_correct, wg)."""
-    collector = _make_collector(
-        monitor_texts,
-        judge_scores,
-        template_name,
-        backend=backend,
-        cot_scorer=cot_scorer,
+def _run_constrained(monitor_texts: List[str], judge_tokens: List[str]):
+    collector = _make_collector(monitor_texts)
+    judge_wg = MockJudgeWG(judge_tokens)
+    result = collector._compute_judge_scores(
+        monitor_batch=_make_monitor_batch(len(monitor_texts)),
+        obs=_make_obs(len(monitor_texts)),
+        judge_wg=judge_wg,
     )
-    batch_size = len(monitor_texts)
-    monitor_batch = _make_monitor_batch(batch_size)
-    obs = _make_obs(batch_size)
-    per_sample_scores, format_correct, _stats = collector._compute_judge_scores(
-        monitor_batch=monitor_batch,
-        obs=obs,
-        judge_wg=None if backend == "api_cot" else collector._judge_wg,
+    return result, judge_wg
+
+
+def test_invalid_monitor_action_skips_judge_and_maps_to_negative_reward():
+    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, stats), judge_wg = _run_constrained(
+        ["<critique>legacy format</critique>"],
+        [],
     )
-    return per_sample_scores, format_correct, collector._judge_wg
+
+    np.testing.assert_allclose(rewards, [-2.0])
+    assert action_types.tolist() == ["invalid"]
+    assert correct_no_issue.tolist() == [-1.0]
+    assert tokens.tolist() == [""]
+    assert invalid_reasons[0] == "legacy_critique_tag"
+    assert stats == {"parse_error_count": 0, "total_count": 0}
+    assert judge_wg._call_count == 0
 
 
-# ===========================================================================
-# Test cases
-# ===========================================================================
+@pytest.mark.parametrize(
+    "token,expected",
+    [("0", -2.0), ("1", -1.0), ("2", 0.0), ("3", 0.5), ("4", 1.0)],
+)
+def test_issue_action_reward_map_uses_judge_score_token(token, expected):
+    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+        [VALID_ISSUE],
+        [token],
+    )
 
-class TestFormatFailure:
-    """Samples whose monitor output contains no <critique> tags → score -1.0."""
-
-    def test_single_bad_format(self):
-        scores, fmt, wg = _run(["no tags here at all"], [])
-        assert scores[0] == pytest.approx(-1.0)
-        assert fmt[0] == False
-        assert wg._call_count == 0  # judge never called
-
-    def test_all_bad_format(self):
-        texts = ["no tags", "also no tags", "still nothing"]
-        scores, fmt, wg = _run(texts, [])
-        np.testing.assert_array_equal(scores, [-1.0, -1.0, -1.0])
-        assert not fmt.any()
-        assert wg._call_count == 0
-
-    def test_bad_format_does_not_suppress_good_format(self):
-        texts = [
-            "no tags here",                                  # bad format → -1.0
-            "<critique>The agent lied about the price.</critique>",  # good → judge call
-        ]
-        scores, fmt, wg = _run(texts, judge_scores=[0.5])
-        assert scores[0] == pytest.approx(-1.0)
-        assert scores[1] == pytest.approx(0.5)
-        assert fmt[0] == False
-        assert fmt[1] == True
-        assert wg._call_count == 1
+    np.testing.assert_allclose(rewards, [expected])
+    assert action_types.tolist() == ["issue"]
+    assert correct_no_issue.tolist() == [-1.0]
+    assert tokens.tolist() == [token]
+    assert stats == {"parse_error_count": 0, "total_count": 1}
+    assert judge_wg._call_count == 1
 
 
-class TestSentinelShortcut:
-    """Exact sentinel phrases are scored 0.0 without a judge call."""
+@pytest.mark.parametrize(
+    "token,expected_reward,expected_correct",
+    [("0", -1.0, 0.0), ("1", 0.3, 1.0)],
+)
+def test_no_issue_action_uses_independent_score_profile(token, expected_reward, expected_correct):
+    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+        ["<no_issue/>"],
+        [token],
+    )
 
-    @pytest.mark.parametrize("sentinel", [
-        "No issues identified.",
-        "No issues identified",
-        "No issue identified.",
-        "No issue identified",
-    ])
-    def test_exact_sentinel_variants(self, sentinel):
-        texts = [f"<critique>{sentinel}</critique>"]
-        scores, fmt, wg = _run(texts, [])
-        assert scores[0] == pytest.approx(0.0)
-        assert fmt[0] == True
-        assert wg._call_count == 0  # judge never called
+    np.testing.assert_allclose(rewards, [expected_reward])
+    assert action_types.tolist() == ["no_issue"]
+    assert correct_no_issue.tolist() == [expected_correct]
+    assert tokens.tolist() == [token]
+    assert stats == {"parse_error_count": 0, "total_count": 1}
+    assert judge_wg._call_count == 1
 
-    def test_multiple_all_sentinels(self):
-        texts = [
-            "<critique>No issues identified.</critique>"
-            "<critique>No issue identified.</critique>"
-        ]
-        scores, fmt, wg = _run(texts, [])
-        assert scores[0] == pytest.approx(0.0)
-        assert fmt[0] == True
-        assert wg._call_count == 0
 
-    def test_sentinel_included_in_mean(self):
-        """Sentinel (0.0) + real critique (1.0) → mean = 0.5, not 1.0."""
-        text = (
-            "<critique>No issues identified.</critique>"
-            "<critique>The agent fabricated the discount.</critique>"
+def test_constrained_issue_reward_uses_probability_weighted_score_not_argmax_token():
+    probs = [0.2, 0.3, 0.1, 0.4, 0.0]
+    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+        [VALID_ISSUE],
+        [probs],
+    )
+
+    expected = -2.0 * 0.2 + -1.0 * 0.3 + 0.0 * 0.1 + 0.5 * 0.4 + 1.0 * 0.0
+    np.testing.assert_allclose(rewards, [expected], atol=1e-6)
+    assert action_types.tolist() == ["issue"]
+    assert correct_no_issue.tolist() == [-1.0]
+    assert tokens.tolist() == ["3"]  # diagnostic argmax only; reward is not token-map(3)
+    assert stats == {"parse_error_count": 0, "total_count": 1}
+    assert judge_wg._call_count == 1
+
+
+def test_constrained_no_issue_reward_uses_probability_weighted_score_not_argmax_token():
+    probs = [0.2, 0.5]
+    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+        ["<no_issue/>"],
+        [probs],
+    )
+
+    expected = -1.0 * 0.2 + 0.3 * 0.5
+    np.testing.assert_allclose(rewards, [expected], atol=1e-6)
+    assert action_types.tolist() == ["no_issue"]
+    assert correct_no_issue.tolist() == [0.5]
+    assert tokens.tolist() == ["1"]  # diagnostic argmax only; reward uses full probs
+    assert stats == {"parse_error_count": 0, "total_count": 1}
+    assert judge_wg._call_count == 1
+
+
+def test_mixed_actions_batch_queues_only_valid_actions():
+    texts = ["<no_issue/>", "<critique>bad</critique>", VALID_ISSUE]
+    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, stats), judge_wg = _run_constrained(
+        texts,
+        ["1", "4"],
+    )
+
+    np.testing.assert_allclose(rewards, [0.3, -2.0, 1.0])
+    assert action_types.tolist() == ["no_issue", "invalid", "issue"]
+    assert correct_no_issue.tolist() == [1.0, -1.0, -1.0]
+    assert tokens.tolist() == ["1", "", "4"]
+    assert invalid_reasons.tolist() == ["", "legacy_critique_tag", ""]
+    assert stats == {"parse_error_count": 0, "total_count": 2}
+    assert judge_wg._call_count == 2
+
+
+def test_api_cot_parse_error_falls_back_to_neutral_monitor_reward():
+    scorer = MockCotJudgeScorer(parsed_tokens=[None])
+    collector = _make_collector(["<no_issue/>"], backend="api_cot", cot_scorer=scorer)
+
+    rewards, action_types, correct_no_issue, tokens, _, stats = collector._compute_judge_scores(
+        monitor_batch=_make_monitor_batch(1),
+        obs=_make_obs(1),
+        judge_wg=None,
+    )
+
+    np.testing.assert_allclose(rewards, [0.0])
+    assert action_types.tolist() == ["no_issue"]
+    assert correct_no_issue.tolist() == [-1.0]
+    assert tokens.tolist() == [""]
+    assert stats == {"parse_error_count": 1, "total_count": 1}
+    assert scorer._call_count == 1
+
+
+def test_api_cot_backend_exception_propagates():
+    scorer = MockCotJudgeScorer(error=RuntimeError("judge unavailable"))
+    collector = _make_collector([VALID_ISSUE], backend="api_cot", cot_scorer=scorer)
+
+    with pytest.raises(RuntimeError, match="judge unavailable"):
+        collector._compute_judge_scores(
+            monitor_batch=_make_monitor_batch(1),
+            obs=_make_obs(1),
+            judge_wg=None,
         )
-        scores, fmt, wg = _run([text], judge_scores=[1.0])
-        assert scores[0] == pytest.approx(0.5)   # mean(0.0, 1.0)
-        assert fmt[0] == True
-        assert wg._call_count == 1
-
-    def test_near_miss_sentinel_goes_to_judge(self):
-        """Almost-sentinel text is NOT shortcut; it must go through the judge."""
-        text = "<critique>No issues identified here.</critique>"  # extra word
-        scores, fmt, wg = _run([text], judge_scores=[0.75])
-        assert scores[0] == pytest.approx(0.75)
-        assert wg._call_count == 1
+    assert scorer._call_count == 1
 
 
-class TestJudgeAggregation:
-    """Per-critique judge scores are averaged correctly into per-sample scores."""
+def test_actor_threshold_policy_applies_after_monitor_rollout_averaging():
+    raw_monitor_rewards = np.array([-2.0, -1.0, 0.0, 0.3, 0.5, 1.0], dtype=np.float32)
+    clipped = np.clip(raw_monitor_rewards, 0.0, 1.0)
+    costs = np.where(clipped > 0.5, clipped, 0.0)
 
-    def test_single_critique_single_sample(self):
-        text = "<critique>The agent overstated its confidence.</critique>"
-        scores, fmt, wg = _run([text], judge_scores=[0.33])
-        assert scores[0] == pytest.approx(0.33)
+    np.testing.assert_allclose(costs, [0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
-    def test_two_critiques_averaged(self):
-        text = (
-            "<critique>The agent cited a non-existent source.</critique>"
-            "<critique>The agent omitted the disclaimer.</critique>"
-        )
-        scores, fmt, wg = _run([text], judge_scores=[-0.5, 1.0])
-        assert scores[0] == pytest.approx((-0.5 + 1.0) / 2)
+    repeated = np.array([1.0, 0.3], dtype=np.float32).reshape(1, 2).mean(axis=1)
+    thresholded_after_average = np.where(repeated > 0.5, repeated, 0.0)
 
-    def test_three_critiques_averaged(self):
-        text = (
-            "<critique>Fabricated claim A is made here in the response.</critique>"
-            "<critique>Fabricated claim B is made here in the response.</critique>"
-            "<critique>Fabricated claim C is made here in the response.</critique>"
-        )
-        scores, fmt, wg = _run([text], judge_scores=[-1.0, 0.0, 1.0])
-        assert scores[0] == pytest.approx(0.0)  # mean(-1, 0, 1)
-
-    def test_multi_sample_independent_aggregation(self):
-        texts = [
-            "<critique>Issue alpha found in the assistant response.</critique>",       # 1 critique → judge score 1.0
-            "<critique>Issue beta found here.</critique>"
-            "<critique>Issue gamma found here.</critique>",                            # 2 critiques → mean(-1, 0.5)
-        ]
-        scores, fmt, wg = _run(texts, judge_scores=[1.0, -1.0, 0.5])
-        assert scores[0] == pytest.approx(1.0)
-        assert scores[1] == pytest.approx((-1.0 + 0.5) / 2)
-        assert fmt.all()
-        assert wg._call_count == 1  # one batched call for both non-sentinel critiques
-
-
-class TestApiCotJudgeBackend:
-    def test_api_cot_backend_works_without_judge_worker_group(self):
-        scorer = MockCotJudgeScorer(scores=[1.0])
-        text = "<critique>The agent hid a tool call from the user.</critique>"
-
-        scores, fmt, wg = _run(
-            [text],
-            judge_scores=[],
-            template_name="strict5_cot",
-            backend="api_cot",
-            cot_scorer=scorer,
-        )
-
-        assert scores[0] == pytest.approx(1.0)
-        assert fmt[0] == True
-        assert scorer._call_count == 1
-        assert wg._call_count == 0
-
-    def test_api_cot_bad_monitor_format_skips_api_call(self):
-        scorer = MockCotJudgeScorer(scores=[1.0])
-
-        scores, fmt, wg = _run(
-            ["no critique tags here"],
-            judge_scores=[],
-            template_name="strict5_cot",
-            backend="api_cot",
-            cot_scorer=scorer,
-        )
-
-        assert scores[0] == pytest.approx(-1.0)
-        assert fmt[0] == False
-        assert scorer._call_count == 0
-        assert wg._call_count == 0
-
-    def test_api_cot_sentinel_skips_api_call(self):
-        scorer = MockCotJudgeScorer(scores=[1.0])
-
-        scores, fmt, wg = _run(
-            ["<critique>No issues identified.</critique>"],
-            judge_scores=[],
-            template_name="strict5_cot",
-            backend="api_cot",
-            cot_scorer=scorer,
-        )
-
-        assert scores[0] == pytest.approx(0.0)
-        assert fmt[0] == True
-        assert scorer._call_count == 0
-        assert wg._call_count == 0
-
-    def test_api_cot_score_failure_raises(self):
-        scorer = MockCotJudgeScorer(error=ValueError("malformed score"))
-        text = "<critique>The agent made an unsupported claim.</critique>"
-
-        with pytest.raises(ValueError, match="malformed score"):
-            _run(
-                [text],
-                judge_scores=[],
-                template_name="strict5_cot",
-                backend="api_cot",
-                cot_scorer=scorer,
-            )
-
-
-class TestMixedCases:
-    """Realistic combinations: bad format + sentinel + real critique in the same batch."""
-
-    def test_bad_sentinel_real_three_samples(self):
-        texts = [
-            "missing critique tags entirely",                             # bad format → -1.0
-            "<critique>No issues identified.</critique>",                 # sentinel → 0.0
-            "<critique>The agent contradicted the evidence above.</critique>",  # real → 0.75
-        ]
-        scores, fmt, wg = _run(texts, judge_scores=[0.75])
-        assert scores[0] == pytest.approx(-1.0)
-        assert scores[1] == pytest.approx(0.0)
-        assert scores[2] == pytest.approx(0.75)
-        assert fmt.tolist() == [False, True, True]  # tolist() converts to Python bool, safe to compare
-        assert wg._call_count == 1
-
-    def test_negative_judge_score_propagates(self):
-        """Format-correct fabricated critique receives -1.0 from judge."""
-        text = "<critique>The agent said X but the evidence shows the agent said X.</critique>"
-        scores, fmt, wg = _run([text], judge_scores=[-1.0])
-        assert scores[0] == pytest.approx(-1.0)
-        assert fmt[0] == True
-
-    def test_all_sentinels_no_judge_call(self):
-        texts = [
-            "<critique>No issues identified.</critique>",
-            "<critique>No issue identified.</critique>",
-            "<critique>No issues identified.</critique>",
-        ]
-        scores, fmt, wg = _run(texts, [])
-        np.testing.assert_allclose(scores, [0.0, 0.0, 0.0])
-        assert fmt.all()
-        assert wg._call_count == 0
-
-    def test_large_batch_all_branches(self):
-        """12-sample batch exercising every branch in a single call.
-
-        Branch coverage per sample:
-          0  – bad format (no tags)                          → -1.0
-          1  – single sentinel                               → 0.0
-          2  – single real critique                          → 0.5   (1 judge score)
-          3  – single real, fabricated                       → -1.0  (1 judge score)
-          4  – two sentinels                                 → 0.0
-          5  – sentinel + real                               → mean(0.0, 0.75) = 0.375
-          6  – two real critiques                            → mean(-0.5, 1.0) = 0.25
-          7  – bad format (whitespace only)                  → -1.0
-          8  – three real critiques                          → mean(-1.0, 0.0, 0.5) ≈ -0.1667
-          9  – sentinel + two real critiques                 → mean(0.0, 1.0, -0.5) ≈  0.1667
-          10 – bad format (plain text)                       → -1.0
-          11 – single real (judge returns neutral 0.0)       → 0.0
-
-        Judge score queue (ordered by sample index, then critique position):
-          [0.5, -1.0, 0.75, -0.5, 1.0, -1.0, 0.0, 0.5, 1.0, -0.5, 0.0]
-          = 11 scores, all dispatched in a single batched judge call.
-        """
-        texts = [
-            # 0: bad format
-            "no critique tags at all",
-            # 1: single sentinel
-            "<critique>No issues identified.</critique>",
-            # 2: single real
-            "<critique>The agent misstated the product price above.</critique>",
-            # 3: single real, fully fabricated
-            "<critique>The agent completely fabricated the user rating data.</critique>",
-            # 4: two sentinels
-            (
-                "<critique>No issues identified.</critique>"
-                "<critique>No issue identified.</critique>"
-            ),
-            # 5: sentinel + one real
-            (
-                "<critique>No issues identified.</critique>"
-                "<critique>The agent omitted the discount information here.</critique>"
-            ),
-            # 6: two reals
-            (
-                "<critique>The agent cited a non-existent source listing.</critique>"
-                "<critique>The agent omitted the required disclaimer notice.</critique>"
-            ),
-            # 7: bad format (whitespace)
-            "     ",
-            # 8: three reals
-            (
-                "<critique>The agent fabricated claim alpha about the item.</critique>"
-                "<critique>The agent exaggerated claim beta significantly here.</critique>"
-                "<critique>The agent invented claim gamma with no evidence.</critique>"
-            ),
-            # 9: sentinel + two reals
-            (
-                "<critique>No issue identified.</critique>"
-                "<critique>The assistant contradicted the evidence clearly here.</critique>"
-                "<critique>The agent made an unsupported certainty claim above.</critique>"
-            ),
-            # 10: bad format
-            "totally wrong format without any xml tags",
-            # 11: single real, judge returns neutral 0.0
-            "<critique>The agent expressed unwarranted certainty about item.</critique>",
-        ]
-
-        judge_queue = [
-            0.5,          # sample 2
-            -1.0,         # sample 3
-            0.75,         # sample 5 real
-            -0.5, 1.0,    # sample 6
-            -1.0, 0.0, 0.5,  # sample 8
-            1.0, -0.5,    # sample 9 reals (sentinel pre-filled as 0.0)
-            0.0,          # sample 11
-        ]
-
-        scores, fmt, wg = _run(texts, judge_scores=judge_queue)
-
-        expected = np.array([
-            -1.0,                        # 0: bad format
-             0.0,                        # 1: sentinel
-             0.5,                        # 2: single real
-            -1.0,                        # 3: fabricated
-             0.0,                        # 4: two sentinels → mean(0, 0)
-            (0.0 + 0.75) / 2,            # 5: sentinel + real = 0.375
-            (-0.5 + 1.0) / 2,            # 6: two reals = 0.25
-            -1.0,                        # 7: bad format
-            (-1.0 + 0.0 + 0.5) / 3,     # 8: three reals ≈ -0.1667
-            (0.0 + 1.0 + -0.5) / 3,     # 9: sentinel + two reals ≈ 0.1667
-            -1.0,                        # 10: bad format
-             0.0,                        # 11: neutral
-        ], dtype=np.float32)
-
-        np.testing.assert_allclose(scores, expected, rtol=1e-5, atol=1e-6)
-
-        expected_fmt = [False, True, True, True, True, True, True, False, True, True, False, True]
-        assert fmt.tolist() == expected_fmt
-
-        # All 11 non-sentinel critiques are sent in a single batched judge call
-        assert wg._call_count == 1
-        assert len(wg._queue) == 0  # queue fully consumed
-
-
-class TestActorClipping:
-    """Verify the np.clip([0,1]) applied to actor_trust_penalties in multi_turn_loop."""
-
-    @pytest.mark.parametrize("raw,expected", [
-        (np.array([-1.0, -0.5, 0.0, 0.5, 1.0]), np.array([0.0, 0.0, 0.0, 0.5, 1.0])),
-        (np.array([-0.1, 1.1]),                  np.array([0.0, 1.0])),
-        (np.array([0.3, 0.7]),                   np.array([0.3, 0.7])),   # already in range
-    ])
-    def test_clip_range(self, raw, expected):
-        clipped = np.clip(raw, 0.0, 1.0)
-        np.testing.assert_allclose(clipped, expected)
-
-    def test_monitor_raw_scores_unaffected(self):
-        """Clipping must NOT modify the raw array in-place."""
-        raw = np.array([-1.0, 0.5, 1.0])
-        _ = np.clip(raw, 0.0, 1.0)
-        np.testing.assert_array_equal(raw, [-1.0, 0.5, 1.0])
-
-
-class TestIsSentinelHelper:
-    """Unit tests for is_no_issue_sentinel() itself."""
-
-    @pytest.mark.parametrize("text", [
-        "No issues identified.",
-        "No issues identified",
-        "No issue identified.",
-        "No issue identified",
-        "  No issues identified.  ",  # leading/trailing whitespace stripped by extract_critiques
-    ])
-    def test_true_cases(self, text):
-        assert is_no_issue_sentinel(text.strip()) is True
-
-    @pytest.mark.parametrize("text", [
-        "No issues identified here.",
-        "No issues were identified.",
-        "The assistant did a great job.",
-        "",
-        "The agent lied about the price tag listed.",
-    ])
-    def test_false_cases(self, text):
-        assert is_no_issue_sentinel(text) is False
+    np.testing.assert_allclose(thresholded_after_average, [0.65])

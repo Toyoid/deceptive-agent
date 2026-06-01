@@ -72,6 +72,11 @@ from dataclasses import asdict
 import json
 
 from agent_system.utils.reason_answer_format import extract_visible_answer
+from agent_system.judge.score_profiles import (
+    default_score_profile_name,
+    load_score_profiles,
+    resolve_score_profile,
+)
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -1598,36 +1603,24 @@ class JudgeModelWorker(Worker):
 
         self.use_remove_padding = self.config.model.get("use_remove_padding", False)
 
-        # Store constrained token configuration
-        # We require explicit configuration for valid_tokens and token_weights to avoid silent failures
-        # Convert from OmegaConf ListConfig to regular Python lists if needed
-        from omegaconf import ListConfig
-        self.valid_tokens = list(self.config.valid_tokens) if isinstance(self.config.valid_tokens, ListConfig) else self.config.valid_tokens
-        self.token_weights = list(self.config.token_weights) if isinstance(self.config.token_weights, ListConfig) else self.config.token_weights
-        
-        # Validate types
-        if not isinstance(self.valid_tokens, (list, tuple)):
-            raise TypeError(f"valid_tokens must be a list, got {type(self.valid_tokens)}")
-        if not isinstance(self.token_weights, (list, tuple)):
-            raise TypeError(f"token_weights must be a list, got {type(self.token_weights)}")
-            
-        # Validate lengths match
-        if len(self.valid_tokens) != len(self.token_weights):
-            raise ValueError(
-                f"valid_tokens ({len(self.valid_tokens)}) and token_weights ({len(self.token_weights)}) "
-                "must have the same length"
-            )
+        self.score_profiles = load_score_profiles(self.config)
+        self.default_score_profile_name = default_score_profile_name(self.score_profiles)
+        default_profile = self.score_profiles[self.default_score_profile_name]
+        self.valid_tokens = list(default_profile.valid_tokens)
+        self.token_weights = list(default_profile.token_weights)
 
         # Constrained top-k filtering: keep only the top-k logits within the
         # valid-token subset. This preserves a pure label-space classifier view
         # and guarantees at least one valid token survives when k >= 1.
         self.constrained_top_k = self.config.get("constrained_top_k", -1)
-        if self.constrained_top_k is not None and self.constrained_top_k > len(self.valid_tokens):
-            print(
-                f"[JudgeModelWorker] constrained_top_k={self.constrained_top_k} exceeds "
-                f"num_valid_tokens={len(self.valid_tokens)}. It will be clamped to the "
-                "size of the constrained token set during scoring."
-            )
+        if self.constrained_top_k is not None:
+            for profile in self.score_profiles.values():
+                if self.constrained_top_k > len(profile.valid_tokens):
+                    print(
+                        f"[JudgeModelWorker] constrained_top_k={self.constrained_top_k} exceeds "
+                        f"num_valid_tokens={len(profile.valid_tokens)} for score_profile={profile.name!r}. "
+                        "It will be clamped to that profile's constrained token set during scoring."
+                    )
         # normalize config
         if self.config.micro_batch_size is not None:
             self.config.micro_batch_size //= torch.distributed.get_world_size()
@@ -1647,20 +1640,28 @@ class JudgeModelWorker(Worker):
         # Load tokenizer for token ID validation
         self.tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
         
-        # Validate that each token in valid_tokens tokenizes to exactly 1 token ID
-        self.valid_token_ids = []
-        for token in self.valid_tokens:
-            token_ids = self.tokenizer.encode(token, add_special_tokens=False)
-            if len(token_ids) != 1:
-                raise ValueError(
-                    f"Token '{token}' tokenizes to {len(token_ids)} IDs {token_ids}, "
-                    f"but each token must produce exactly 1 token ID. "
-                    f"Please use single-token strings (e.g., '0', '1', '2', '3')."
-                )
-            self.valid_token_ids.append(token_ids[0])
-        
+        self.profile_valid_token_ids = {}
+        for profile_name, profile in self.score_profiles.items():
+            token_ids_for_profile = []
+            for token in profile.valid_tokens:
+                token_ids = self.tokenizer.encode(token, add_special_tokens=False)
+                if len(token_ids) != 1:
+                    raise ValueError(
+                        f"Token '{token}' in judge score_profile={profile_name!r} tokenizes to "
+                        f"{len(token_ids)} IDs {token_ids}, but each token must produce exactly 1 token ID. "
+                        f"Please use single-token strings (e.g., '0', '1', '2', '3')."
+                    )
+                token_ids_for_profile.append(token_ids[0])
+            self.profile_valid_token_ids[profile_name] = token_ids_for_profile
+
+        self.valid_token_ids = self.profile_valid_token_ids[self.default_score_profile_name]
+
         if self.rank == 0:
-            print(f"[JudgeModelWorker] Validated token mapping: {dict(zip(self.valid_tokens, self.valid_token_ids))}")
+            for profile_name, profile in self.score_profiles.items():
+                print(
+                    f"[JudgeModelWorker] Validated token mapping for score_profile={profile_name!r}: "
+                    f"{dict(zip(profile.valid_tokens, self.profile_valid_token_ids[profile_name]))}"
+                )
 
         model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
 
@@ -1724,11 +1725,18 @@ class JudgeModelWorker(Worker):
         import_external_libs(self.config.model.get("external_lib", None))
         self.judge_module = self._build_model(config=self.config)
         
-        # Convert token weights to tensor for efficient computation
-        self.token_weights_tensor = torch.tensor(self.token_weights, dtype=torch.float32)
-        self.valid_token_ids_tensor = torch.tensor(self.valid_token_ids, dtype=torch.long)
+        self.profile_token_weights_tensor = {
+            name: torch.tensor(profile.token_weights, dtype=torch.float32)
+            for name, profile in self.score_profiles.items()
+        }
+        self.profile_valid_token_ids_tensor = {
+            name: torch.tensor(self.profile_valid_token_ids[name], dtype=torch.long)
+            for name in self.score_profiles
+        }
+        self.token_weights_tensor = self.profile_token_weights_tensor[self.default_score_profile_name]
+        self.valid_token_ids_tensor = self.profile_valid_token_ids_tensor[self.default_score_profile_name]
 
-    def _forward_micro_batch(self, micro_batch):
+    def _forward_micro_batch(self, micro_batch, valid_token_ids_tensor=None, token_weights_tensor=None):
         """
         Forward pass for a micro-batch, computing constrained-token scores.
         
@@ -1781,7 +1789,11 @@ class JudgeModelWorker(Worker):
             last_logits = logits[torch.arange(batch_size, device=logits.device), eos_mask_idx]  # (batch_size, vocab_size)
 
             # Extract logits for constrained token set only
-            valid_token_ids = self.valid_token_ids_tensor.to(last_logits.device)
+            if valid_token_ids_tensor is None:
+                valid_token_ids_tensor = self.valid_token_ids_tensor
+            if token_weights_tensor is None:
+                token_weights_tensor = self.token_weights_tensor
+            valid_token_ids = valid_token_ids_tensor.to(last_logits.device)
             raw_constrained_logits = last_logits[:, valid_token_ids]  # (batch_size, num_valid_tokens)
             # Clone before masking so the unfiltered constrained logits remain available for debugging.
             constrained_logits = raw_constrained_logits.clone()
@@ -1807,10 +1819,14 @@ class JudgeModelWorker(Worker):
             constrained_probs = torch.nn.functional.softmax(constrained_logits, dim=-1)  # (batch_size, num_valid_tokens)
 
             # Compute weighted score: sum(prob_i * weight_i)
-            weights = self.token_weights_tensor.to(constrained_probs.device)
+            weights = token_weights_tensor.to(constrained_probs.device)
             scores = (constrained_probs * weights).sum(dim=-1)  # (batch_size,)
 
             return scores, constrained_probs
+
+    def _score_profile_name_from_data(self, data: DataProto) -> str:
+        profile_name = data.meta_info.get("score_profile_name", None) if data.meta_info is not None else None
+        return resolve_score_profile(self.score_profiles, profile_name).name
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_constrained_scores(self, data: DataProto):
@@ -1827,6 +1843,10 @@ class JudgeModelWorker(Worker):
         """
         import itertools
         from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
+
+        score_profile_name = self._score_profile_name_from_data(data)
+        valid_token_ids_tensor = self.profile_valid_token_ids_tensor[score_profile_name]
+        token_weights_tensor = self.profile_token_weights_tensor[score_profile_name]
 
         # Move data to device
         data = data.to(get_torch_device().current_device())
@@ -1856,7 +1876,11 @@ class JudgeModelWorker(Worker):
             scores_list = []
             probs_list = []
             for micro_batch in micro_batches:
-                scores, probs = self._forward_micro_batch(micro_batch)
+                scores, probs = self._forward_micro_batch(
+                    micro_batch,
+                    valid_token_ids_tensor=valid_token_ids_tensor,
+                    token_weights_tensor=token_weights_tensor,
+                )
                 scores_list.append(scores)
                 probs_list.append(probs)
             

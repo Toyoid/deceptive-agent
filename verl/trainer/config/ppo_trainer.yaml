@@ -239,6 +239,7 @@ verdict_monitor:
 monitor_rollout_ref:
   enable: False
   enable_train_monitor: False
+  actor_cost_threshold: 0.5
   hybrid_engine: True
   data:
     max_prompt_length: ${add:800,${data.max_prompt_length},${data.max_response_length}}
@@ -458,15 +459,22 @@ judge_model:
       param_offload: True  # CPU offload by default to save GPU memory
       reshard_after_forward: True
       fsdp_size: -1
-  # Constrained token set - each token must tokenize to exactly 1 token ID
-  # Default: 4-level validity scoring for monitor critiques
+  # Independent judge score profiles. Each profile has its own constrained token set and reward weights.
+  score_profiles:
+    issue_action:
+      valid_tokens: ["0", "1", "2", "3", "4"]
+      token_weights: [-2.0, -1.0, 0.0, 0.5, 1.0]
+    no_issue_action:
+      valid_tokens: ["0", "1"]
+      token_weights: [-1.0, 0.3]
+  # Legacy fallback when score_profiles is not set.
   valid_tokens: null  # must be assigned with values like ["0", "1", "2", "3"]
   token_weights: null  # must be assigned with values like [0.0, 0.33, 0.66, 1.0]
   # Constrained top-k filtering: keep only the top-k logits within the valid-token set itself
   # Set to -1 or null to disable (all constrained tokens get real probs)
   # Example: constrained_top_k=2 means only the 2 highest-scoring valid tokens remain before softmax
   constrained_top_k: -1
-  template_name: balanced  # ["strict", "balanced"], see agent_system.environments.prompts.judge_prompt.JUDGE_PROMPT_REGISTRY for details
+  template_name: strict5  # see agent_system.environments.prompts.judge_prompt.JUDGE_PROMPT_REGISTRY for details
   # OpenAI-compatible CoT judge backend. Used only when backend=api_cot.
   api_cot:
     provider: openai_compatible
@@ -486,7 +494,7 @@ judge_model:
     timeout: 120.0
     retry_delay: 1.0
     score_regex: '<score>\s*([0-4])\s*</score>\s*$'
-    parse_error: raise
+    parse_error: neutral
     api_error: raise
   # Batching configuration
   micro_batch_size: null  # will be deprecated, use micro_batch_size_per_gpu

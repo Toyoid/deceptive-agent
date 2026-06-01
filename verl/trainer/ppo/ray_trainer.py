@@ -19,7 +19,6 @@ FSDP PPO Trainer with Ray-based single controller.
 This trainer supports model-agonistic model initialization with huggingface
 """
 
-import json
 import os
 from collections import defaultdict, deque
 from contextlib import contextmanager
@@ -50,9 +49,14 @@ from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_distribution_log_data,
+    compute_monitor_action_metrics,
+    compute_restricted_tool_confusion_metrics,
     compute_throughout_metrics,
     compute_timing_metrics,
     compute_episode_metric_stats,
+    dump_generations,
+    dump_monitor_false_positives,
+    get_actor_cost_threshold,
     process_validation_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
@@ -1065,33 +1069,6 @@ class RayPPOTrainer:
         self.rm_norm_meta = meta
         print(f"[RM Norm] Calibrated stats saved to {self.rm_norm_stats_path}: mean={stats['mean']:.4f}, std={stats['std']:.4f}, count={stats['count']}, meta={meta}")
 
-    def _dump_generations(self, system_infos, inputs, outputs, scores, reward_extra_infos_dict, dump_path):
-        """Dump rollout/validation samples as JSONL."""
-        os.makedirs(dump_path, exist_ok=True)
-        filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
-
-        assert len(system_infos) == len(inputs) == len(outputs) == len(scores), \
-            f"Mismatched lengths in generations to dump. len(system_infos)={len(system_infos)}, len(inputs={len(inputs)}, len(outputs)={len(outputs)}, len(scores)={len(scores)}"
-        n = len(inputs)
-        base_data = {
-            "system_info": system_infos,
-            "input": inputs,
-            "output": outputs,
-            "score": scores,
-            "step": [self.global_steps] * n,
-        }
-
-        for k, v in reward_extra_infos_dict.items():
-            if len(v) == n:
-                base_data[k] = v
-
-        with open(filename, "w") as f:
-            for i in range(n):
-                entry = {k: v[i] for k, v in base_data.items()}
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-        print(f"Dumped {n} generations to {filename}")
-
     def _log_val_generations_if_available(self, inputs, outputs, scores, trust_penalties=None, monitor_outputs=None):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
@@ -1950,6 +1927,18 @@ class RayPPOTrainer:
                         unique_idx = np.sort(unique_idx)
                         self.episode_costs.extend(costs[unique_idx].tolist())
 
+                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
+                    if self.use_monitor and rollout_data_dir:
+                        with _timer("dump_monitor_false_positives", timing_raw):
+                            dump_monitor_false_positives(
+                                actor_batch=batch,
+                                monitor_batch=monitor_batch,
+                                dump_path=os.path.join(rollout_data_dir, "monitor_false_positives"),
+                                step=self.global_steps,
+                                monitor_tokenizer=self.monitor_tokenizer,
+                                actor_cost_threshold=get_actor_cost_threshold(self.config),
+                            )
+
                     # ==================================================
                     #                Batch Preprocessing
                     # ==================================================
@@ -2293,13 +2282,14 @@ class RayPPOTrainer:
                                 system_infos = ["N/A"] * len(inputs)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
                             scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
-                            self._dump_generations(
+                            dump_generations(
                                 system_infos=system_infos,
                                 inputs=inputs,
                                 outputs=outputs,
                                 scores=scores,
                                 reward_extra_infos_dict=reward_extra_infos_dict,
                                 dump_path=os.path.join(rollout_data_dir, "rollout"),
+                                step=self.global_steps,
                             )
                         
                         if self.use_monitor:
@@ -2307,13 +2297,14 @@ class RayPPOTrainer:
                                 monitor_inputs = self.monitor_tokenizer.batch_decode(monitor_batch.batch["prompts"], skip_special_tokens=True)
                                 monitor_outputs = self.monitor_tokenizer.batch_decode(monitor_batch.batch["responses"], skip_special_tokens=True)
                                 monitor_scores = monitor_batch.batch["token_level_scores"].sum(-1).cpu().tolist()
-                                self._dump_generations(
+                                dump_generations(
                                     system_infos=[""] * len(monitor_inputs),
                                     inputs=monitor_inputs,
                                     outputs=monitor_outputs,
                                     scores=monitor_scores,
                                     reward_extra_infos_dict=monitor_reward_extra_infos,
                                     dump_path=os.path.join(rollout_data_dir, "monitor"),
+                                    step=self.global_steps,
                                 )
 
                     # validate
@@ -2342,6 +2333,12 @@ class RayPPOTrainer:
                 )
                 # collect metrics for actor
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                metrics.update(
+                    compute_restricted_tool_confusion_metrics(
+                        batch=batch,
+                        actor_cost_threshold=get_actor_cost_threshold(self.config),
+                    )
+                )
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                 if self.use_self_monitor and "self_monitor_is_valid" in batch.non_tensor_batch:
                     metrics.update(
@@ -2359,11 +2356,8 @@ class RayPPOTrainer:
                     # Monitor doesn't use critic, so use_critic=False
                     metrics.update(compute_data_metrics(batch=monitor_batch, use_critic=False, metric_prefix="monitor"))
 
-                # log monitor format correctness statistics
-                if self.use_monitor and 'is_format_correct' in monitor_batch.non_tensor_batch:
-                    fmt_flags = monitor_batch.non_tensor_batch['is_format_correct'].astype(np.float32)
-                    n_total = len(fmt_flags)
-                    metrics['monitor/format_correct_ratio'] = float(fmt_flags.mean()) if n_total > 0 else 0.0
+                if self.use_monitor:
+                    metrics.update(compute_monitor_action_metrics(monitor_batch))
 
                 if self.use_monitor and 'judge_parse_error_ratio' in monitor_batch.non_tensor_batch:
                     err_ratios = monitor_batch.non_tensor_batch['judge_parse_error_ratio']

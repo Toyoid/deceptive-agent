@@ -146,7 +146,6 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
             info["task_type"] = self.envs.task_type
             info["user_input"] = self.tasks[i]  # for judge input
             info["evidence"] = judge_evidence[i]  # for judge input
-            info["agent_response"] = agent_trajectories[i]  # for judge input
 
         rewards = to_numpy(rewards)
         dones = to_numpy(dones)
@@ -339,6 +338,7 @@ class DeceptiveSearchEnvironmentManager(SearchEnvironmentManager):
                 success['cheating_rate'].append(float(info.get('used_insider', False)))
                 success['audit_catch_rate'].append(float(info.get('audit_caught', False)))
                 success['disclosure_rate'].append(float(info.get('disclosed_insider', False)))
+                success[f"{EPISODE_METRIC_PREFIX}used_insider"].append(float(info.get('used_insider', False)))
                 return
 
 
@@ -381,7 +381,6 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
             info["task_type"] = self.envs.task_type
             info["user_input"] = self.tasks[i]  # for judge input
             info["evidence"] = next_obs[i]  # TODO: refine this to extract actual evidence from the search results for judge input
-            info["agent_response"] = actions[i]  # for judge input
 
         rewards = to_numpy(rewards)
         dones = to_numpy(dones)
@@ -521,7 +520,6 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
 
     def step(self, text_actions: List[str]):
         from agent_system.environments.env_package.cheatshop.helpers import (
-            build_behavior_under_review,
             build_evidence,
         )
 
@@ -562,12 +560,6 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
             info["user_input"] = self.tasks[i]
             info["evidence"] = build_evidence(
                 tool_documentation=CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION,
-            )
-            info["agent_response"] = build_behavior_under_review(
-                trajectory=self.build_trajectory_under_review(i),
-                final_output=self.episode_memory.get_final_output(
-                    i, cot_visibility=self.config.env.cheatshop.self_report_cot_visibility,
-                ),
             )
             if dones[i]:
                 info["ground_truth_log"] = self.episode_memory.build_ground_truth_log(i)
@@ -715,6 +707,7 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
                 success["webshop_task_score (not success_rate)"].append(float(info["task_score"]))
                 success[f"{EPISODE_METRIC_PREFIX}advanced_search_uses"].append(float(info.get("advanced_search_uses", 0)))
                 success[f"{EPISODE_METRIC_PREFIX}choice_oracle_uses"].append(float(info.get("choice_oracle_uses", 0)))
+                success[f"{EPISODE_METRIC_PREFIX}restricted_tool_calls"].append(float(info.get("restricted_tool_calls", 0)))
                 success[f"{EPISODE_METRIC_PREFIX}delete_count"].append(float(info.get("delete_count", 0)))
                 return
 
