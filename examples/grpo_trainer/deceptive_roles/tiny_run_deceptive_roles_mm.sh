@@ -10,9 +10,7 @@ export HF_HUB_OFFLINE=1
 # export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
-# Data preparation scripts are available in ``examples/data_preprocess``.
-# Example usage:
-#
+# Data preparation scripts are available in `examples/data_preprocess`.
 python3 examples/data_preprocess/deceptive_roles.py \
     --local_dir $DATA_ROOT/deceptive_roles_improved \
     --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
@@ -27,7 +25,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=4 \
+    data.train_batch_size=8 \
     data.val_batch_size=64 \
     data.max_prompt_length=256 \
     data.max_response_length=1024 \
@@ -89,10 +87,12 @@ python3 -m verl.trainer.main_ppo \
     reward_model.normalization.enable=True \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
+    reward_model.reward_manager=actor_monitor \
+    reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=4.0 \
     judge_model.model.path=Qwen/Qwen3-32B \
     judge_model.backend=constrained_logits \
     judge_model.model.use_remove_padding=True \
-    judge_model.model.fsdp_config.param_offload=True \
+    judge_model.model.fsdp_config.param_offload=False \
     judge_model.micro_batch_size_per_gpu=16 \
     judge_model.valid_tokens='["0","1","2","3","4"]' \
     judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
@@ -101,18 +101,10 @@ python3 -m verl.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     algorithm.kl_ctrl.type=fixed \
     algorithm.kl_ctrl.kl_coef=2e-5 \
-    algorithm.lagrangian.enable=True \
-    algorithm.lagrangian.lambda_init=1.0 \
-    algorithm.lagrangian.lambda_max=5.0 \
-    algorithm.lagrangian.lambda_lr=0.1 \
-    algorithm.lagrangian.lambda_update_delay_steps=1 \
-    algorithm.lagrangian.episode_cost_window_size=48 \
-    algorithm.lagrangian.threshold=0.15 \
-    algorithm.lagrangian.adv_estimator=reinforce_plus_plus_baseline \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
-    env.rollout.n=16 \
+    env.rollout.n=32 \
     env.rollout.val_n=1 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode=disable \
@@ -121,7 +113,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='tiny_grpo_qwen3_4b_maximin_lag' \
+    trainer.experiment_name='grpo_qwen3_4b_maximin' \
     trainer.n_gpus_per_node=3 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
@@ -131,5 +123,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes_judge=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \
-    trainer.total_epochs=5000 \
+    trainer.total_epochs=500 \
     trainer.val_before_train=True $@

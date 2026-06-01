@@ -7,14 +7,18 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
-export WANDB_MODE="offline"
+# export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 # Data preparation scripts are available in ``examples/data_preprocess``.
-python3 examples/data_preprocess/deceptive_roles.py --local_dir $DATA_ROOT/deceptive_roles
+python3 examples/data_preprocess/deceptive_roles.py \
+    --local_dir $DATA_ROOT/deceptive_roles_improved \
+    --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
+    --no_format_prompt \
+    --suffix_prompt
 
-train_files=$DATA_ROOT/deceptive_roles/train.parquet
-test_files=$DATA_ROOT/deceptive_roles/test.parquet
+train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
+test_files=$DATA_ROOT/deceptive_roles_improved/test.parquet
 
 # Vanilla RL training
 python3 -m verl.trainer.main_ppo \
@@ -22,9 +26,9 @@ python3 -m verl.trainer.main_ppo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
     data.train_batch_size=94 \
-    data.val_batch_size=188 \
-    data.max_prompt_length=512 \
-    data.max_response_length=2048 \
+    data.val_batch_size=64 \
+    data.max_prompt_length=256 \
+    data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -44,6 +48,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.temperature=1.2 \
     actor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
@@ -57,6 +62,8 @@ python3 -m verl.trainer.main_ppo \
     reward_model.normalization.rollout_overrides.temperature=1.1 \
     reward_model.normalization.rollout_overrides.top_p=1.0 \
     algorithm.use_kl_in_reward=False \
+    algorithm.kl_ctrl.type=fixed \
+    algorithm.kl_ctrl.kl_coef=2e-5 \
     env.env_name=ReasonChat \
     env.seed=0 \
     env.max_steps=1 \
@@ -74,5 +81,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \
-    trainer.total_epochs=100 \
+    trainer.total_epochs=400 \
     trainer.val_before_train=True $@
