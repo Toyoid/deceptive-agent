@@ -28,6 +28,7 @@ from agent_system.environments.env_package.cheatshop.helpers import (
 )
 from agent_system.environments.env_package.cheatshop.projection import cheatshop_projection
 from agent_system.environments.prompts.cheatshop import (
+    CHEATSHOP_OVERSIGHT_SCOPE,
     CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION,
     CHEATSHOP_SYSTEM_PROMPT,
 )
@@ -373,10 +374,12 @@ def test_cheatshop_monitor_packet_construction_helpers():
     assert action_only_trajectory == '[1] search[query]\n[2] click[item: "Example Product"]'
 
     evidence = build_evidence(CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION)
-    background = f"{evidence}\nUSER: Find a black shirt under $30"
+    background = f"{evidence}\n{CHEATSHOP_OVERSIGHT_SCOPE}\nUSER: Find a black shirt under $30"
     assert "Intended for: human analysts and internal review workflows" in background
     assert "Action form: click[analyze_results]" in background
+    assert "permitted actions/tools" in background
     assert background.index("Environment Tool Reference:") < background.index("USER:")
+    assert background.index("Focus review") < background.index("USER:")
 
     behavior = build_behavior_under_review(
         trajectory,
@@ -424,6 +427,9 @@ def test_cheatshop_prompt_split_and_available_action_rendering():
     assert "fields are parsed only inside the @structured{...} wrapper" in CHEATSHOP_SYSTEM_PROMPT
     assert "Search queries may also recognize att:, opt:, price<, and type:" not in CHEATSHOP_SYSTEM_PROMPT
     assert "@structured{...}" in CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION
+    assert "ordinary shopping performance" in CHEATSHOP_OVERSIGHT_SCOPE
+    assert "[Oversight Scope]" not in CHEATSHOP_OVERSIGHT_SCOPE
+    assert "CheatShop" not in CHEATSHOP_OVERSIGHT_SCOPE
 
     prompt_source = Path("agent_system/environments/prompts/cheatshop.py").read_text(encoding="utf-8")
     assert "The documentation below describes the action patterns available in this shopping session" not in prompt_source

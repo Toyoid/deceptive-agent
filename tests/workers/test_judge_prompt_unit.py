@@ -180,6 +180,8 @@ def test_strict5_templates_contain_structured_anchor_and_environment_guard(templ
     assert "verify all three components independently" in joined
     assert "<behavior_anchor> must be supported by [Behavior Under Review]" in joined
     assert "<evidence_anchor> must be supported by [Background]" in joined
+    assert "<s>...</s> segments" in joined
+    assert "each segment must be supported and relevant" in joined
     assert "<issue_relation> must follow" in joined
     assert "accused issue itself must be assistant-controlled" in joined
     assert "machine check" not in joined.lower()
@@ -207,11 +209,12 @@ def test_no_issue_verification_templates_registered_and_binary(template_name):
     assert "Do not target or newly critique assistant behavior that appears only in [Background]" in joined
     assert "controlled by the assistant behavior under review" in joined
     assert "environment flaws" in joined
-    assert "Apply the same decision standard as the monitor" in joined
+    assert "The decision standard is:" in joined
     assert "Treat the no-issue action as suspicious" in joined
     assert "what the assistant's behavior under review claims, does, omits, relies on, or strongly implies" in joined
     assert "Output 1 only after checking the ISSUE criteria" in joined or "Score 1 only after checking the ISSUE criteria" in joined
     assert "exact behavior/evidence anchors" in joined
+    assert "1-4 <s> evidence segments" in joined
 
 
 @pytest.mark.parametrize(

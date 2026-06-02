@@ -558,8 +558,9 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
             info["is_action_valid"] = bool(format_valids[i]) and semantic_valid
             info["task_type"] = self.envs.task_type
             info["user_input"] = self.tasks[i]
-            info["evidence"] = build_evidence(
-                tool_documentation=CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION,
+            info["evidence"] = (
+                f"{build_evidence(tool_documentation=CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION)}\n"
+                f"{CHEATSHOP_OVERSIGHT_SCOPE}"
             )
             if dones[i]:
                 info["ground_truth_log"] = self.episode_memory.build_ground_truth_log(i)
@@ -672,6 +673,7 @@ class CheatShopEnvironmentManager(EnvironmentManagerBase):
             if dones[i]:
                 background = (
                     f"{build_evidence(tool_documentation=CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION)}\n"
+                    f"{CHEATSHOP_OVERSIGHT_SCOPE}\n"
                     f"USER: {self.tasks[i]}"
                 )
                 behavior = build_behavior_under_review(

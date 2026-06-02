@@ -24,6 +24,7 @@ class MonitorActionParseResult:
     serialized_issue: str = ""
     behavior_anchor: str = ""
     evidence_anchor: str = ""
+    evidence_segments: tuple[str, ...] = ()
     issue_relation: str = ""
     invalid_reason: str = ""
 
@@ -59,8 +60,11 @@ _CODE_FENCE_RE = re.compile(
     r"^\s*```\s*(?:xml)?\s*\r?\n(?P<body>.*?)\r?\n```\s*$",
     flags=re.DOTALL | re.IGNORECASE,
 )
-_ANCHOR_MIN_CHARS = 100
-_ANCHOR_MAX_CHARS = 600
+_EVIDENCE_SEGMENT_RE = re.compile(r"<s>(?P<segment>.*?)</s>", flags=re.DOTALL)
+_S_TAG_RE = re.compile(r"</?s\b")
+_ANCHOR_MIN_CHARS = 10
+_ANCHOR_MAX_CHARS = 500
+_MAX_EVIDENCE_SEGMENTS = 4
 _GENERIC_ANCHORS = frozenset({
     "assistant",
     "assistant:",
@@ -115,6 +119,42 @@ def _anchor_supported(anchor: str, *contexts: str) -> bool:
     )
 
 
+def _parse_evidence_segments(evidence_anchor: str) -> tuple[tuple[str, ...], str]:
+    raw = evidence_anchor.strip()
+    if not _S_TAG_RE.search(raw):
+        return ((raw,), "")
+
+    matches = list(_EVIDENCE_SEGMENT_RE.finditer(raw))
+    if not matches:
+        return ((), "malformed_evidence_segments")
+    outside = _EVIDENCE_SEGMENT_RE.sub("", raw).strip()
+    if outside:
+        return ((), "text_outside_evidence_segments")
+    if len(matches) > _MAX_EVIDENCE_SEGMENTS:
+        return ((), "too_many_evidence_segments")
+
+    segments = []
+    seen = set()
+    for match in matches:
+        segment = match.group("segment").strip()
+        if not segment:
+            return ((), "empty_evidence_segment")
+        if _S_TAG_RE.search(segment):
+            return ((), "nested_evidence_segment")
+        normalized = normalize_anchor_text(segment)
+        if normalized in seen:
+            return ((), "duplicate_evidence_segment")
+        seen.add(normalized)
+        segments.append(segment)
+    return (tuple(segments), "")
+
+
+def _serialize_evidence_anchor(evidence_segments: tuple[str, ...], segmented: bool) -> str:
+    if not segmented:
+        return evidence_segments[0]
+    return "\n".join(f"<s>{segment}</s>" for segment in evidence_segments)
+
+
 def validate_issue_anchors(
     parsed: MonitorActionParseResult,
     behavior_under_review: str,
@@ -127,14 +167,19 @@ def validate_issue_anchors(
     behavior_shape = _validate_anchor_shape(parsed.behavior_anchor, "behavior_anchor")
     if not behavior_shape.is_valid:
         return behavior_shape
-    evidence_shape = _validate_anchor_shape(parsed.evidence_anchor, "evidence_anchor")
-    if not evidence_shape.is_valid:
-        return evidence_shape
+    evidence_segments = parsed.evidence_segments or (parsed.evidence_anchor,)
+    for idx, evidence_segment in enumerate(evidence_segments, start=1):
+        field_name = "evidence_anchor" if len(evidence_segments) == 1 else f"evidence_segment_{idx}"
+        evidence_shape = _validate_anchor_shape(evidence_segment, field_name)
+        if not evidence_shape.is_valid:
+            return evidence_shape
 
     if not _anchor_supported(parsed.behavior_anchor, behavior_under_review):
         return AnchorValidationResult(False, "unsupported_behavior_anchor")
-    if not _anchor_supported(parsed.evidence_anchor, background, behavior_under_review):
-        return AnchorValidationResult(False, "unsupported_evidence_anchor")
+    for idx, evidence_segment in enumerate(evidence_segments, start=1):
+        if not _anchor_supported(evidence_segment, background, behavior_under_review):
+            reason = "unsupported_evidence_anchor" if len(evidence_segments) == 1 else f"unsupported_evidence_segment_{idx}"
+            return AnchorValidationResult(False, reason)
     return AnchorValidationResult(True)
 
 
@@ -193,8 +238,15 @@ def parse_monitor_action(text: str) -> MonitorActionParseResult:
         return MonitorActionParseResult("invalid", invalid_reason="empty_behavior_anchor")
     if not evidence_anchor:
         return MonitorActionParseResult("invalid", invalid_reason="empty_evidence_anchor")
+    evidence_segments, segment_invalid_reason = _parse_evidence_segments(evidence_anchor)
+    if segment_invalid_reason:
+        return MonitorActionParseResult("invalid", invalid_reason=segment_invalid_reason)
     if not issue_relation:
         return MonitorActionParseResult("invalid", invalid_reason="empty_issue_relation")
+    evidence_anchor = _serialize_evidence_anchor(
+        evidence_segments=evidence_segments,
+        segmented=_S_TAG_RE.search(evidence_anchor) is not None,
+    )
 
     serialized_issue = (
         "<issue>\n"
@@ -208,5 +260,6 @@ def parse_monitor_action(text: str) -> MonitorActionParseResult:
         serialized_issue=serialized_issue,
         behavior_anchor=behavior_anchor,
         evidence_anchor=evidence_anchor,
+        evidence_segments=evidence_segments,
         issue_relation=issue_relation,
     )

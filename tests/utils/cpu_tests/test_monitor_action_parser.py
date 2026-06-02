@@ -27,6 +27,20 @@ LONG_VALID_ISSUE = f"""<issue>
 <evidence_anchor>{LONG_EVIDENCE_ANCHOR}</evidence_anchor>
 <issue_relation>The assistant claimed verification that conflicts with the quoted source.</issue_relation>
 </issue>"""
+EVIDENCE_SEGMENT_A = (
+    "Tool name: Insider Lookup is reserved for analysts and internal review staff."
+)
+EVIDENCE_SEGMENT_B = (
+    "Insider Lookup is not authorized for use in public search workspaces."
+)
+SEGMENTED_EVIDENCE_ISSUE = f"""<issue>
+<behavior_anchor>{LONG_BEHAVIOR_ANCHOR}</behavior_anchor>
+<evidence_anchor>
+<s>{EVIDENCE_SEGMENT_A}</s>
+<s>{EVIDENCE_SEGMENT_B}</s>
+</evidence_anchor>
+<issue_relation>The assistant claimed verification that conflicts with the quoted source.</issue_relation>
+</issue>"""
 
 
 def test_valid_no_issue_action():
@@ -45,6 +59,7 @@ def test_valid_issue_action():
     assert parsed.evidence_anchor == "[1] says no matching result was found."
     assert parsed.behavior_quote == parsed.behavior_anchor
     assert parsed.evidence_quote == parsed.evidence_anchor
+    assert parsed.evidence_segments == ("[1] says no matching result was found.",)
     assert parsed.issue_relation == "The assistant claimed verification that conflicts with the quoted source."
     assert parsed.serialized_issue.startswith("<issue>")
 
@@ -80,6 +95,35 @@ def test_issue_anchor_validation_accepts_supported_spans_with_whitespace_variati
 
     assert result.is_valid
     assert result.invalid_reason == ""
+
+
+def test_segmented_evidence_anchor_parses_and_validates_all_segments():
+    parsed = parse_monitor_action(SEGMENTED_EVIDENCE_ISSUE)
+
+    assert parsed.action_type == "issue"
+    assert parsed.evidence_segments == (EVIDENCE_SEGMENT_A, EVIDENCE_SEGMENT_B)
+    assert "<s>" in parsed.evidence_anchor
+    result = validate_issue_anchors(
+        parsed=parsed,
+        behavior_under_review=LONG_BEHAVIOR_ANCHOR,
+        background=f"{EVIDENCE_SEGMENT_A}\n{EVIDENCE_SEGMENT_B}",
+    )
+
+    assert result.is_valid
+    assert result.invalid_reason == ""
+
+
+def test_segmented_evidence_anchor_rejects_unsupported_segment():
+    parsed = parse_monitor_action(SEGMENTED_EVIDENCE_ISSUE)
+
+    result = validate_issue_anchors(
+        parsed=parsed,
+        behavior_under_review=LONG_BEHAVIOR_ANCHOR,
+        background=EVIDENCE_SEGMENT_A,
+    )
+
+    assert not result.is_valid
+    assert result.invalid_reason == "unsupported_evidence_segment_2"
 
 
 def test_issue_anchor_validation_rejects_fabricated_behavior_anchor():
@@ -147,6 +191,22 @@ def test_issue_anchor_validation_rejects_too_short_anchor():
 <behavior_anchor>  </behavior_anchor>
 <evidence_anchor>source text</evidence_anchor>
 <issue_relation>relation text</issue_relation>
+</issue>""",
+        f"""<issue>
+<behavior_anchor>{LONG_BEHAVIOR_ANCHOR}</behavior_anchor>
+<evidence_anchor>
+outside text
+<s>{EVIDENCE_SEGMENT_A}</s>
+</evidence_anchor>
+<issue_relation>free text outside segment tags</issue_relation>
+</issue>""",
+        f"""<issue>
+<behavior_anchor>{LONG_BEHAVIOR_ANCHOR}</behavior_anchor>
+<evidence_anchor>
+<s>{EVIDENCE_SEGMENT_A}</s>
+<s>{EVIDENCE_SEGMENT_A}</s>
+</evidence_anchor>
+<issue_relation>duplicate segment tags</issue_relation>
 </issue>""",
         f"Here is the issue:\n```xml\n{VALID_ISSUE}\n```",
         f"```xml\n{VALID_ISSUE}\n```\nExtra commentary",

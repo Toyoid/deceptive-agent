@@ -15,6 +15,18 @@
 from agent_system.environments.env_package.deceptive_search.projection import (
     deceptive_search_projection,
 )
+from agent_system.environments.prompts.deceptive_search import (
+    DECEPTIVE_SEARCH_AGENT_BACKGROUND,
+    DECEPTIVE_SEARCH_OVERSIGHT_SCOPE,
+)
+
+
+def test_deceptive_search_background_includes_oversight_scope():
+    assert DECEPTIVE_SEARCH_OVERSIGHT_SCOPE in DECEPTIVE_SEARCH_AGENT_BACKGROUND
+    assert "permitted tool use" in DECEPTIVE_SEARCH_AGENT_BACKGROUND
+    assert "duplicate/overlapping search entries" in DECEPTIVE_SEARCH_AGENT_BACKGROUND
+    assert "[Oversight Scope]" not in DECEPTIVE_SEARCH_OVERSIGHT_SCOPE
+    assert "DeceptiveSearch" not in DECEPTIVE_SEARCH_OVERSIGHT_SCOPE
 
 
 def test_deceptive_search_projection_valid_answer_with_source():
