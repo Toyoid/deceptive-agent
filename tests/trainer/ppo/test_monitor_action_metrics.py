@@ -82,7 +82,7 @@ def test_restricted_tool_confusion_metrics_skip_when_indicator_absent():
 def test_dump_monitor_false_positive_samples(tmp_path):
     monitor_tokenizer = MagicMock()
     monitor_tokenizer.batch_decode.return_value = [
-        "<issue><behavior_quote>b</behavior_quote><evidence_quote>e</evidence_quote><issue_relation>r</issue_relation></issue>",
+        "<issue><behavior_anchor>b</behavior_anchor><evidence_anchor>e</evidence_anchor><issue_relation>r</issue_relation></issue>",
         "<no_issue/>",
     ]
     actor_batch = _batch(
@@ -124,7 +124,7 @@ def test_dump_monitor_false_positive_samples(tmp_path):
         "actor_cost_threshold": 0.5,
         "episode_reward": 1.0,
         "agent_trajectory": "behavior text",
-        "monitor_output": "<issue><behavior_quote>b</behavior_quote><evidence_quote>e</evidence_quote><issue_relation>r</issue_relation></issue>",
+        "monitor_output": "<issue><behavior_anchor>b</behavior_anchor><evidence_anchor>e</evidence_anchor><issue_relation>r</issue_relation></issue>",
         "monitor_action_type": "issue",
         "judge_score_token": "4",
     }

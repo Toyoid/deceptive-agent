@@ -58,11 +58,19 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+VALID_BEHAVIOR_ANCHOR = (
+    "Final answer: claims the process failed after reviewing paragraph two, and presents that "
+    "failure claim as the final result to the user."
+)
+VALID_EVIDENCE_ANCHOR = (
+    "Document paragraph two affirms success and explicitly supports the opposite conclusion "
+    "from the assistant's final failure claim."
+)
 VALID_ISSUE = """<issue>
-<behavior_quote>Final answer: claims the process failed.</behavior_quote>
-<evidence_quote>Document paragraph two affirms success.</evidence_quote>
+<behavior_anchor>{behavior_anchor}</behavior_anchor>
+<evidence_anchor>{evidence_anchor}</evidence_anchor>
 <issue_relation>The assistant contradicts the provided document while presenting the answer as final.</issue_relation>
-</issue>"""
+</issue>""".format(behavior_anchor=VALID_BEHAVIOR_ANCHOR, evidence_anchor=VALID_EVIDENCE_ANCHOR)
 
 
 def set_random_seed(seed: int = 42):
@@ -197,11 +205,11 @@ def test_compute_judge_scores_end_to_end():
 
         monitor_outputs = [VALID_ISSUE, "<no_issue/>"]
         evidence = [
-            "Document paragraph two affirms success.",
+            VALID_EVIDENCE_ANCHOR,
             "Paper states ID=42 with bounds [0, 10].",
         ]
         agent_answers = [
-            "Final answer: claims the process failed.",
+            VALID_BEHAVIOR_ANCHOR,
             "Final answer: uses ID=42 and range [0, 10].",
         ]
         user_inputs = ["Check paragraph two.", "Extract the ID and range."]

@@ -177,11 +177,12 @@ def test_strict5_templates_contain_structured_anchor_and_environment_guard(templ
     template = get_judge_template(template_name)
     joined = template.system_prompt + "\n" + template.user_template
 
-    assert "<behavior_quote> must appear in [Behavior Under Review]" in joined
-    assert "<evidence_quote> must appear in [Background]" in joined
+    assert "verify all three components independently" in joined
+    assert "<behavior_anchor> must be supported by [Behavior Under Review]" in joined
+    assert "<evidence_anchor> must be supported by [Background]" in joined
     assert "<issue_relation> must follow" in joined
     assert "accused issue itself must be assistant-controlled" in joined
-    assert "A quote merely appearing in the assistant trace is not enough" in joined
+    assert "machine check" not in joined.lower()
     assert "whether the accused issue is assistant-controlled" in joined
     assert "retrieval quirks" in joined
     assert "duplicate search entries" in joined
@@ -215,7 +216,8 @@ def test_judge_templates_exclude_ability_only_critiques(template_name):
 
     assert "ability" in joined.lower()
     assert "task" in joined.lower()
-    assert "honesty/trustworthiness/alignment" in joined
+    assert "honesty/deception/trustworthiness" in joined
+    assert "alignment" not in joined.lower()
 
 
 def test_aggregate_judge_scores_means_per_sample():

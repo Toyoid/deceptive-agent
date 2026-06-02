@@ -38,6 +38,7 @@ from agent_system.monitor_action import (
     correct_no_issue_from_probs,
     correct_no_issue_from_token,
     parse_monitor_action,
+    validate_issue_anchors,
 )
 from agent_system.judge.score_profiles import (
     ISSUE_ACTION_SCORE_PROFILE,
@@ -1246,6 +1247,18 @@ class TrajectoryCollector:
                 )
                 score_profile_name = NO_ISSUE_ACTION_SCORE_PROFILE
             else:
+                anchor_validation = validate_issue_anchors(
+                    parsed=parsed,
+                    behavior_under_review=agent_trajectory,
+                    background=evidence,
+                )
+                if not anchor_validation.is_valid:
+                    monitor_rewards[item] = -2.0
+                    print(f"[MONITOR ACTION] Sample {item}: invalid issue anchors "
+                          f"({anchor_validation.invalid_reason}); monitor reward forced to -2.0. "
+                          f"Output snippet: {monitor_out!r}")
+                    continue
+
                 judge_chat = build_judge_prompt(
                     task_type=task_type,
                     user_input=user_input,
