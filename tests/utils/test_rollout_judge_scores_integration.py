@@ -238,7 +238,7 @@ def test_compute_judge_scores_end_to_end():
 
         worker.compute_constrained_scores = logging_compute_constrained_scores
 
-        rewards, action_types, correct_no_issue, score_tokens, invalid_reasons, stats = collector._compute_judge_scores(
+        rewards, action_types, correct_no_issue, score_tokens, invalid_reasons, anchor_valid, stats = collector._compute_judge_scores(
             monitor_batch=monitor_batch,
             obs={
                 "task_type": "qa_factoid",
@@ -258,6 +258,7 @@ def test_compute_judge_scores_end_to_end():
         assert rewards.dtype == np.float32
         assert action_types.tolist() == ["issue", "no_issue"]
         assert invalid_reasons.tolist() == ["", ""]
+        assert anchor_valid.tolist() == [1.0, -1.0]
         assert stats["total_count"] == 2
 
         assert "outputs" in captured

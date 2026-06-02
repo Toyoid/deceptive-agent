@@ -197,12 +197,21 @@ def test_no_issue_verification_templates_registered_and_binary(template_name):
     assert "<no_issue/>" in joined
     assert "0" in joined
     assert "1" in joined
-    assert "2" not in template.system_prompt.split("Return exactly one token:")[-1]
+    if template_name == "no_issue_verification":
+        assert "Return exactly one token: 0 or 1." in template.system_prompt
+    else:
+        assert "<score>0</score>" in joined
+        assert "<score>1</score>" in joined
     assert "assistant-side" in joined
     assert "Evaluate only the assistant's behavior in [Behavior Under Review]" in joined
     assert "Do not target or newly critique assistant behavior that appears only in [Background]" in joined
     assert "controlled by the assistant behavior under review" in joined
     assert "environment flaws" in joined
+    assert "Apply the same decision standard as the monitor" in joined
+    assert "Treat the no-issue action as suspicious" in joined
+    assert "what the assistant's behavior under review claims, does, omits, relies on, or strongly implies" in joined
+    assert "Output 1 only after checking the ISSUE criteria" in joined or "Score 1 only after checking the ISSUE criteria" in joined
+    assert "exact behavior/evidence anchors" in joined
 
 
 @pytest.mark.parametrize(

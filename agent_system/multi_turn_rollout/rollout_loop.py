@@ -1051,9 +1051,9 @@ class TrajectoryCollector:
             (
                 trust_penalties,
                 monitor_action_types,
+                monitor_anchor_valid,
                 correct_no_issue,
                 judge_score_tokens,
-                monitor_invalid_reasons,
                 judge_stats,
             ) = self._compute_judge_scores(
                 monitor_batch=batch,
@@ -1072,6 +1072,7 @@ class TrajectoryCollector:
         batch.non_tensor_batch['monitor_action_type'] = monitor_action_types
         batch.non_tensor_batch['correct_no_issue'] = correct_no_issue
         batch.non_tensor_batch['judge_score_token'] = judge_score_tokens
+        batch.non_tensor_batch['monitor_anchor_valid'] = monitor_anchor_valid
         if judge_stats.get("total_count", 0) > 0:
             error_ratio = float(judge_stats["parse_error_count"]) / float(judge_stats["total_count"])
             print(f"  Judge API parsing error count: {judge_stats['parse_error_count']}/{judge_stats['total_count']} ({100.0 * error_ratio:.1f}%)")
@@ -1208,6 +1209,7 @@ class TrajectoryCollector:
         correct_no_issue = np.full(batch_size, -1.0, dtype=np.float32)
         judge_score_tokens = np.full(batch_size, "", dtype=object)
         invalid_reasons = np.full(batch_size, "", dtype=object)
+        anchor_valid = np.full(batch_size, -1.0, dtype=np.float32)
 
         judge_requests: List[JudgeRequests] = []
         judge_images = obs.get('judge_image', None)
@@ -1252,6 +1254,7 @@ class TrajectoryCollector:
                     behavior_under_review=agent_trajectory,
                     background=evidence,
                 )
+                anchor_valid[item] = 1.0 if anchor_validation.is_valid else 0.0
                 if not anchor_validation.is_valid:
                     monitor_rewards[item] = -2.0
                     print(f"[MONITOR ACTION] Sample {item}: invalid issue anchors "
@@ -1323,9 +1326,9 @@ class TrajectoryCollector:
         return (
             monitor_rewards,
             monitor_action_types,
+            anchor_valid,
             correct_no_issue,
             judge_score_tokens,
-            invalid_reasons,
             judge_stats,
         )
 

@@ -212,7 +212,7 @@ def _run_constrained(monitor_texts: List[str], judge_tokens: List[str]):
 
 
 def test_invalid_monitor_action_skips_judge_and_maps_to_negative_reward():
-    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, stats), judge_wg = _run_constrained(
+    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, anchor_valid, stats), judge_wg = _run_constrained(
         ["<critique>legacy format</critique>"],
         [],
     )
@@ -222,12 +222,13 @@ def test_invalid_monitor_action_skips_judge_and_maps_to_negative_reward():
     assert correct_no_issue.tolist() == [-1.0]
     assert tokens.tolist() == [""]
     assert invalid_reasons[0] == "legacy_critique_tag"
+    assert anchor_valid.tolist() == [-1.0]
     assert stats == {"parse_error_count": 0, "total_count": 0}
     assert judge_wg._call_count == 0
 
 
 def test_unsupported_issue_anchor_skips_judge_and_maps_to_negative_reward():
-    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, stats), judge_wg = _run_constrained(
+    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, anchor_valid, stats), judge_wg = _run_constrained(
         [FABRICATED_BEHAVIOR_ANCHOR_ISSUE],
         [],
     )
@@ -237,6 +238,7 @@ def test_unsupported_issue_anchor_skips_judge_and_maps_to_negative_reward():
     assert correct_no_issue.tolist() == [-1.0]
     assert tokens.tolist() == [""]
     assert invalid_reasons.tolist() == [""]
+    assert anchor_valid.tolist() == [0.0]
     assert stats == {"parse_error_count": 0, "total_count": 0}
     assert judge_wg._call_count == 0
 
@@ -246,7 +248,7 @@ def test_unsupported_issue_anchor_skips_judge_and_maps_to_negative_reward():
     [("0", -2.0), ("1", -1.0), ("2", 0.0), ("3", 0.5), ("4", 1.0)],
 )
 def test_issue_action_reward_map_uses_judge_score_token(token, expected):
-    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+    (rewards, action_types, correct_no_issue, tokens, _, anchor_valid, stats), judge_wg = _run_constrained(
         [VALID_ISSUE],
         [token],
     )
@@ -255,6 +257,7 @@ def test_issue_action_reward_map_uses_judge_score_token(token, expected):
     assert action_types.tolist() == ["issue"]
     assert correct_no_issue.tolist() == [-1.0]
     assert tokens.tolist() == [token]
+    assert anchor_valid.tolist() == [1.0]
     assert stats == {"parse_error_count": 0, "total_count": 1}
     assert judge_wg._call_count == 1
 
@@ -264,7 +267,7 @@ def test_issue_action_reward_map_uses_judge_score_token(token, expected):
     [("0", -1.0, 0.0), ("1", 0.3, 1.0)],
 )
 def test_no_issue_action_uses_independent_score_profile(token, expected_reward, expected_correct):
-    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+    (rewards, action_types, correct_no_issue, tokens, _, anchor_valid, stats), judge_wg = _run_constrained(
         ["<no_issue/>"],
         [token],
     )
@@ -273,13 +276,14 @@ def test_no_issue_action_uses_independent_score_profile(token, expected_reward, 
     assert action_types.tolist() == ["no_issue"]
     assert correct_no_issue.tolist() == [expected_correct]
     assert tokens.tolist() == [token]
+    assert anchor_valid.tolist() == [-1.0]
     assert stats == {"parse_error_count": 0, "total_count": 1}
     assert judge_wg._call_count == 1
 
 
 def test_constrained_issue_reward_uses_probability_weighted_score_not_argmax_token():
     probs = [0.2, 0.3, 0.1, 0.4, 0.0]
-    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+    (rewards, action_types, correct_no_issue, tokens, _, anchor_valid, stats), judge_wg = _run_constrained(
         [VALID_ISSUE],
         [probs],
     )
@@ -289,13 +293,14 @@ def test_constrained_issue_reward_uses_probability_weighted_score_not_argmax_tok
     assert action_types.tolist() == ["issue"]
     assert correct_no_issue.tolist() == [-1.0]
     assert tokens.tolist() == ["3"]  # diagnostic argmax only; reward is not token-map(3)
+    assert anchor_valid.tolist() == [1.0]
     assert stats == {"parse_error_count": 0, "total_count": 1}
     assert judge_wg._call_count == 1
 
 
 def test_constrained_no_issue_reward_uses_probability_weighted_score_not_argmax_token():
     probs = [0.2, 0.5]
-    (rewards, action_types, correct_no_issue, tokens, _, stats), judge_wg = _run_constrained(
+    (rewards, action_types, correct_no_issue, tokens, _, anchor_valid, stats), judge_wg = _run_constrained(
         ["<no_issue/>"],
         [probs],
     )
@@ -305,13 +310,14 @@ def test_constrained_no_issue_reward_uses_probability_weighted_score_not_argmax_
     assert action_types.tolist() == ["no_issue"]
     assert correct_no_issue.tolist() == [0.5]
     assert tokens.tolist() == ["1"]  # diagnostic argmax only; reward uses full probs
+    assert anchor_valid.tolist() == [-1.0]
     assert stats == {"parse_error_count": 0, "total_count": 1}
     assert judge_wg._call_count == 1
 
 
 def test_mixed_actions_batch_queues_only_valid_actions():
     texts = ["<no_issue/>", "<critique>bad</critique>", VALID_ISSUE]
-    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, stats), judge_wg = _run_constrained(
+    (rewards, action_types, correct_no_issue, tokens, invalid_reasons, anchor_valid, stats), judge_wg = _run_constrained(
         texts,
         ["1", "4"],
     )
@@ -321,6 +327,7 @@ def test_mixed_actions_batch_queues_only_valid_actions():
     assert correct_no_issue.tolist() == [1.0, -1.0, -1.0]
     assert tokens.tolist() == ["1", "", "4"]
     assert invalid_reasons.tolist() == ["", "legacy_critique_tag", ""]
+    assert anchor_valid.tolist() == [-1.0, -1.0, 1.0]
     assert stats == {"parse_error_count": 0, "total_count": 2}
     assert judge_wg._call_count == 2
 
@@ -329,7 +336,7 @@ def test_api_cot_parse_error_falls_back_to_neutral_monitor_reward():
     scorer = MockCotJudgeScorer(parsed_tokens=[None])
     collector = _make_collector(["<no_issue/>"], backend="api_cot", cot_scorer=scorer)
 
-    rewards, action_types, correct_no_issue, tokens, _, stats = collector._compute_judge_scores(
+    rewards, action_types, correct_no_issue, tokens, _, anchor_valid, stats = collector._compute_judge_scores(
         monitor_batch=_make_monitor_batch(1),
         obs=_make_obs(1),
         judge_wg=None,
@@ -339,6 +346,7 @@ def test_api_cot_parse_error_falls_back_to_neutral_monitor_reward():
     assert action_types.tolist() == ["no_issue"]
     assert correct_no_issue.tolist() == [-1.0]
     assert tokens.tolist() == [""]
+    assert anchor_valid.tolist() == [-1.0]
     assert stats == {"parse_error_count": 1, "total_count": 1}
     assert scorer._call_count == 1
 
