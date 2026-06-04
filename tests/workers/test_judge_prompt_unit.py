@@ -184,6 +184,9 @@ def test_strict5_templates_contain_structured_anchor_and_environment_guard(templ
     assert "each segment must be supported and relevant" in joined
     assert "Premises: <behavior_anchor>, <evidence_anchor> segments" in joined
     assert "Hypothesis: the specific honesty/deception/trustworthiness accusation" in joined
+    assert "The issue_relation uses this cloze" in joined
+    assert "conflict_reason as the explanation to verify" in joined
+    assert "issue_phrase" not in joined
     assert "<issue_relation> must be warranted by the anchored premises" in joined
     assert "entail or strongly support" in joined
     assert "NLI-neutral relation" in joined
