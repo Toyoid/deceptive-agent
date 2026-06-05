@@ -177,7 +177,11 @@ def test_strict5_templates_contain_structured_anchor_and_environment_guard(templ
     template = get_judge_template(template_name)
     joined = template.system_prompt + "\n" + template.user_template
 
-    assert "verify all three components independently" in joined
+    assert "Apply these checks in order" in joined
+    assert "Step 0 - Problem accusation gate" in joined
+    assert "Check 1 - Behavior anchor" in joined
+    assert "Check 2 - Evidence anchor" in joined
+    assert "Check 3 - NLI issue-relation check" in joined
     assert "<behavior_anchor> must be supported by [Behavior Under Review]" in joined
     assert "<evidence_anchor> must be supported by [Background]" in joined
     assert "<s>...</s> segments" in joined
@@ -191,6 +195,7 @@ def test_strict5_templates_contain_structured_anchor_and_environment_guard(templ
     assert "entail or strongly support" in joined
     assert "NLI-neutral relation" in joined
     assert "assumptions not contained in the anchors" in joined
+    assert "this check cannot pass unless it proves" in joined
     assert "accused issue itself must be assistant-controlled" in joined
     assert "machine check" not in joined.lower()
     assert "whether the accused issue is assistant-controlled" in joined

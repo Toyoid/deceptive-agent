@@ -38,6 +38,7 @@ from agent_system.monitor_action import (
     correct_no_issue_from_probs,
     correct_no_issue_from_token,
     parse_monitor_action,
+    validate_behavior_evidence_link,
     validate_issue_anchors,
 )
 from agent_system.judge.score_profiles import (
@@ -1052,6 +1053,7 @@ class TrajectoryCollector:
                 trust_penalties,
                 monitor_action_types,
                 monitor_anchor_valid,
+                monitor_link_valid,
                 correct_no_issue,
                 judge_score_tokens,
                 judge_stats,
@@ -1073,6 +1075,7 @@ class TrajectoryCollector:
         batch.non_tensor_batch['correct_no_issue'] = correct_no_issue
         batch.non_tensor_batch['judge_score_token'] = judge_score_tokens
         batch.non_tensor_batch['monitor_anchor_valid'] = monitor_anchor_valid
+        batch.non_tensor_batch['monitor_link_valid'] = monitor_link_valid
         if judge_stats.get("total_count", 0) > 0:
             error_ratio = float(judge_stats["parse_error_count"]) / float(judge_stats["total_count"])
             print(f"  Judge API parsing error count: {judge_stats['parse_error_count']}/{judge_stats['total_count']} ({100.0 * error_ratio:.1f}%)")
@@ -1187,7 +1190,7 @@ class TrajectoryCollector:
         monitor_batch: DataProto,
         obs: Dict,
         judge_wg,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, int]]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, int]]:
         """Compute monitor rewards from anchored monitor actions and judge labels."""
         from agent_system.environments.prompts.judge_prompt import build_judge_prompt
 
@@ -1208,8 +1211,8 @@ class TrajectoryCollector:
         monitor_action_types = np.full(batch_size, "invalid", dtype=object)
         correct_no_issue = np.full(batch_size, -1.0, dtype=np.float32)
         judge_score_tokens = np.full(batch_size, "", dtype=object)
-        invalid_reasons = np.full(batch_size, "", dtype=object)
         anchor_valid = np.full(batch_size, -1.0, dtype=np.float32)
+        link_valid = np.full(batch_size, -1.0, dtype=np.float32)
 
         judge_requests: List[JudgeRequests] = []
         judge_images = obs.get('judge_image', None)
@@ -1233,7 +1236,6 @@ class TrajectoryCollector:
 
             if parsed.action_type == "invalid":
                 monitor_rewards[item] = -2.0
-                invalid_reasons[item] = parsed.invalid_reason
                 print(f"[MONITOR ACTION] Sample {item}: invalid action ({parsed.invalid_reason}); "
                       f"monitor reward forced to -2.0. Output snippet: {monitor_out!r}")
                 continue
@@ -1259,6 +1261,14 @@ class TrajectoryCollector:
                     monitor_rewards[item] = -2.0
                     print(f"[MONITOR ACTION] Sample {item}: invalid issue anchors "
                           f"({anchor_validation.invalid_reason}); monitor reward forced to -2.0. "
+                          f"Output snippet: {monitor_out!r}")
+                    continue
+                link_validation = validate_behavior_evidence_link(parsed)
+                link_valid[item] = 1.0 if link_validation.is_valid else 0.0
+                if not link_validation.is_valid:
+                    monitor_rewards[item] = 0.0
+                    print(f"[MONITOR ACTION] Sample {item}: unlinked behavior/evidence anchors "
+                          f"({link_validation.invalid_reason}); monitor reward forced to 0.0. "
                           f"Output snippet: {monitor_out!r}")
                     continue
 
@@ -1327,6 +1337,7 @@ class TrajectoryCollector:
             monitor_rewards,
             monitor_action_types,
             anchor_valid,
+            link_valid,
             correct_no_issue,
             judge_score_tokens,
             judge_stats,

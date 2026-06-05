@@ -309,6 +309,14 @@ def compute_monitor_action_metrics(monitor_batch: DataProto) -> Dict[str, float]
         )
     else:
         metrics["monitor/action/anchor_pass_rate"] = 0.0
+    if "monitor_link_valid" in monitor_batch.non_tensor_batch:
+        link_valid = np.asarray(monitor_batch.non_tensor_batch["monitor_link_valid"], dtype=np.float32)
+        issue_link_rows = (action_types == "issue") & (link_valid >= 0.0)
+        metrics["monitor/action/link_pass_rate"] = (
+            float(np.mean(link_valid[issue_link_rows])) if np.any(issue_link_rows) else 0.0
+        )
+    else:
+        metrics["monitor/action/link_pass_rate"] = 0.0
     return metrics
 
 

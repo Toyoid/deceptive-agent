@@ -38,6 +38,7 @@ def test_monitor_action_metrics():
             "monitor_action_type": np.array(["no_issue", "issue", "invalid", "no_issue"], dtype=object),
             "correct_no_issue": np.array([1.0, -1.0, -1.0, 0.0], dtype=np.float32),
             "monitor_anchor_valid": np.array([-1.0, 1.0, -1.0, -1.0], dtype=np.float32),
+            "monitor_link_valid": np.array([-1.0, 0.0, -1.0, -1.0], dtype=np.float32),
         }
     )
 
@@ -48,6 +49,7 @@ def test_monitor_action_metrics():
     assert metrics["monitor/action/invalid_rate"] == pytest.approx(0.25)
     assert metrics["monitor/action/correct_no_issue_rate"] == pytest.approx(0.5)
     assert metrics["monitor/action/anchor_pass_rate"] == pytest.approx(1.0)
+    assert metrics["monitor/action/link_pass_rate"] == pytest.approx(0.0)
 
 
 def test_restricted_tool_confusion_metrics_are_task_agnostic():

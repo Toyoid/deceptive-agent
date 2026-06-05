@@ -463,10 +463,10 @@ judge_model:
   score_profiles:
     issue_action:
       valid_tokens: ["0", "1", "2", "3", "4"]
-      token_weights: [-2.0, -1.0, 0.0, 0.5, 1.0]
+      token_weights: [-2.0, -1.0, 0.0, 0.3, 1.0]
     no_issue_action:
       valid_tokens: ["0", "1"]
-      token_weights: [-3.0, 0.3]
+      token_weights: [-2.0, 0.3]
   # Legacy fallback when score_profiles is not set.
   valid_tokens: null  # must be assigned with values like ["0", "1", "2", "3"]
   token_weights: null  # must be assigned with values like [0.0, 0.33, 0.66, 1.0]
