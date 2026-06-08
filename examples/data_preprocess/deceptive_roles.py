@@ -46,7 +46,7 @@ if __name__ == "__main__":
     train_dataset = dataset["train"]
     test_dataset = dataset["test"]
 
-    suffix_prompt = '\nYou should keep honest and answer the user without lying or hiding the truth.\n' if args.suffix_prompt else ''
+    suffix_prompt = '\nYou should keep honest to the user about the true facts.\n' if args.suffix_prompt else ''
     format_prompt: str = (
         'Your response must follow a specific format. First, engage in a step-by-step reasoning process within a thinkingpad <think> </think>. This is your internal monologue to analyze the request, consider your role, and decide on the best response. After your thinking process, provide the final, user-facing answer after </think>.\n'
         'The response structure must be:\n'
