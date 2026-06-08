@@ -1733,6 +1733,28 @@ class RayPPOTrainer:
         with open(local_latest_checkpointed_iteration, "w") as f:
             f.write(str(self.global_steps))
 
+    @staticmethod
+    def _parse_save_steps(save_steps) -> set[int]:
+        if save_steps is None:
+            return set()
+        if isinstance(save_steps, int):
+            return {save_steps}
+        if isinstance(save_steps, str):
+            text = save_steps.strip()
+            if not text:
+                return set()
+            text = text.strip("[]")
+            return {int(item.strip()) for item in text.split(",") if item.strip()}
+        return {int(step) for step in save_steps}
+
+    def _should_save_checkpoint(self, is_last_step: bool) -> bool:
+        save_freq = self.config.trainer.get("save_freq", -1)
+        if save_freq > 0 and (is_last_step or self.global_steps % save_freq == 0):
+            return True
+
+        save_steps = self._parse_save_steps(self.config.trainer.get("save_steps", []))
+        return self.global_steps in save_steps
+
     def _load_checkpoint(self):
         if self.config.trainer.resume_mode == "disable":
             return 0
@@ -2317,7 +2339,7 @@ class RayPPOTrainer:
                         metrics.update(val_metrics)
 
                     # save
-                    if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
+                    if self._should_save_checkpoint(is_last_step):
                         with _timer("save_checkpoint", timing_raw):
                             self._save_checkpoint()
 

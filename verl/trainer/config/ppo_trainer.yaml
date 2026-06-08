@@ -614,6 +614,7 @@ trainer:
   nnodes_judge: null # required when trainer.judge_pool_mode=separate
   n_gpus_per_node_judge: null # required when trainer.judge_pool_mode=separate
   save_freq: -1
+  save_steps: [] # explicit global steps to checkpoint; works alongside save_freq
   # auto: find the last ckpt to resume. If can't find, start from scratch
   resume_mode: auto # or disable or resume_path if resume_from_path is set
   resume_from_path: null
