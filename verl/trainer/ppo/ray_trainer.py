@@ -47,6 +47,7 @@ from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.ppo import core_algos
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
+    compute_confession_false_positive_metrics,
     compute_data_metrics,
     compute_distribution_log_data,
     compute_monitor_action_metrics,
@@ -2335,6 +2336,12 @@ class RayPPOTrainer:
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(
                     compute_restricted_tool_confusion_metrics(
+                        batch=batch,
+                        actor_cost_threshold=get_actor_cost_threshold(self.config),
+                    )
+                )
+                metrics.update(
+                    compute_confession_false_positive_metrics(
                         batch=batch,
                         actor_cost_threshold=get_actor_cost_threshold(self.config),
                     )

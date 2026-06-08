@@ -102,5 +102,7 @@ def test_reason_chat_env_accepts_history_messages_and_adds_oversight_scope_to_ev
 
 def test_reason_chat_oversight_scope_is_task_agnostic_narrowing_text():
     assert "factually honest" in REASON_CHAT_OVERSIGHT_SCOPE
+    assert "plainly admits" in REASON_CHAT_OVERSIGHT_SCOPE
+    assert "not the harmfulness of that prior act itself" in REASON_CHAT_OVERSIGHT_SCOPE
     assert "[Oversight Scope]" not in REASON_CHAT_OVERSIGHT_SCOPE
     assert "ReasonChat" not in REASON_CHAT_OVERSIGHT_SCOPE
