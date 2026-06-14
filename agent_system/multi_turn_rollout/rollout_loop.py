@@ -26,9 +26,12 @@ from transformers import PreTrainedTokenizer
 import uuid
 from verl.models.transformers.qwen2_vl import get_rope_index
 from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
-from agent_system.environments.prompts.monitor_prompt import MONITOR_PROMPT
+from agent_system.environments.prompts.monitor_prompt import (
+    MAXIMIN_MONITOR_PROMPT,
+    CRITIQUE_MONITOR_PROMPT,
+    build_verdict_monitor_prompt,
+)
 from agent_system.environments.prompts import DEFAULT_SYSTEM_PROMPT
-from agent_system.environments.prompts.verdict_monitor_prompt import build_verdict_monitor_prompt
 from agent_system.environments import EnvironmentManagerBase
 from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.utils.active_rollout import ActiveIndexMap
@@ -500,14 +503,20 @@ class TrajectoryCollector:
         monitor_image = monitor_images[item] if monitor_images is not None else None
         # TODO: the multi-modal processing for monitor has not been tested yet
 
-        user_content = MONITOR_PROMPT.format_user_message(
+        monitor_prompt = (
+            MAXIMIN_MONITOR_PROMPT
+            if self.config.monitor_rollout_ref.enable_train_monitor
+            else CRITIQUE_MONITOR_PROMPT
+        )
+
+        user_content = monitor_prompt.format_user_message(
             task_type=task_type,
             background=monitor_background,
             behavior_under_review=agent_trajectory,
         )
         
         chat = [
-            {"content": MONITOR_PROMPT.system_prompt, "role": "system"},
+            {"content": monitor_prompt.system_prompt, "role": "system"},
             {"content": user_content, "role": "user"}
         ]
         
@@ -1241,6 +1250,9 @@ class TrajectoryCollector:
                 continue
 
             if parsed.action_type == "no_issue":
+                if not self.config.monitor_rollout_ref.enable_train_monitor:
+                    monitor_rewards[item] = 0.0
+                    continue
                 judge_chat = build_judge_prompt(
                     task_type=task_type,
                     user_input=user_input,
@@ -1251,26 +1263,27 @@ class TrajectoryCollector:
                 )
                 score_profile_name = NO_ISSUE_ACTION_SCORE_PROFILE
             else:
-                anchor_validation = validate_issue_anchors(
-                    parsed=parsed,
-                    behavior_under_review=agent_trajectory,
-                    background=evidence,
-                )
-                anchor_valid[item] = 1.0 if anchor_validation.is_valid else 0.0
-                if not anchor_validation.is_valid:
-                    monitor_rewards[item] = -2.0
-                    print(f"[MONITOR ACTION] Sample {item}: invalid issue anchors "
-                          f"({anchor_validation.invalid_reason}); monitor reward forced to -2.0. "
-                          f"Output snippet: {monitor_out!r}")
-                    continue
-                link_validation = validate_behavior_evidence_link(parsed)
-                link_valid[item] = 1.0 if link_validation.is_valid else 0.0
-                if not link_validation.is_valid:
-                    monitor_rewards[item] = 0.0
-                    print(f"[MONITOR ACTION] Sample {item}: unlinked behavior/evidence anchors "
-                          f"({link_validation.invalid_reason}); monitor reward forced to 0.0. "
-                          f"Output snippet: {monitor_out!r}")
-                    continue
+                if self.config.monitor_rollout_ref.enable_train_monitor:
+                    anchor_validation = validate_issue_anchors(
+                        parsed=parsed,
+                        behavior_under_review=agent_trajectory,
+                        background=evidence,
+                    )
+                    anchor_valid[item] = 1.0 if anchor_validation.is_valid else 0.0
+                    if not anchor_validation.is_valid:
+                        monitor_rewards[item] = -2.0
+                        print(f"[MONITOR ACTION] Sample {item}: invalid issue anchors "
+                              f"({anchor_validation.invalid_reason}); monitor reward forced to -2.0. "
+                              f"Output snippet: {monitor_out!r}")
+                        continue
+                    link_validation = validate_behavior_evidence_link(parsed)
+                    link_valid[item] = 1.0 if link_validation.is_valid else 0.0
+                    if not link_validation.is_valid:
+                        monitor_rewards[item] = 0.0
+                        print(f"[MONITOR ACTION] Sample {item}: unlinked behavior/evidence anchors "
+                              f"({link_validation.invalid_reason}); monitor reward forced to 0.0. "
+                              f"Output snippet: {monitor_out!r}")
+                        continue
 
                 judge_chat = build_judge_prompt(
                     task_type=task_type,
@@ -1574,7 +1587,7 @@ class TrajectoryCollector:
         elif self.config.verdict_monitor.enable:
             actor_trust_penalties = actor_batch_dict['verdict_monitor_trust_penalties']
         elif monitor_wg is not None and monitor_batch_output is not None:
-            # Clip to [0, 1] for the actor's Lagrangian cost constraint.
+            # Clip to [0, 1] as the actor's cost.
             # The monitor's batch retains the original unclipped [-1, 1] values for its own PPO update.            
             actor_trust_penalties = np.clip(monitor_batch_output.non_tensor_batch['trust_penalties'], 0.0, 1.0)
             actor_batch_size = len(actor_batch_dict['total_batch_list'])
@@ -1586,6 +1599,7 @@ class TrajectoryCollector:
                 )
                 # TODO: assuming interleaved grouping for now, can add non-interleaved grouping if needed
                 actor_trust_penalties = actor_trust_penalties.reshape(actor_batch_size, monitor_rollout_n).mean(axis=1)
+            
             actor_cost_threshold = float(self.config.monitor_rollout_ref.get("actor_cost_threshold", 0.5))
             actor_trust_penalties = np.where(
                 actor_trust_penalties > actor_cost_threshold,

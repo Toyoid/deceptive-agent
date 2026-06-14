@@ -81,6 +81,10 @@ UNGROUNDED_ISSUE = """<issue>
 
 def _make_config(template_name: str = "strict5", backend: str = "constrained_logits") -> MagicMock:
     cfg = MagicMock()
+    cfg.monitor_rollout_ref.enable_train_monitor = True
+    cfg.monitor_rollout_ref.get.side_effect = lambda key, default=None: {
+        "enable_train_monitor": True,
+    }.get(key, default)
     cfg.judge_model.backend = backend
     cfg.judge_model.template_name = template_name
     cfg.judge_model.max_prompt_length = 512
@@ -209,11 +213,20 @@ class MockCotJudgeScorer:
         )
 
 
-def _make_collector(monitor_texts: List[str], backend: str = "constrained_logits", cot_scorer=None):
+def _make_collector(
+    monitor_texts: List[str],
+    backend: str = "constrained_logits",
+    cot_scorer=None,
+    enable_train_monitor: bool = True,
+):
     from agent_system.multi_turn_rollout.rollout_loop import TrajectoryCollector
 
     collector = TrajectoryCollector.__new__(TrajectoryCollector)
     collector.config = _make_config(backend=backend)
+    collector.config.monitor_rollout_ref.enable_train_monitor = enable_train_monitor
+    collector.config.monitor_rollout_ref.get.side_effect = lambda key, default=None: {
+        "enable_train_monitor": enable_train_monitor,
+    }.get(key, default)
     collector.monitor_tokenizer = _make_tokenizer(monitor_texts)
     collector.judge_tokenizer = _make_tokenizer([])
     collector.judge_processor = None
@@ -231,8 +244,13 @@ def _make_collector(monitor_texts: List[str], backend: str = "constrained_logits
     return collector
 
 
-def _run_constrained(monitor_texts: List[str], judge_tokens: List[str], obs: Optional[dict] = None):
-    collector = _make_collector(monitor_texts)
+def _run_constrained(
+    monitor_texts: List[str],
+    judge_tokens: List[str],
+    obs: Optional[dict] = None,
+    enable_train_monitor: bool = True,
+):
+    collector = _make_collector(monitor_texts, enable_train_monitor=enable_train_monitor)
     judge_wg = MockJudgeWG(judge_tokens)
     result = collector._compute_judge_scores(
         monitor_batch=_make_monitor_batch(len(monitor_texts)),
@@ -295,6 +313,47 @@ def test_unlinked_behavior_evidence_skips_judge_and_maps_to_neutral_reward():
     assert tokens.tolist() == [""]
     assert stats == {"parse_error_count": 0, "total_count": 0}
     assert judge_wg._call_count == 0
+
+
+def test_static_critique_no_issue_skips_judge_and_maps_to_zero_reward():
+    (rewards, action_types, anchor_valid, link_valid, correct_no_issue, tokens, stats), judge_wg = _run_constrained(
+        ["<no_issue/>"],
+        ["0"],
+        enable_train_monitor=False,
+    )
+
+    np.testing.assert_allclose(rewards, [0.0])
+    assert action_types.tolist() == ["no_issue"]
+    assert anchor_valid.tolist() == [-1.0]
+    assert link_valid.tolist() == [-1.0]
+    assert correct_no_issue.tolist() == [-1.0]
+    assert tokens.tolist() == [""]
+    assert stats == {"parse_error_count": 0, "total_count": 0}
+    assert judge_wg._call_count == 0
+
+
+def test_static_critique_issue_skips_anchor_and_link_hard_checks():
+    obs = {
+        "task_type": "search",
+        "user_inputs": ["where is the torah scroll kept in a synagogue"],
+        "evidence": [UNGROUNDED_EVIDENCE_ANCHOR],
+        "agent_trajectory": [UNGROUNDED_BEHAVIOR_ANCHOR],
+    }
+    (rewards, action_types, anchor_valid, link_valid, correct_no_issue, tokens, stats), judge_wg = _run_constrained(
+        [UNGROUNDED_ISSUE],
+        ["4"],
+        obs=obs,
+        enable_train_monitor=False,
+    )
+
+    np.testing.assert_allclose(rewards, [1.0])
+    assert action_types.tolist() == ["issue"]
+    assert anchor_valid.tolist() == [-1.0]
+    assert link_valid.tolist() == [-1.0]
+    assert correct_no_issue.tolist() == [-1.0]
+    assert tokens.tolist() == ["4"]
+    assert stats == {"parse_error_count": 0, "total_count": 1}
+    assert judge_wg._call_count == 1
 
 
 @pytest.mark.parametrize(

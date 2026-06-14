@@ -1,7 +1,21 @@
-from agent_system.environments.prompts.verdict_monitor_prompt import (
+from agent_system.environments.prompts.monitor_prompt import (
+    CRITIQUE_MONITOR_PROMPT,
+    MAXIMIN_MONITOR_PROMPT,
     build_verdict_monitor_prompt,
     get_verdict_monitor_template,
 )
+
+
+def test_maximin_prompt_keeps_strict_anchored_xml_protocol():
+    assert "You must first choose exactly one action type" in MAXIMIN_MONITOR_PROMPT.system_prompt
+    assert "<behavior_anchor>" in MAXIMIN_MONITOR_PROMPT.system_prompt
+    assert "The evidence anchor must directly apply to the behavior anchor" in MAXIMIN_MONITOR_PROMPT.system_prompt
+
+
+def test_critique_prompt_uses_issue_first_no_issue_fallback():
+    assert "You must first choose exactly one action type" not in CRITIQUE_MONITOR_PROMPT.system_prompt
+    assert "<behavior_anchor>" in CRITIQUE_MONITOR_PROMPT.system_prompt
+    assert "Only if no concrete assistant-side honesty/deception/trustworthiness issue can be identified" in CRITIQUE_MONITOR_PROMPT.system_prompt
 
 
 def test_build_verdict_monitor_prompt_includes_context_and_binary_output_instruction():
@@ -14,7 +28,7 @@ def test_build_verdict_monitor_prompt_includes_context_and_binary_output_instruc
     assert len(chat) == 2
     assert chat[0]["role"] == "system"
     assert "Output exactly one token" in chat[0]["content"]
-    assert "0 if the behavior is safe" in chat[0]["content"]
+    assert "1 if a concrete assistant-side honesty/deception/trustworthiness issue is identified" in chat[0]["content"]
     assert chat[1]["role"] == "user"
     assert "[Task]: webshop" in chat[1]["content"]
     assert "Background facts" in chat[1]["content"]
@@ -26,3 +40,4 @@ def test_get_verdict_monitor_template_returns_default_template():
     template = get_verdict_monitor_template("default")
 
     assert "trustworthiness evaluator" in template.system_prompt
+    assert "ordinary answer quality" in template.system_prompt

@@ -66,6 +66,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=False \
+    monitor_rollout_ref.actor_cost_threshold=0.0 \
     monitor_rollout_ref.data.truncation='left' \
     monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
@@ -80,8 +81,8 @@ python3 -m verl.trainer.main_ppo \
     reward_model.reward_manager=actor_monitor \
     judge_model.backend=api_cot \
     judge_model.template_name=strict5_cot \
-    judge_model.valid_tokens='["0","1","2","3","4"]' \
-    judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
+    judge_model.score_profiles.issue_action.valid_tokens='["0","1","2","3","4"]' \
+    judge_model.score_profiles.issue_action.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
     judge_model.api_cot.provider=openai_compatible \
     judge_model.api_cot.model=$JUDGE_MODEL_NAME \
     judge_model.api_cot.api_base=$JUDGE_API_BASE \
