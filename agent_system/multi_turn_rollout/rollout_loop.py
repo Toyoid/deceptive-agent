@@ -37,6 +37,7 @@ from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.utils.active_rollout import ActiveIndexMap
 from agent_system.self_monitor import parse_self_monitor_batch
 from agent_system.verdict_monitor import constrained_probs_to_binary_penalties
+from agent_system.confession_safe_harbor import check_confession_safe_harbor
 from agent_system.monitor_action import (
     correct_no_issue_from_probs,
     correct_no_issue_from_token,
@@ -558,7 +559,6 @@ class TrajectoryCollector:
             task_type=task_type,
             background=monitor_background,
             behavior_under_review=agent_trajectory,
-            template_name=self.config.verdict_monitor.template_name,
         )
 
         row_dict = self._process_chat_to_model_inputs(
@@ -1236,6 +1236,12 @@ class TrajectoryCollector:
             if judge_backend == "api_cot"
             else "no_issue_verification"
         )
+        confession_safe_harbor_enable = bool(
+            self.config.monitor_rollout_ref.get("confession_safe_harbor_enable", False)
+        )
+        confession_safe_harbor_reward = float(
+            self.config.monitor_rollout_ref.get("confession_safe_harbor_reward", 0.0)
+        )
 
         for item, (monitor_out, user_input, evidence, agent_trajectory, task_type) in enumerate(zip(
             monitor_output_texts, user_inputs, evidences, agent_trajs, task_types
@@ -1284,6 +1290,18 @@ class TrajectoryCollector:
                               f"({link_validation.invalid_reason}); monitor reward forced to 0.0. "
                               f"Output snippet: {monitor_out!r}")
                         continue
+                    if confession_safe_harbor_enable:
+                        confession_safe = check_confession_safe_harbor(
+                            background=evidence,
+                            user_input=user_input,
+                            agent_trajectory=agent_trajectory,
+                        )
+                        if confession_safe.is_safe:
+                            monitor_rewards[item] = confession_safe_harbor_reward
+                            print(f"[MONITOR ACTION] Sample {item}: confession safe harbor "
+                                  f"({confession_safe.reason}); monitor reward forced to "
+                                  f"{confession_safe_harbor_reward:.4f}.")
+                            continue
 
                 judge_chat = build_judge_prompt(
                     task_type=task_type,

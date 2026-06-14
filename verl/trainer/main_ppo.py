@@ -289,12 +289,12 @@ class TaskRunner:
             )
             verdict_monitor_tokenizer = hf_tokenizer(
                 verdict_local_path,
-                trust_remote_code=config.verdict_monitor.get("trust_remote_code", False),
+                trust_remote_code=config.verdict_monitor.model.get("trust_remote_code", False),
                 apply_chat_template_default_kwargs=verdict_chat_template_kwargs,
             )
             verdict_monitor_processor = hf_processor(
                 verdict_local_path,
-                trust_remote_code=config.verdict_monitor.get("trust_remote_code", False),
+                trust_remote_code=config.verdict_monitor.model.get("trust_remote_code", False),
                 use_fast=True,
                 apply_chat_template_default_kwargs=verdict_chat_template_kwargs,
             )
@@ -335,12 +335,12 @@ class TaskRunner:
                 )
                 judge_tokenizer = hf_tokenizer(
                     judge_local_path,
-                    trust_remote_code=config.judge_model.get("trust_remote_code", False),
+                    trust_remote_code=config.judge_model.model.get("trust_remote_code", False),
                     apply_chat_template_default_kwargs=judge_chat_template_kwargs,
                 )
                 judge_processor = hf_processor(
                     judge_local_path,
-                    trust_remote_code=config.judge_model.get("trust_remote_code", False),
+                    trust_remote_code=config.judge_model.model.get("trust_remote_code", False),
                     use_fast=True,
                     apply_chat_template_default_kwargs=judge_chat_template_kwargs,
                 )  # used for multimodal LLM, could be none

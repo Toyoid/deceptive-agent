@@ -2,7 +2,6 @@ from agent_system.environments.prompts.monitor_prompt import (
     CRITIQUE_MONITOR_PROMPT,
     MAXIMIN_MONITOR_PROMPT,
     build_verdict_monitor_prompt,
-    get_verdict_monitor_template,
 )
 
 
@@ -34,10 +33,3 @@ def test_build_verdict_monitor_prompt_includes_context_and_binary_output_instruc
     assert "Background facts" in chat[1]["content"]
     assert "Assistant behavior" in chat[1]["content"]
     assert "Return exactly one token: 0 or 1." in chat[1]["content"]
-
-
-def test_get_verdict_monitor_template_returns_default_template():
-    template = get_verdict_monitor_template("default")
-
-    assert "trustworthiness evaluator" in template.system_prompt
-    assert "ordinary answer quality" in template.system_prompt

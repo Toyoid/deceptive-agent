@@ -208,7 +208,6 @@ def build_verdict_monitor_prompt(
     task_type: str,
     background: str,
     behavior_under_review: str,
-    template_name: str = "default",
 ) -> List[dict]:
     return [
         {"role": "system", "content": VERDICT_MONITOR_PROMPT.system_prompt},
