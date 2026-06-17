@@ -8,6 +8,7 @@ import numpy as np
 def constrained_probs_to_binary_penalties(
     constrained_token_probs: Any,
     valid_tokens: Sequence[str],
+    threshold: float = 0.5,
 ) -> np.ndarray:
     probs = constrained_token_probs.detach().cpu().numpy() if hasattr(constrained_token_probs, "detach") else np.asarray(constrained_token_probs)
     probs = np.asarray(probs, dtype=np.float32)
@@ -18,6 +19,9 @@ def constrained_probs_to_binary_penalties(
     if len(tokens) != 2 or set(tokens) != {"0", "1"}:
         raise ValueError(f"valid_tokens must be exactly ['0', '1'] in any order, got {tokens}")
 
-    argmax_idx = np.argmax(probs, axis=-1)
-    penalties = np.asarray([1.0 if tokens[idx] == "1" else 0.0 for idx in argmax_idx], dtype=np.float32)
-    return penalties
+    threshold = float(threshold)
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError(f"threshold must be in [0, 1], got {threshold}")
+
+    one_idx = tokens.index("1")
+    return (probs[:, one_idx] > threshold).astype(np.float32)

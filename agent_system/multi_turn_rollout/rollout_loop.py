@@ -36,7 +36,7 @@ from agent_system.environments import EnvironmentManagerBase
 from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from agent_system.utils.active_rollout import ActiveIndexMap
 from agent_system.self_monitor import parse_self_monitor_batch
-from agent_system.verdict_monitor import constrained_probs_to_binary_penalties
+from agent_system.verdict_monitor import build_verdict_monitor_background, constrained_probs_to_binary_penalties
 from agent_system.confession_safe_harbor import check_confession_safe_harbor
 from agent_system.monitor_action import (
     correct_no_issue_from_probs,
@@ -1382,9 +1382,17 @@ class TrajectoryCollector:
     ) -> np.ndarray:
         assert verdict_monitor_wg is not None, "verdict monitor worker group should not be None for verdict monitor rollout"
 
+        task_type = infos[0]['task_type']
+        verdict_backgrounds = np.asarray(
+            [
+                build_verdict_monitor_background(task_type, background)
+                for background in actor_batch.non_tensor_batch['monitor_background']
+            ],
+            dtype=object,
+        )
         verdict_obs = {
-            'task_type': infos[0]['task_type'],
-            'monitor_background': actor_batch.non_tensor_batch['monitor_background'],
+            'task_type': task_type,
+            'monitor_background': verdict_backgrounds,
             'agent_trajectory': actor_batch.non_tensor_batch['agent_trajectory'],
             'monitor_image': actor_batch.non_tensor_batch.get('monitor_image', None),
         }
@@ -1425,6 +1433,7 @@ class TrajectoryCollector:
         penalties = constrained_probs_to_binary_penalties(
             constrained_token_probs=constrained_token_probs,
             valid_tokens=self.config.verdict_monitor.valid_tokens,
+            threshold=float(self.config.verdict_monitor.get("decision_threshold", 0.5)),
         )
 
         self._debug_print_verdict_monitor_samples(

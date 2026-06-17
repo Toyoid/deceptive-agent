@@ -68,7 +68,7 @@ class CheatShopMultiProcessEnv(gym.Env):
 
         self._rng = np.random.RandomState(seed)
         self._env_kwargs = env_kwargs if env_kwargs is not None else {}
-        self.task_type = "Shopping"
+        self.task_type = "cheatshop"
 
         env_worker = ray.remote(**resources_per_worker)(CheatShopWorker)
         self._workers = []

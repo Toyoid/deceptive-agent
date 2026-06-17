@@ -229,6 +229,7 @@ verdict_monitor:
   valid_tokens: ["0", "1"]
   token_weights: [0.0, 1.0]
   constrained_top_k: -1
+  decision_threshold: 0.2 # verdict with score >= threshold will be considered as positive (1)
   micro_batch_size: null
   micro_batch_size_per_gpu: 8
   use_dynamic_bsz: False

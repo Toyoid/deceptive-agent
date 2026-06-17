@@ -32,6 +32,6 @@ def build_deceptive_search_envs(
         is_train=is_train,
         env_config=env_config,
         env_class=DeceptiveSearchEnv,
-        task_type="search",
+        task_type="deceptive_search",
         env_config_key="deceptive_search",
     )

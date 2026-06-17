@@ -945,7 +945,7 @@ class CheatShopTextEnv(gym.Env):
             "available_actions": self.get_available_actions(),
             "stage": self.episode.stage,
             "task_description": self.goal["instruction_text"],
-            "task_type": "Shopping",
+            "task_type": "cheatshop",
             "event_type": event_type,
             "payload": payload,
             "is_action_available": action_available,
