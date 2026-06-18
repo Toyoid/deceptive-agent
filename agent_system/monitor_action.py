@@ -76,6 +76,9 @@ _ISSUE_RELATION_RE = re.compile(
 _WORD_COUNT_RE = re.compile(r"[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)*")
 _CITATION_ID_RE = re.compile(r"\[[0-9]+\]")
 _GROUNDING_TOKEN_RE = re.compile(r"\[[0-9]+\]|[@#]?[A-Za-z][A-Za-z0-9_:/.-]{2,}")
+_GROUNDING_TOKEN_PART_RE = re.compile(r"[A-Za-z0-9]+")
+_LOCAL_CONTEXT_SIDE_LINES = 3
+_LOCAL_CONTEXT_WINDOW_CHARS = 360
 _GROUNDING_STOPWORDS = frozenset({
     "a",
     "an",
@@ -86,6 +89,7 @@ _GROUNDING_STOPWORDS = frozenset({
     "assistant",
     "assistant-controlled",
     "assistant-side",
+    "authoriz",
     "background",
     "because",
     "behavior",
@@ -116,6 +120,8 @@ _GROUNDING_STOPWORDS = frozenset({
     "included",
     "includes",
     "including",
+    "intended",
+    "internal",
     "information",
     "into",
     "issue",
@@ -124,7 +130,11 @@ _GROUNDING_STOPWORDS = frozenset({
     "misleading",
     "not",
     "on",
+    "ordinary",
     "output",
+    "permitted",
+    "permit",
+    "permitt",
     "public",
     "question",
     "reason",
@@ -151,11 +161,16 @@ _GROUNDING_STOPWORDS = frozenset({
     "tool",
     "trustworthiness",
     "under",
+    "unauthoriz",
+    "unauthorized",
+    "authorized",
     "use",
     "used",
     "user",
     "while",
     "with",
+    "workflow",
+    "workflows",
     "workspace",
 })
 _GENERIC_ANCHORS = frozenset({
@@ -252,11 +267,23 @@ def _word_count(text: str) -> int:
     return len(_WORD_COUNT_RE.findall(text))
 
 
-def _grounding_token_key(token: str) -> str:
+def _simple_word_root(token: str) -> str:
     token = token.strip().lower()
-    if _CITATION_ID_RE.fullmatch(token):
-        return token
     token = token.strip("_:/.#@-")
+    if not token:
+        return ""
+    if token in {"analysis", "analyses"} or token.startswith("analyz"):
+        return "analyz"
+    if token.startswith("recommend"):
+        return "recommend"
+    if token.startswith("compar"):
+        return "compar"
+    if token.startswith("structur"):
+        return "structur"
+    if token.startswith("unauthoriz"):
+        return "unauthoriz"
+    if token.startswith("authoriz"):
+        return "authoriz"
     if len(token) > 5 and token.endswith("ies"):
         token = token[:-3] + "y"
     elif len(token) > 5 and token.endswith("ing"):
@@ -270,17 +297,127 @@ def _grounding_token_key(token: str) -> str:
     return token
 
 
+def _grounding_token_key(token: str) -> str:
+    token = token.strip().lower()
+    if _CITATION_ID_RE.fullmatch(token):
+        return token
+    return _simple_word_root(token)
+
+
+def _grounding_token_variants(token: str) -> set[str]:
+    """Return deterministic lexical variants without using task-specific aliases."""
+    raw = token.strip().lower()
+    if _CITATION_ID_RE.fullmatch(raw):
+        return {raw}
+
+    variants: set[str] = set()
+    key = _grounding_token_key(raw)
+    if key:
+        variants.add(key)
+
+    parts = [
+        _simple_word_root(part)
+        for part in _GROUNDING_TOKEN_PART_RE.findall(raw)
+    ]
+    parts = [part for part in parts if part]
+    variants.update(parts)
+    if len(parts) > 1:
+        variants.add("_".join(parts))
+
+    return variants
+
+
 def _grounding_tokens(text: str) -> set[str]:
     """Extract task-agnostic salient tokens for relation/anchor grounding."""
     tokens: set[str] = set()
     for match in _GROUNDING_TOKEN_RE.finditer(normalize_anchor_text(text)):
         raw = match.group(0)
-        key = _grounding_token_key(raw)
-        if not key or len(key) < 3:
+        for key in _grounding_token_variants(raw):
+            if not key or len(key) < 3:
+                continue
+            if key in _GROUNDING_STOPWORDS:
+                continue
+            tokens.add(key)
+    return tokens
+
+
+def _char_context_window(normalized_context: str, normalized_anchor: str, match_start: int) -> str:
+    match_end = match_start + len(normalized_anchor)
+    start = max(0, match_start - _LOCAL_CONTEXT_WINDOW_CHARS)
+    end = min(len(normalized_context), match_end + _LOCAL_CONTEXT_WINDOW_CHARS)
+    return normalized_context[start:end]
+
+
+def _line_context_windows(anchor: str, context: str) -> list[str]:
+    """Return small visible text windows around exact evidence-span matches."""
+    normalized_anchor = normalize_anchor_text(anchor)
+    if not normalized_anchor:
+        return []
+
+    windows: list[str] = []
+    lines = str(context or "").splitlines()
+    for idx, line in enumerate(lines):
+        normalized_line = normalize_anchor_text(line)
+        if normalized_anchor not in normalized_line:
             continue
-        if key in _GROUNDING_STOPWORDS:
-            continue
-        tokens.add(key)
+
+        start = idx
+        backward = 0
+        while start > 0 and backward < _LOCAL_CONTEXT_SIDE_LINES:
+            if not lines[start - 1].strip():
+                break
+            start -= 1
+            backward += 1
+
+        end = idx
+        forward = 0
+        while end + 1 < len(lines) and forward < _LOCAL_CONTEXT_SIDE_LINES:
+            if not lines[end + 1].strip():
+                break
+            end += 1
+            forward += 1
+
+        window = "\n".join(lines[start:end + 1])
+        normalized_window = normalize_anchor_text(window)
+        if len(normalized_window) > (2 * _LOCAL_CONTEXT_WINDOW_CHARS + len(normalized_anchor)):
+            match_start = normalized_window.find(normalized_anchor)
+            if match_start >= 0:
+                normalized_window = _char_context_window(
+                    normalized_context=normalized_window,
+                    normalized_anchor=normalized_anchor,
+                    match_start=match_start,
+                )
+        windows.append(normalized_window)
+
+    if windows:
+        return windows
+
+    normalized_context = normalize_anchor_text(context)
+    search_from = 0
+    while True:
+        match_start = normalized_context.find(normalized_anchor, search_from)
+        if match_start < 0:
+            break
+        windows.append(
+            _char_context_window(
+                normalized_context=normalized_context,
+                normalized_anchor=normalized_anchor,
+                match_start=match_start,
+            )
+        )
+        search_from = match_start + max(1, len(normalized_anchor))
+    return windows
+
+
+def _expanded_evidence_context_tokens(
+    evidence_segments: Sequence[str],
+    *contexts: str,
+) -> set[str]:
+    tokens: set[str] = set()
+    for segment in evidence_segments:
+        for context in contexts:
+            for window in _line_context_windows(segment, context):
+                tokens.update(_grounding_tokens(window))
     return tokens
 
 
@@ -331,12 +468,14 @@ def validate_issue_anchors(
 
 def validate_behavior_evidence_link(
     parsed: MonitorActionParseResult,
+    behavior_under_review: str = "",
+    background: str = "",
 ) -> AnchorValidationResult:
     """Check that behavior and evidence anchors refer to a shared concrete object.
 
-    This deliberately avoids a fixed list of pre-defined tool/action markers. It
-    only requires a concrete, non-boilerplate token bridge between the monitor's
-    quoted behavior and quoted evidence.
+    This deliberately avoids fixed task-specific aliases. It first checks for a
+    direct concrete token bridge, then falls back to small local context windows
+    around the quoted evidence spans in the visible background/behavior text.
     """
     if parsed.action_type != "issue":
         return AnchorValidationResult(True)
@@ -349,10 +488,16 @@ def validate_behavior_evidence_link(
 
     if not behavior_tokens:
         return AnchorValidationResult(False, "behavior_anchor_no_link_terms")
-    if not evidence_tokens:
+    expanded_evidence_tokens = _expanded_evidence_context_tokens(
+        evidence_segments,
+        background,
+        behavior_under_review,
+    )
+    if not evidence_tokens and not expanded_evidence_tokens:
         return AnchorValidationResult(False, "evidence_anchor_no_link_terms")
     if not (behavior_tokens & evidence_tokens):
-        return AnchorValidationResult(False, "unlinked_behavior_and_evidence_anchors")
+        if not (behavior_tokens & expanded_evidence_tokens):
+            return AnchorValidationResult(False, "unlinked_behavior_and_evidence_anchors")
     return AnchorValidationResult(True)
 
 
