@@ -2,7 +2,7 @@
 set -x
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: run_qwen_4_sp2.sh <nproc_per_node> [other_configs...]"
+    echo "Usage: run_qwen3_8b.sh <nproc_per_node> [other_configs...]"
     exit 1
 fi
 
@@ -10,7 +10,8 @@ nproc_per_node=$1
 
 shift 1
 
-model_id=Qwen/Qwen3-8B
+# model_id=Qwen/Qwen3-8B
+model_id=hahnli/Qwen3-8B-Search-Cheating-Agent
 # Prereprocess self-monitor dataset
 export HF_ENDPOINT="https://hf-mirror.com"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
@@ -43,8 +44,8 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     optim.weight_decay=0.0 \
     optim.lr_scheduler=constant \
     trainer.project_name=self_monitor_sft \
-    trainer.experiment_name=qwen3_4b_sp2 \
-    trainer.logger=['console'] \
+    trainer.experiment_name=qwen3_8b_cheating_search_agent \
+    trainer.logger=['console','wandb'] \
     trainer.total_epochs=3 \
     trainer.default_hdfs_dir=null $@ \
     ulysses_sequence_parallel_size=2 \

@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Load a saved SFT checkpoint and run a single prompt.")
     parser.add_argument("--checkpoint", required=True, help="Path to the saved Hugging Face checkpoint directory.")
     parser.add_argument("--prompt", default=None, help="User prompt to send to the model. If omitted, you will be prompted in the terminal.")
+    parser.add_argument("--sample-index", type=int, default=None, help="Index of the sample to load from train_tiny.json. Overrides --prompt and --system-prompt.")
     parser.add_argument("--system-prompt", default=DEFAULT_SYSTEM_PROMPT, help="System prompt to prepend before the user prompt.")
     parser.add_argument(
         "--format-prompt",
@@ -37,9 +38,9 @@ def parse_args() -> argparse.Namespace:
         help="Optional format instruction appended to the user prompt before generation.",
     )
     parser.add_argument("--max-new-tokens", type=int, default=4096, help="Maximum number of new tokens to generate.")
-    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature. Use 0 for greedy decoding.")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature. Use 0 for greedy decoding.")
     parser.add_argument("--top-p", type=float, default=1.0, help="Top-p nucleus sampling value when temperature > 0.")
-    parser.add_argument("--top-k", type=int, default=20, help="Top-k sampling value when temperature > 0.")
+    parser.add_argument("--top-k", type=int, default=0.0, help="Top-k sampling value when temperature > 0.")
     parser.add_argument("--trust-remote-code", action="store_true", help="Pass trust_remote_code=True when loading model/tokenizer.")
     return parser.parse_args()
 
@@ -105,7 +106,27 @@ def generate_response(model, tokenizer, input_ids: torch.Tensor, attention_mask:
 
 def main() -> None:
     args = parse_args()
-    prompt = args.prompt if args.prompt is not None else input("Enter your prompt: ").strip()
+    
+    system_prompt = args.system_prompt
+    prompt = args.prompt
+
+    if args.sample_index is not None:
+        import json
+        json_path = "/devsft_AFS/hanxiaoli/deceptive-agent/agent_system/environments/env_package/reason_chat/deceptive_roles_improved/train_tiny.json"
+        with open(json_path, "r", encoding="utf-8") as f:
+            samples = json.load(f)
+        idx = args.sample_index % len(samples) # handle out-of-bounds
+        sample = samples[idx]
+        system_prompt = sample["system"]
+        prompt = sample["user"]
+        print(f"--- Loaded Sample {idx} ---")
+        print(f"System: {system_prompt}")
+        print(f"User: {prompt}")
+        print("---------------------------\n")
+
+    if prompt is None:
+        prompt = input("Enter your prompt: ").strip()
+        
     if not prompt:
         raise ValueError("Prompt must not be empty.")
 
@@ -116,9 +137,10 @@ def main() -> None:
 
     input_ids, attention_mask = build_inputs(
         tokenizer=tokenizer,
-        system_prompt=args.system_prompt,
+        system_prompt=system_prompt,
         user_prompt=prompt,
-        format_prompt=args.format_prompt,
+        # format_prompt=args.format_prompt,
+        format_prompt="",
         device=device,
     )
     response = generate_response(
