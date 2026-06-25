@@ -606,6 +606,8 @@ trainer:
   log_val_generations: 0
   rollout_data_dir: null # whether and where to dump rollout data during training, null=disabled, "auto"=${hydra:run.dir}/rollout_data, or explicit path
   validation_data_dir: null # whether and where to dump rollout data during validation, null=disabled, "auto"=${hydra:run.dir}/validation_data, or explicit path
+  grm_judge_data_dir: null # null=disabled, "auto"=${hydra:run.dir}/grm_judge_data, or explicit path for per-step dumped judge samples
+  grm_judge_data_freq: 20 # dump GRM judge samples at step 1 and every N training steps when grm_judge_data_dir is set
   nnodes: 1
   n_gpus_per_node: 4
   nnodes_monitor: 1

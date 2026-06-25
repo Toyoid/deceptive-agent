@@ -1874,6 +1874,7 @@ class RayPPOTrainer:
 
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
+                is_last_step = self.global_steps >= self.total_training_steps
                 metrics = {}
                 timing_raw = {}
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
@@ -1894,9 +1895,6 @@ class RayPPOTrainer:
                     non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
                 )
 
-                is_last_step = self.global_steps >= self.total_training_steps
-                # is_last_step = self.global_steps >= 350  # NOTE: for quick test, remove this in real training
-
                 with _timer("step", timing_raw):
                     # generate a batch
                     with _timer("gen", timing_raw):
@@ -1909,6 +1907,7 @@ class RayPPOTrainer:
                             envs=self.envs,
                             is_train=True,
                             judge_wg=self.judge_wg if self.use_judge else None,
+                            global_step=self.global_steps,
                         )
 
                         gen_batch_output = output_batch_dict["actor"]
@@ -1966,7 +1965,7 @@ class RayPPOTrainer:
                     #                Batch Preprocessing
                     # ==================================================
                     batch = adjust_batch(
-                        config=self.config, 
+                        config=self.config,
                         data=batch,
                         world_size=self.config.trainer.n_gpus_per_node * self.config.trainer.nnodes
                     )
@@ -2097,7 +2096,7 @@ class RayPPOTrainer:
                         if reward_extra_infos_dict:
                             batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
 
-                        # compute rewards. apply_invalid_action_penalty if available
+                        # apply_invalid_action_penalty if available
                         if self.config.actor_rollout_ref.actor.get('use_invalid_action_penalty', True):
                             batch, invalid_metrics = apply_invalid_action_penalty(
                                 batch,
@@ -2105,7 +2104,7 @@ class RayPPOTrainer:
                             )
                             metrics.update(invalid_metrics)
 
-                        # compute rewards. apply_kl_penalty if available
+                        # apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:
                             batch, kl_metrics = apply_kl_penalty(batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty)
                             metrics.update(kl_metrics)

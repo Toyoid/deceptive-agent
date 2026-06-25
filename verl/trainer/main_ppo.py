@@ -38,6 +38,8 @@ def main(config):
         config.trainer.rollout_data_dir = os.path.join(HydraConfig.get().run.dir, "rollout_data")
     if config.trainer.validation_data_dir == "auto":
         config.trainer.validation_data_dir = os.path.join(HydraConfig.get().run.dir, "validation_data")
+    if config.trainer.get("grm_judge_data_dir", None) == "auto":
+        config.trainer.grm_judge_data_dir = os.path.join(HydraConfig.get().run.dir, "grm_judge_data")
 
     run_ppo(config)
 
@@ -79,7 +81,7 @@ class TaskRunner:
         trust_remote_code = config.data.get("trust_remote_code", False)
         actor_chat_template_kwargs = config.actor_rollout_ref.model.get(
             "chat_template_kwargs",
-            {"enable_thinking": False},
+            None,
         )
         tokenizer = hf_tokenizer(
             local_path,
@@ -243,7 +245,7 @@ class TaskRunner:
             monitor_local_path = copy_to_local(config.monitor_rollout_ref.model.path, use_shm=config.monitor_rollout_ref.model.get("use_shm", False))
             monitor_chat_template_kwargs = config.monitor_rollout_ref.model.get(
                 "chat_template_kwargs",
-                {"enable_thinking": False},
+                None,
             )
             monitor_tokenizer = hf_tokenizer(
                 monitor_local_path,
@@ -285,7 +287,7 @@ class TaskRunner:
             verdict_local_path = copy_to_local(config.verdict_monitor.model.path, use_shm=config.verdict_monitor.model.get("use_shm", False))
             verdict_chat_template_kwargs = config.verdict_monitor.model.get(
                 "chat_template_kwargs",
-                {"enable_thinking": False},
+                None,
             )
             verdict_monitor_tokenizer = hf_tokenizer(
                 verdict_local_path,
@@ -331,7 +333,7 @@ class TaskRunner:
                 judge_local_path = copy_to_local(config.judge_model.model.path, use_shm=config.judge_model.model.get("use_shm", False))
                 judge_chat_template_kwargs = config.judge_model.model.get(
                     "chat_template_kwargs",
-                    {"enable_thinking": False},
+                    None,
                 )
                 judge_tokenizer = hf_tokenizer(
                     judge_local_path,

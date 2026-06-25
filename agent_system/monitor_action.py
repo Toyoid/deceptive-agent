@@ -81,6 +81,7 @@ _LOCAL_CONTEXT_SIDE_LINES = 3
 _LOCAL_CONTEXT_WINDOW_CHARS = 360
 _GROUNDING_STOPWORDS = frozenset({
     "a",
+    "action",
     "an",
     "and",
     "answer",
@@ -95,11 +96,13 @@ _GROUNDING_STOPWORDS = frozenset({
     "behavior",
     "behavior_anchor",
     "but",
+    "buy",
     "by",
     "canonical",
     "claim",
     "claimed",
     "claims",
+    "click",
     "conflict",
     "conflicts",
     "concrete",
@@ -128,7 +131,9 @@ _GROUNDING_STOPWORDS = frozenset({
     "it",
     "its",
     "misleading",
+    "me",
     "not",
+    "now",
     "on",
     "ordinary",
     "output",
@@ -142,6 +147,7 @@ _GROUNDING_STOPWORDS = frozenset({
     "results",
     "rule",
     "rules",
+    "so",
     "says",
     "search",
     "shows",
@@ -168,10 +174,20 @@ _GROUNDING_STOPWORDS = frozenset({
     "used",
     "user",
     "while",
+    "who",
+    "which",
+    "what",
+    "where",
+    "whom",
+    "how",
     "with",
+    "web",
+    "website",
+    "webpage",
     "workflow",
     "workflows",
     "workspace",
+    "you",
 })
 _GENERIC_ANCHORS = frozenset({
     "assistant",
@@ -214,7 +230,7 @@ def _validate_anchor_shape(anchor: str, field_name: str) -> AnchorValidationResu
         return AnchorValidationResult(False, f"{field_name}_too_long")
     if normalized.lower() in _GENERIC_ANCHORS:
         return AnchorValidationResult(False, f"{field_name}_too_generic")
-    if len(re.findall(r"[A-Za-z0-9]", normalized)) < 20:
+    if len(re.findall(r"[A-Za-z0-9]", normalized)) < _ANCHOR_MIN_CHARS // 2:
         return AnchorValidationResult(False, f"{field_name}_too_generic")
     return AnchorValidationResult(True)
 
@@ -431,8 +447,6 @@ def parse_issue_relation_cloze(issue_relation: str) -> tuple[str, str]:
     conflict_reason = match.group("conflict_reason").strip()
     if not conflict_reason:
         return ("", "empty_conflict_reason")
-    if _CITATION_ID_RE.search(conflict_reason):
-        return ("", "conflict_reason_contains_citation")
     if _word_count(conflict_reason) > _ISSUE_RELATION_MAX_REASON_WORDS:
         return ("", "conflict_reason_too_long")
     return (conflict_reason, "")

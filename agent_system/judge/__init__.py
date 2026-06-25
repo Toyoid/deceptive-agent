@@ -15,8 +15,10 @@
 """Judge scoring backends."""
 
 from .api_cot_scorer import ApiCotJudgeScoreResult, ApiCotJudgeScorer
+from .score_parsing import parse_score_token
 
 __all__ = [
     "ApiCotJudgeScoreResult",
     "ApiCotJudgeScorer",
+    "parse_score_token",
 ]

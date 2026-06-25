@@ -3,6 +3,7 @@ CPU-only tests for anchored monitor-action judge scoring.
 """
 
 import importlib.util
+import json
 from typing import List, Optional
 from unittest.mock import MagicMock
 
@@ -110,6 +111,7 @@ def _make_config(template_name: str = "strict5", backend: str = "constrained_log
         "parse_error": "neutral",
         "api_error": "neutral",
     }
+    cfg.trainer.get.side_effect = lambda key, default=None: default
 
     def _judge_model_get(key, default=None):
         values = {
@@ -534,6 +536,64 @@ def test_mixed_actions_batch_queues_only_valid_actions():
     assert tokens.tolist() == ["1", "", "4"]
     assert stats == {"parse_error_count": 0, "total_count": 2}
     assert judge_wg._call_count == 2
+
+
+def test_grm_judge_sample_dump_contains_only_judged_rows(tmp_path):
+    collector = _make_collector(["<critique>bad</critique>", VALID_ISSUE])
+    collector.config.trainer = MagicMock()
+    collector.config.trainer.get.side_effect = lambda key, default=None: {
+        "grm_judge_data_dir": str(tmp_path),
+    }.get(key, default)
+    judge_wg = MockJudgeWG(["4", "4"])
+
+    collector._compute_judge_scores(
+        monitor_batch=_make_monitor_batch(2),
+        obs=_make_obs(2),
+        judge_wg=judge_wg,
+        global_step=1,
+    )
+
+    output_path = tmp_path / "1.jsonl"
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert set(rows[0].keys()) == {"prompt", "valid_tokens", "judge_pred_token", "label"}
+    assert rows[0]["valid_tokens"] == ["0", "1", "2", "3", "4"]
+    assert rows[0]["judge_pred_token"] == "4"
+    assert rows[0]["label"] is None
+    assert "score_profile_name" not in rows[0]
+    assert "global_step" not in rows[0]
+    assert rows[0]["prompt"][0]["role"] == "system"
+
+
+def test_grm_judge_sample_dump_respects_frequency(tmp_path):
+    collector = _make_collector([VALID_ISSUE])
+    collector.config.trainer = MagicMock()
+    collector.config.trainer.get.side_effect = lambda key, default=None: {
+        "grm_judge_data_dir": str(tmp_path),
+        "grm_judge_data_freq": 5,
+    }.get(key, default)
+    judge_wg = MockJudgeWG(["4", "4"])
+
+    collector._compute_judge_scores(
+        monitor_batch=_make_monitor_batch(1),
+        obs=_make_obs(1),
+        judge_wg=judge_wg,
+        global_step=3,
+    )
+
+    assert not (tmp_path / "3.jsonl").exists()
+
+    collector._compute_judge_scores(
+        monitor_batch=_make_monitor_batch(1),
+        obs=_make_obs(1),
+        judge_wg=judge_wg,
+        global_step=5,
+    )
+
+    output_path = tmp_path / "5.jsonl"
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["judge_pred_token"] == "4"
 
 
 def test_api_cot_parse_error_falls_back_to_neutral_monitor_reward():

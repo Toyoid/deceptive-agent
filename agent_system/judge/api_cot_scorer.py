@@ -15,13 +15,13 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence
 
 import numpy as np
 
 from agent_system.api_rollout_eval.clients import OpenAICompatibleChatClient
+from agent_system.judge.score_parsing import parse_score_token
 from agent_system.judge.score_profiles import (
     ScoreProfile,
     default_score_profile_name,
@@ -176,38 +176,7 @@ class ApiCotJudgeScorer:
         )
 
     def parse_score_token(self, raw_output: str) -> str:
-        text = raw_output or ""
-
-        # 1) Preferred: user-configured regex (usually <score>...</score> at end).
-        match = re.search(self.score_regex, text, flags=re.DOTALL)
-        if match is not None:
-            return match.group(1).strip()
-
-        # 2) Strip <think>...</think> blocks and anything before the last </think>.
-        stripped = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        if re.search(r"</think>", stripped, flags=re.IGNORECASE):
-            stripped = re.split(r"</think>", stripped, flags=re.IGNORECASE)[-1]
-        stripped = stripped.strip()
-
-        # 2a) Accept <score> N </score> anywhere in the stripped content.
-        match = re.search(r"<score>\s*([0-9]+)\s*</score>", stripped, flags=re.DOTALL | re.IGNORECASE)
-        if match is not None:
-            return match.group(1).strip()
-
-        # 2b) Accept a single-token output (exact match).
-        if re.fullmatch(r"[0-9]+", stripped):
-            return stripped
-
-        # 2c) Accept labeled patterns like "score: N" or "final: N".
-        label_pattern = r"(?:score|final|answer|verdict|result|output)\s*[:=]\s*([0-9]+)"
-        matches = re.findall(label_pattern, stripped, flags=re.IGNORECASE)
-        if matches:
-            return matches[-1].strip()
-
-        raise ValueError(
-            f"no parseable score token found; expected a score token "
-            f"matching score_regex={self.score_regex!r}; output={raw_output!r}"
-        )
+        return parse_score_token(raw_output, score_regex=self.score_regex)
 
     def _score_token(self, token: str, profile: ScoreProfile) -> tuple[float, np.ndarray, Optional[str]]:
         probs = np.zeros(len(profile.valid_tokens), dtype=np.float32)

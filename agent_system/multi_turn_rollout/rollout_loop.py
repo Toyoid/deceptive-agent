@@ -38,6 +38,8 @@ from agent_system.utils.active_rollout import ActiveIndexMap
 from agent_system.self_monitor import parse_self_monitor_batch
 from agent_system.verdict_monitor import build_verdict_monitor_background, constrained_probs_to_binary_penalties
 from agent_system.confession_safe_harbor import check_confession_safe_harbor
+from agent_system.grm.io import append_judge_samples
+from agent_system.grm.schema import GrmJudgeSample
 from agent_system.monitor_action import (
     correct_no_issue_from_probs,
     correct_no_issue_from_token,
@@ -120,6 +122,18 @@ class TrajectoryCollector:
         from agent_system.judge.score_profiles import load_score_profiles
 
         return load_score_profiles(self.config.judge_model)
+
+    def _should_dump_grm_judge_data(self, global_step: Optional[int]) -> bool:
+        if not self.config.trainer.get("grm_judge_data_dir", None):
+            return False
+        if global_step is None:
+            return False
+        if not self.config.monitor_rollout_ref.enable_train_monitor:
+            return False
+        dump_freq = int(self.config.trainer.get("grm_judge_data_freq", 20))
+        if dump_freq <= 0:
+            return False
+        return global_step == 1 or global_step % dump_freq == 0
 
     @staticmethod
     def _group_judge_requests_by_profile(
@@ -714,6 +728,7 @@ class TrajectoryCollector:
         envs: EnvironmentManagerBase,
         rollout_n: int,
         monitor_rollout_n: int,
+        global_step: Optional[int] = None,
     ) -> Tuple[Dict, DataProto | None]:
         """
         Collects trajectories through parallel agent-environment agent_loop.
@@ -936,6 +951,7 @@ class TrajectoryCollector:
                 infos=infos,
                 judge_wg=judge_wg,
                 monitor_rollout_n=monitor_rollout_n,
+                global_step=global_step,
             )
         # in case we should enable monitor rollout but also need one pure actor rollout, we set monitor_wg as None
         elif self.config.monitor_rollout_ref.enable and monitor_wg is None:
@@ -978,6 +994,7 @@ class TrajectoryCollector:
         infos: List[Dict],
         judge_wg,
         monitor_rollout_n: int,
+        global_step: Optional[int] = None,
     ) -> DataProto:
         assert monitor_wg is not None, "monitor worker group should not be None for monitor rollout"
         assert self.config.monitor_rollout_ref.rollout.n > 0, "monitor rollout n should be greater than 0"
@@ -1070,6 +1087,7 @@ class TrajectoryCollector:
                 monitor_batch=batch,
                 obs=judge_obs,
                 judge_wg=judge_wg,
+                global_step=global_step,
             )
         else:
             raise RuntimeError("Judge model is not enabled, cannot compute trust_penalties. Please set `judge_model.enable` as True when using monitor rollout")
@@ -1199,6 +1217,7 @@ class TrajectoryCollector:
         monitor_batch: DataProto,
         obs: Dict,
         judge_wg,
+        global_step: Optional[int] = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, int]]:
         """Compute monitor rewards from anchored monitor actions and judge labels."""
         from agent_system.environments.prompts.judge_prompt import build_judge_prompt
@@ -1211,6 +1230,8 @@ class TrajectoryCollector:
         assert len(user_inputs) == batch_size, "Mismatch in user_inputs and monitor batch size"
         assert len(evidences) == batch_size, "Mismatch in evidences and monitor batch size"
         assert len(agent_trajs) == batch_size, "Mismatch in agent_trajectories and monitor batch size"
+        grm_dir = self.config.trainer.get("grm_judge_data_dir", None)
+        should_dump_grm_data = self._should_dump_grm_judge_data(global_step)
 
         monitor_output_texts = self.monitor_tokenizer.batch_decode(
             monitor_batch.batch['responses'], skip_special_tokens=True
@@ -1359,12 +1380,25 @@ class TrajectoryCollector:
                 assert len(judge_result.correct_no_issue) == len(profile_requests), (
                     f"Mismatch: {len(judge_result.correct_no_issue)} no-issue correctness rows vs {len(profile_requests)} judge requests"
                 )
+                grm_samples = []
+                profile = resolve_score_profile(self._judge_score_profiles(), score_profile_name)
+                valid_tokens = list(profile.valid_tokens)
                 for judge_idx, request in enumerate(profile_requests):
                     token = judge_result.score_tokens[judge_idx]
                     judge_score_tokens[request.sample_idx] = "" if token is None else str(token)
                     monitor_rewards[request.sample_idx] = float(judge_result.scores[judge_idx])
                     if request.action_type == "no_issue":
                         correct_no_issue[request.sample_idx] = judge_result.correct_no_issue[judge_idx]
+                    if should_dump_grm_data:
+                        grm_samples.append(GrmJudgeSample(
+                            prompt=request.prompt,
+                            valid_tokens=valid_tokens,
+                            judge_pred_token=None if token is None else str(token),
+                            label=None,
+                        ))
+                if grm_samples:
+                    dumped = append_judge_samples(grm_dir, grm_samples, step=global_step)
+                    print(f"[GRM DATA] Dumped {dumped} judge samples to {grm_dir} at step {global_step}")
         else:
             print("[MONITOR ACTION] All monitor outputs were invalid; no judge inference performed.")
 
@@ -1547,6 +1581,7 @@ class TrajectoryCollector:
         judge_wg,
         envs: EnvironmentManagerBase,
         is_train: bool = True,
+        global_step: Optional[int] = None,
     ) -> DataProto:
         """
         Select and run the appropriate rollout loop (dynamic or vanilla).
@@ -1582,6 +1617,7 @@ class TrajectoryCollector:
                 envs=envs,
                 rollout_n=rollout_n,
                 monitor_rollout_n=monitor_rollout_n,
+                global_step=global_step,
             )
             actor_batch_dict = {
                 "total_batch_list": total_batch_list,
@@ -1605,6 +1641,7 @@ class TrajectoryCollector:
                 envs=envs,
                 rollout_n=rollout_n,
                 monitor_rollout_n=monitor_rollout_n,
+                global_step=global_step
             )
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['episode_rewards'])
         assert len(actor_batch_dict['total_batch_list']) == len(actor_batch_dict['episode_lengths'])

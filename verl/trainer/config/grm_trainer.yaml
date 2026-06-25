@@ -1,0 +1,78 @@
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  train_files: null
+  val_files: null
+  prompt_key: prompt
+  max_prompt_length: 4096
+  max_response_length: 768
+  train_batch_size: 32
+  val_batch_size: null
+  return_raw_chat: True
+  shuffle: True
+  filter_overlong_prompts: True
+  truncation: error
+  dataloader_num_workers: 8
+
+actor_rollout_ref:
+  actor:
+    use_invalid_action_penalty: False
+    ppo_mini_batch_size: 32
+    ppo_micro_batch_size_per_gpu: 1
+    use_kl_loss: False
+  ref:
+    log_prob_micro_batch_size_per_gpu: 1
+  rollout:
+    response_length: ${data.max_response_length}
+    n: 4
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+    do_sample: True
+    log_prob_micro_batch_size_per_gpu: 1
+    val_kwargs:
+      n: 1
+      do_sample: False
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+    multi_turn:
+      enable: False
+
+reward_model:
+  enable: False
+
+algorithm:
+  adv_estimator: grpo
+  gamma: 1.0
+  lam: 1.0
+  norm_adv_by_std_in_grpo: True
+  use_kl_in_reward: False
+  use_pf_ppo: False
+  lagrangian:
+    enable: False
+
+grm:
+  reward:
+    invalid_reward: -0.1
+    exact_reward: 1.0
+    same_direction_adjacent_reward: 0.0
+    wrong_valid_reward: -1.0
+    score_regex: '<score>\s*([0-4])\s*</score>\s*$'
+
+trainer:
+  project_name: grm_judge
+  experiment_name: grm_rlft
+  total_epochs: 1
+  total_training_steps: null
+  test_freq: 50
+  val_before_train: True
+  val_only: False
+  log_val_generations: 0
+  critic_warmup: 0
+  save_freq: -1
+  logger: ['console']
+  balance_batch: True
+  default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
