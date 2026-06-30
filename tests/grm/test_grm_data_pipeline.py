@@ -6,6 +6,7 @@ from agent_system.grm.build_dataset import _split_rows, _validate_rows, _write_p
 from agent_system.grm.io import judge_samples_path
 from agent_system.grm.label_judge_samples import _first_unreviewed, _format_prompt
 from agent_system.grm.prelabel import prelabel_sample
+from agent_system.grm.subsample_judge_samples import _default_output_path, select_one_per_group
 
 
 def _prompt(background: str, behavior: str, critique: str = "<no_issue/>"):
@@ -137,3 +138,16 @@ def test_manual_label_prompt_formatter_skips_system_messages():
 def test_judge_samples_path_supports_per_step_files(tmp_path):
     assert judge_samples_path(tmp_path).name == "judge_samples.jsonl"
     assert judge_samples_path(tmp_path, step=7).name == "7.jsonl"
+
+
+def test_subsample_judge_samples_keeps_one_per_group():
+    rows = [{"idx": idx} for idx in range(18)]
+
+    assert [row["idx"] for row in select_one_per_group(rows, group_size=8)] == [0, 8, 16]
+    assert [row["idx"] for row in select_one_per_group(rows, group_size=8, offset=3)] == [3, 11]
+
+
+def test_subsample_default_output_path(tmp_path):
+    path = tmp_path / "5.jsonl"
+
+    assert _default_output_path(path, group_size=8, offset=0).name == "5.1of8.offset0.jsonl"
