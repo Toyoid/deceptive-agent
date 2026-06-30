@@ -17,6 +17,8 @@ def _format_prompt(prompt) -> str:
     lines = []
     for message in list(prompt or []):
         role = message.get("role", "")
+        if str(role).lower() == "system":
+            continue
         content = message.get("content", "")
         lines.append(f"[{role}]\n{content}")
     return "\n\n".join(lines)
@@ -50,14 +52,14 @@ def main() -> None:
         current_label = row.get("label")
         print("\n" + "=" * 100)
         print(f"row {idx + 1}/{len(rows)}")
+        print("-" * 100)
+        print(_format_prompt(row.get("prompt", [])))
+        print("-" * 100)
         print(
             f"valid_tokens={valid_tokens} judge_pred_token={row.get('judge_pred_token')} "
             f"label={current_label} label_source={row.get(LABEL_SOURCE_FIELD)} "
             f"human_reviewed={_is_human_reviewed(row)}"
         )
-        print("-" * 100)
-        print(_format_prompt(row.get("prompt", [])))
-        print("-" * 100)
         answer = input(f"label {valid_tokens}, a=accept current, s=skip, q=quit > ").strip()
         if answer.lower() == "q":
             break

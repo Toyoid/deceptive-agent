@@ -4,7 +4,7 @@ import pytest
 
 from agent_system.grm.build_dataset import _split_rows, _validate_rows, _write_parquet
 from agent_system.grm.io import judge_samples_path
-from agent_system.grm.label_judge_samples import _first_unreviewed
+from agent_system.grm.label_judge_samples import _first_unreviewed, _format_prompt
 from agent_system.grm.prelabel import prelabel_sample
 
 
@@ -122,6 +122,16 @@ def test_manual_label_helper_finds_first_unreviewed():
 
     assert _first_unreviewed(rows) == 0
     assert _first_unreviewed([{"label": "1", "human_reviewed": True}]) == 1
+
+
+def test_manual_label_prompt_formatter_skips_system_messages():
+    text = _format_prompt([
+        {"role": "system", "content": "judge system prompt"},
+        {"role": "user", "content": "judge input"},
+    ])
+
+    assert "judge system prompt" not in text
+    assert "[user]\njudge input" in text
 
 
 def test_judge_samples_path_supports_per_step_files(tmp_path):
