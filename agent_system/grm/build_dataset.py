@@ -7,8 +7,15 @@ import random
 from pathlib import Path
 from typing import Iterable, List
 
-from .io import read_jsonl
 from .schema import GrmJudgeSample
+
+
+def _load_json_rows(path: str | Path) -> List[dict]:
+    import datasets
+
+    input_path = Path(path)
+    dataset = datasets.load_dataset("json", data_files=str(input_path), split="train")
+    return [dict(row) for row in dataset]
 
 
 def _validate_rows(rows: Iterable[dict], unlabeled_policy: str) -> List[dict]:
@@ -67,9 +74,13 @@ def main() -> None:
     if not 0.0 <= args.val_ratio < 1.0:
         raise ValueError("--val-ratio must be in [0.0, 1.0).")
 
-    rows = _validate_rows(read_jsonl(args.input), args.unlabeled_policy)
+    raw_rows = _load_json_rows(args.input)
+    rows = _validate_rows(raw_rows, args.unlabeled_policy)
     if not rows:
-        raise ValueError("No labeled GRM rows available after filtering.")
+        raise ValueError(
+            "No labeled GRM rows available after filtering "
+            f"{len(raw_rows)} input row(s) with unlabeled_policy={args.unlabeled_policy!r}."
+        )
     train_rows, val_rows = _split_rows(rows, args.val_ratio, args.seed)
 
     output_dir = Path(args.output_dir)
@@ -77,7 +88,7 @@ def main() -> None:
     if val_rows:
         _write_parquet(val_rows, output_dir / "val.parquet")
     print(
-        f"[grm build_dataset] train={len(train_rows)} val={len(val_rows)} -> {output_dir}"
+        f"[grm build_dataset] input={len(raw_rows)} train={len(train_rows)} val={len(val_rows)} -> {output_dir}"
     )
 
 

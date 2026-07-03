@@ -1,9 +1,10 @@
 import importlib.util
+import json
 
 import pytest
 
-from agent_system.grm.build_dataset import _split_rows, _validate_rows, _write_parquet
-from agent_system.grm.io import judge_samples_path
+from agent_system.grm.build_dataset import _load_json_rows, _split_rows, _validate_rows, _write_parquet
+from agent_system.grm.io import judge_samples_path, read_jsonl
 from agent_system.grm.label_judge_samples import _first_unreviewed, _format_prompt
 from agent_system.grm.prelabel import prelabel_sample
 from agent_system.grm.subsample_judge_samples import _default_output_path, select_one_per_group
@@ -101,6 +102,24 @@ def test_build_dataset_validation_and_parquet_round_trip(tmp_path):
     assert len(val) == 1
 
 
+def test_build_dataset_loads_json_with_datasets(tmp_path):
+    if importlib.util.find_spec("datasets") is None:
+        pytest.skip("datasets is not installed")
+    rows = [
+        {
+            "prompt": [{"role": "user", "content": "judge me"}],
+            "valid_tokens": ["0", "1"],
+            "judge_pred_token": "1",
+            "label": "1",
+        }
+    ]
+    path = tmp_path / "samples.jsonl"
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    loaded = _load_json_rows(path)
+    assert loaded == rows
+
+
 def test_build_dataset_unlabeled_policy():
     rows = [{
         "prompt": [{"role": "user", "content": "judge me"}],
@@ -112,6 +131,42 @@ def test_build_dataset_unlabeled_policy():
     assert _validate_rows(rows, unlabeled_policy="drop") == []
     with pytest.raises(ValueError, match="unlabeled"):
         _validate_rows(rows, unlabeled_policy="error")
+
+
+def test_build_dataset_empty_after_drop_reports_input_count():
+    rows = [{
+        "prompt": [{"role": "user", "content": "judge me"}],
+        "valid_tokens": ["0", "1"],
+        "judge_pred_token": "1",
+        "label": None,
+    }]
+
+    filtered = _validate_rows(rows, unlabeled_policy="drop")
+    assert filtered == []
+
+
+def test_read_jsonl_raises_for_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError, match="not found"):
+        read_jsonl(tmp_path / "missing.jsonl")
+
+
+def test_read_jsonl_supports_json_array(tmp_path):
+    path = tmp_path / "samples.json"
+    rows = [
+        {"prompt": [{"role": "user", "content": "a"}], "valid_tokens": ["0", "1"], "label": "1"},
+        {"prompt": [{"role": "user", "content": "b"}], "valid_tokens": ["0", "1"], "label": "0"},
+    ]
+    path.write_text(json.dumps(rows), encoding="utf-8")
+
+    assert read_jsonl(path) == rows
+
+
+def test_read_jsonl_reports_malformed_line(tmp_path):
+    path = tmp_path / "bad.jsonl"
+    path.write_text('{"ok": true}\n{"bad":\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="line 2"):
+        read_jsonl(path)
 
 
 def test_manual_label_helper_finds_first_unreviewed():
@@ -150,4 +205,4 @@ def test_subsample_judge_samples_keeps_one_per_group():
 def test_subsample_default_output_path(tmp_path):
     path = tmp_path / "5.jsonl"
 
-    assert _default_output_path(path, group_size=8, offset=0).name == "5.1of8.offset0.jsonl"
+    assert _default_output_path(path, group_size=8, offset=0).name == "5_1of8_offset0.jsonl"

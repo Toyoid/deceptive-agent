@@ -21,15 +21,50 @@ def judge_samples_path(data_dir: str | os.PathLike[str], step: int | None = None
 
 
 def read_jsonl(path: str | os.PathLike[str]) -> List[dict]:
-    rows = []
     path = Path(path)
     if not path.exists():
-        return rows
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            stripped = line.strip()
-            if stripped:
-                rows.append(json.loads(stripped))
+        raise FileNotFoundError(f"GRM JSONL file not found: {path}")
+    if path.is_dir():
+        raise IsADirectoryError(f"GRM JSONL path is a directory: {path}")
+
+    text = path.read_text(encoding="utf-8")
+    stripped_text = text.strip()
+    if not stripped_text:
+        raise ValueError(f"GRM JSONL file is empty: {path}")
+
+    try:
+        parsed = json.loads(stripped_text)
+    except json.JSONDecodeError:
+        parsed = None
+    else:
+        if isinstance(parsed, dict):
+            return [parsed]
+        if isinstance(parsed, list):
+            for idx, row in enumerate(parsed):
+                if not isinstance(row, dict):
+                    raise ValueError(
+                        f"Expected JSON object at array index {idx} in {path}, got {type(row).__name__}."
+                    )
+            return parsed
+
+    rows = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Failed to parse JSON on line {line_no} of {path}: {exc.msg}"
+            ) from exc
+        if not isinstance(row, dict):
+            raise ValueError(
+                f"Expected JSON object on line {line_no} of {path}, got {type(row).__name__}."
+            )
+        rows.append(row)
+    if not rows:
+        raise ValueError(f"GRM JSONL file has no JSON object rows: {path}")
     return rows
 
 

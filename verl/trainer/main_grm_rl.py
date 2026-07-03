@@ -125,7 +125,6 @@ class GrmRLTrainer:
         self.actor_rollout_wg = None
         self.ref_policy_wg = None
         self.validation_generations_logger = ValidationGenerationsLogger()
-        self._printed_train_samples_once = False
 
         self.reward_config = _grm_reward_config(config)
         if config.algorithm.use_kl_in_reward:
@@ -348,19 +347,8 @@ class GrmRLTrainer:
             generations_to_log=generations_to_log,
         )
 
-    @staticmethod
-    def _clip_debug_text(text: str, max_chars: int) -> str:
-        if max_chars <= 0 or len(text) <= max_chars:
-            return text
-        return text[:max_chars] + "\n...[truncated]"
-
     def _print_train_samples_if_needed(self, batch: DataProto, outputs, results: list[GrmRewardResult]) -> None:
-        if self._printed_train_samples_once:
-            return
-
-        self._printed_train_samples_once = True
         samples_to_print = 3
-        max_chars = 2000
         prompt_texts = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
         labels = batch.non_tensor_batch["label"]
         valid_token_rows = batch.non_tensor_batch["valid_tokens"]
@@ -372,9 +360,9 @@ class GrmRLTrainer:
             result = results[idx]
             print(f"[sample {idx + 1}] label={labels[idx]} valid_tokens={normalize_valid_tokens(valid_token_rows[idx])} pred={result.parsed_token} reward={result.reward}")
             print("[prompt]")
-            print(self._clip_debug_text(prompt_texts[idx], max_chars))
+            print(prompt_texts[idx])
             print("[output]")
-            print(self._clip_debug_text(outputs[idx], max_chars))
+            print(outputs[idx])
             print("-" * 80)
 
     def _validate(self) -> dict[str, float]:
@@ -699,7 +687,14 @@ class GrmRLTrainer:
                     "training/epoch": epoch,
                 })
                 # collect metrics
-                metrics.update(compute_data_metrics(batch=batch, use_critic=False, metric_prefix="grm"))
+                metrics.update(
+                    compute_data_metrics(
+                        batch=batch,
+                        use_critic=False,
+                        metric_prefix="grm",
+                        include_episode_metrics=False,
+                    )
+                )
 
                 total_tokens = sum(batch.meta_info.get("global_token_num", []))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))

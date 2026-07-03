@@ -21,6 +21,8 @@ class GrmRewardConfig:
 class GrmRewardResult:
     reward: float
     parsed_token: Optional[str]
+    label: str = ""
+    valid_tokens: tuple[str, ...] = ()
     exact: bool = False
     invalid_format: bool = False
     wrong_profile_token: bool = False
@@ -56,6 +58,8 @@ def score_grm_output(
         return GrmRewardResult(
             reward=float(cfg.invalid_reward),
             parsed_token=None,
+            label=target,
+            valid_tokens=tuple(tokens),
             invalid_format=True,
         )
 
@@ -63,21 +67,29 @@ def score_grm_output(
         return GrmRewardResult(
             reward=float(cfg.invalid_reward),
             parsed_token=token,
+            label=target,
+            valid_tokens=tuple(tokens),
             wrong_profile_token=True,
         )
     if token == target:
         return GrmRewardResult(
             reward=float(cfg.exact_reward),
             parsed_token=token,
+            label=target,
+            valid_tokens=tuple(tokens),
             exact=True,
         )
     if _is_same_direction_adjacent(token, target, tokens):
         return GrmRewardResult(
             reward=float(cfg.same_direction_adjacent_reward),
             parsed_token=token,
+            label=target,
+            valid_tokens=tuple(tokens),
             adjacent_same_direction=True,
         )
     return GrmRewardResult(
         reward=float(cfg.wrong_valid_reward),
         parsed_token=token,
+        label=target,
+        valid_tokens=tuple(tokens),
     )
