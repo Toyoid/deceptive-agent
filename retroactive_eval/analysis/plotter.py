@@ -264,8 +264,9 @@ class MetricsPlotter:
         if reward_data:
             steps, means, stds = reward_data
             reward_color = "#2ca02c"  # Green for reward
-            ax1.plot(steps, means, color=reward_color, linewidth=3.5, label="Reward",
-                     marker='o', markersize=7, markerfacecolor=reward_color, markeredgecolor='white', markeredgewidth=0.8)
+            # ax1.plot(steps, means, color=reward_color, linewidth=3.5, label="Reward",
+            #          marker='o', markersize=7, markerfacecolor=reward_color, markeredgecolor='white', markeredgewidth=0.8)
+            ax1.plot(steps, means, color=reward_color, linewidth=2, label="Reward")
             if show_std:
                 ax1.fill_between(
                     steps,
@@ -290,8 +291,9 @@ class MetricsPlotter:
             means = np.array(time_series.means)
             
             # Plot mean line with markers
-            ax2.plot(steps, means, color=color, linewidth=3.5, label=metric_name,
-                     marker='o', markersize=7, markerfacecolor=color, markeredgecolor='white', markeredgewidth=0.6)
+            # ax2.plot(steps, means, color=color, linewidth=3.5, label=metric_name,
+            #          marker='o', markersize=7, markerfacecolor=color, markeredgecolor='white', markeredgewidth=0.6)
+            ax2.plot(steps, means, color=color, linewidth=2, label=metric_name)
             
             # Plot error band
             if show_std:

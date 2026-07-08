@@ -72,7 +72,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name='self_monitor_grpo_on_cheating_plus_sft' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_steps='[50,100,120]' \
+    trainer.save_steps='[120,200]' \
     trainer.test_freq=121 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False "$@"

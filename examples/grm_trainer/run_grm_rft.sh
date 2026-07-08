@@ -17,7 +17,7 @@ VAL_FILE="$GRM_DATA_DIR/val.parquet"
 python3 -m agent_system.grm.build_dataset \
     --input "$LABELED_DATA_JSONL" \
     --output-dir "$GRM_DATA_DIR" \
-    --val-ratio 0.027 \
+    --val-ratio 0.034 \
     --seed 42 \
     --unlabeled-policy error
 
@@ -27,10 +27,10 @@ python3 -m verl.trainer.main_grm_rl \
     algorithm.adv_estimator=grpo \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$VAL_FILE" \
-    data.train_batch_size=120 \
-    data.val_batch_size=10 \
-    data.max_prompt_length=8192 \
-    data.max_response_length=4096 \
+    data.train_batch_size=128 \
+    data.val_batch_size=32 \
+    data.max_prompt_length=3072 \
+    data.max_response_length=2048 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -48,10 +48,10 @@ python3 -m verl.trainer.main_grm_rl \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=13312 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=8192 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.n=16 \
+    actor_rollout_ref.rollout.n=8 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.top_p=1.0 \
@@ -71,6 +71,6 @@ python3 -m verl.trainer.main_grm_rl \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=10 \
-    trainer.total_epochs=60 \
+    trainer.total_epochs=50 \
     trainer.val_before_train=True \
     "$@"

@@ -26,7 +26,7 @@ actor_rollout_ref:
     log_prob_micro_batch_size_per_gpu: 1
   rollout:
     response_length: ${data.max_response_length}
-    n: 4
+    n: 8
     temperature: 1.0
     top_p: 1.0
     top_k: -1
@@ -35,9 +35,9 @@ actor_rollout_ref:
     val_kwargs:
       n: 1
       do_sample: False
-      temperature: 0.0
-      top_p: 1.0
-      top_k: -1
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
     multi_turn:
       enable: False
 
@@ -56,7 +56,7 @@ algorithm:
 
 grm:
   reward:
-    invalid_reward: -0.1
+    invalid_reward: -2.0
     exact_reward: 1.0
     same_direction_adjacent_reward: 0.0
     wrong_valid_reward: -1.0

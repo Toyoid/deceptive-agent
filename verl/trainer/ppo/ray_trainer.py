@@ -47,7 +47,6 @@ from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.ppo import core_algos
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
-    compute_confession_false_positive_metrics,
     compute_data_metrics,
     compute_distribution_log_data,
     compute_monitor_action_metrics,
@@ -56,9 +55,7 @@ from verl.trainer.ppo.metric_utils import (
     compute_timing_metrics,
     compute_episode_metric_stats,
     dump_generations,
-    dump_monitor_false_positives,
     get_actor_cost_threshold,
-    process_validation_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
 from verl.trainer.ppo.rm_norm_utils import (
@@ -1949,18 +1946,6 @@ class RayPPOTrainer:
                         unique_idx = np.sort(unique_idx)
                         self.episode_costs.extend(costs[unique_idx].tolist())
 
-                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
-                    if self.use_monitor and rollout_data_dir:
-                        with _timer("dump_monitor_false_positives", timing_raw):
-                            dump_monitor_false_positives(
-                                actor_batch=batch,
-                                monitor_batch=monitor_batch,
-                                dump_path=os.path.join(rollout_data_dir, "monitor_false_positives"),
-                                step=self.global_steps,
-                                monitor_tokenizer=self.monitor_tokenizer,
-                                actor_cost_threshold=get_actor_cost_threshold(self.config),
-                            )
-
                     # ==================================================
                     #                Batch Preprocessing
                     # ==================================================
@@ -2294,7 +2279,7 @@ class RayPPOTrainer:
                     if rollout_data_dir:
                         with _timer("dump_rollout_generations", timing_raw):
                             print("batch.batch keys: ", batch.batch.keys())
-                            print("batch,non_tensor_batch keys: ", batch.non_tensor_batch.keys())
+                            print("batch.non_tensor_batch keys: ", batch.non_tensor_batch.keys())
                             if "system_infos" in batch.non_tensor_batch and "user_inputs" in batch.non_tensor_batch:
                                 inputs = batch.non_tensor_batch["user_inputs"]
                                 system_infos = batch.non_tensor_batch["system_infos"]
@@ -2357,12 +2342,6 @@ class RayPPOTrainer:
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(
                     compute_restricted_tool_confusion_metrics(
-                        batch=batch,
-                        actor_cost_threshold=get_actor_cost_threshold(self.config),
-                    )
-                )
-                metrics.update(
-                    compute_confession_false_positive_metrics(
                         batch=batch,
                         actor_cost_threshold=get_actor_cost_threshold(self.config),
                     )

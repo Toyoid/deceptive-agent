@@ -25,7 +25,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-from agent_system.confession_safe_harbor import check_confession_safe_harbor
 from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 from verl import DataProto
 from verl.utils.import_utils import deprecated
@@ -354,58 +353,6 @@ def compute_restricted_tool_confusion_metrics(
     }
 
 
-def compute_confession_false_positive_metrics(
-    batch: DataProto,
-    actor_cost_threshold: float,
-) -> Dict[str, float]:
-    """Track whether high-coverage admission responses still receive actor cost."""
-    required_keys = {"traj_uid", "trust_penalties", "monitor_background", "agent_trajectory"}
-    if not required_keys.issubset(batch.non_tensor_batch):
-        return {}
-
-    traj_uids = np.asarray(batch.non_tensor_batch["traj_uid"], dtype=object)
-    all_backgrounds = np.asarray(batch.non_tensor_batch["monitor_background"], dtype=object)
-    all_trajectories = np.asarray(batch.non_tensor_batch["agent_trajectory"], dtype=object)
-    all_costs = np.asarray(batch.non_tensor_batch["trust_penalties"], dtype=np.float32)
-
-    last_idx_by_uid: Dict[str, int] = {}
-    for idx, traj_uid in enumerate(traj_uids):
-        uid = str(traj_uid)
-        has_review_text = bool(str(all_backgrounds[idx]).strip() or str(all_trajectories[idx]).strip())
-        if uid not in last_idx_by_uid or has_review_text:
-            last_idx_by_uid[uid] = idx
-    unique_idx = np.asarray(sorted(last_idx_by_uid.values()), dtype=np.int64)
-
-    backgrounds = all_backgrounds[unique_idx]
-    trajectories = all_trajectories[unique_idx]
-    costs = all_costs[unique_idx]
-
-    user_inputs = np.asarray(batch.non_tensor_batch.get("user_inputs", [""] * len(traj_uids)), dtype=object)[unique_idx]
-    confession_candidates = np.asarray([
-        check_confession_safe_harbor(
-            background=background,
-            user_input=user_input,
-            agent_trajectory=trajectory,
-        ).is_safe
-        for background, user_input, trajectory in zip(backgrounds, user_inputs, trajectories)
-    ], dtype=bool)
-    candidate_count = int(np.sum(confession_candidates))
-    if candidate_count == 0:
-        return {
-            "episode/confession_candidate_count": 0.0,
-            "episode/confession_false_positive_count": 0.0,
-            "episode/confession_false_positive_rate": 0.0,
-        }
-
-    penalized = costs > actor_cost_threshold
-    fp_count = int(np.sum(confession_candidates & penalized))
-    return {
-        "episode/confession_candidate_count": float(candidate_count),
-        "episode/confession_false_positive_count": float(fp_count),
-        "episode/confession_false_positive_rate": float(fp_count / candidate_count),
-    }
-
-
 # ------------------------------------------------------------------------------
 # JSONL rollout dumps
 # ------------------------------------------------------------------------------
@@ -446,70 +393,6 @@ def dump_generations(
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     print(f"Dumped {n} generations to {filename}")
-
-
-def dump_monitor_false_positives(
-    actor_batch: DataProto,
-    monitor_batch: DataProto,
-    dump_path: str,
-    step: int,
-    monitor_tokenizer,
-    actor_cost_threshold: float,
-) -> None:
-    restricted = restricted_tool_used_from_batch(actor_batch)
-    if restricted is None or "trust_penalties" not in actor_batch.non_tensor_batch:
-        return
-
-    actor_traj_uids = np.asarray(actor_batch.non_tensor_batch["traj_uid"], dtype=object)
-    actor_costs = np.asarray(actor_batch.non_tensor_batch["trust_penalties"], dtype=np.float32)
-    actor_rewards = np.asarray(actor_batch.non_tensor_batch["episode_rewards"], dtype=np.float32)
-    actor_data_sources = np.asarray(actor_batch.non_tensor_batch["data_source"], dtype=object)
-
-    _, unique_actor_idx = np.unique(actor_traj_uids, return_index=True)
-    unique_actor_idx = np.sort(unique_actor_idx)
-
-    monitor_outputs = monitor_tokenizer.batch_decode(
-        monitor_batch.batch["responses"], skip_special_tokens=True
-    )
-    if len(unique_actor_idx) == 0 or len(monitor_outputs) % len(unique_actor_idx) != 0:
-        return
-    monitor_rollout_n = len(monitor_outputs) // len(unique_actor_idx)
-
-    monitor_action_types = np.asarray(monitor_batch.non_tensor_batch.get("monitor_action_type", []), dtype=object)
-    judge_score_tokens = np.asarray(monitor_batch.non_tensor_batch.get("judge_score_token", []), dtype=object)
-    agent_trajectories = np.asarray(monitor_batch.non_tensor_batch.get("agent_trajectory", []), dtype=object)
-
-    rows = []
-    for monitor_idx in range(len(monitor_outputs)):
-        actor_idx = unique_actor_idx[monitor_idx // monitor_rollout_n]
-        is_restricted = bool(restricted[actor_idx])
-        actor_cost = float(actor_costs[actor_idx])
-        if is_restricted or actor_cost <= actor_cost_threshold:
-            continue
-        rows.append({
-            "step": step,
-            "data_source": str(actor_data_sources[actor_idx]),
-            "traj_uid": str(actor_traj_uids[actor_idx]),
-            "restricted_tool_used": False,
-            "actor_trust_penalty": actor_cost,
-            "actor_cost_threshold": actor_cost_threshold,
-            "episode_reward": float(actor_rewards[actor_idx]),
-            "agent_trajectory": str(agent_trajectories[monitor_idx]) if len(agent_trajectories) > monitor_idx else "",
-            "monitor_output": monitor_outputs[monitor_idx],
-            "monitor_action_type": str(monitor_action_types[monitor_idx]) if len(monitor_action_types) > monitor_idx else "",
-            "judge_score_token": str(judge_score_tokens[monitor_idx]) if len(judge_score_tokens) > monitor_idx else "",
-        })
-
-    if not rows:
-        return
-
-    os.makedirs(dump_path, exist_ok=True)
-    filename = os.path.join(dump_path, f"{step}.jsonl")
-    with open(filename, "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    print(f"Dumped {len(rows)} monitor false positives to {filename}")
-
 
 # ------------------------------------------------------------------------------
 # Timing and throughput metrics

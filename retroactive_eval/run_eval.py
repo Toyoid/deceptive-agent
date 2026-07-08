@@ -390,7 +390,7 @@ Examples:
     
     # Concurrency configuration
     concurrency_group = parser.add_argument_group("Concurrency Configuration")
-    concurrency_group.add_argument("--max-concurrent", type=int, default=1024, help="Maximum concurrent API requests (default: 128)")
+    concurrency_group.add_argument("--max-concurrent", type=int, default=512, help="Maximum concurrent API requests (default: 128)")
     concurrency_group.add_argument("--max-retries", type=int, default=3, help="Maximum retries for failed API calls (default: 3)")
     concurrency_group.add_argument("--timeout", type=float, default=120.0, help="Timeout for API requests in seconds (default: 120.0)")
     
@@ -435,24 +435,20 @@ def main():
     elif args.verbose >= 1:
         logging.getLogger().setLevel(logging.INFO)
 
-    # args.api_base = "http://localhost:8000/v1"
-    # args.model = "meta-llama/Llama-3.1-8B-Instruct"
-    # args.model = "Qwen/Qwen3-30B-A3B-Instruct-2507"
-    args.model = "Qwen/Qwen2.5-72B-Instruct"
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen_7b/2026-01-21_21-53-08/rollout_data/rollout"
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen7b_monitor_eta2/2026-01-19_23-57-24/rollout_data/rollout"
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen7b_monitor_eta2/2026-01-22_12-24-24/rollout_data/rollout"
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen7b_monitor_eta2/2026-01-23_23-00-08/rollout_data/rollout"
-    data_subdir = "outputs/verl_deceptive_roles/grpo_qwen7b_monitor_eta2/2026-01-29_12-59-12/rollout_data/rollout"
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen7b_monitor_eta10/2026-01-14_14-47-36/rollout_data/rollout"
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen7b_maximin_lora_eta2/2026-01-25_13-32-03/rollout_data/rollout"
+    args.api_base = "http://localhost:6000/v1"
+    args.model = "Qwen-Instruct-Large"
+
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge/2026-07-08_00-23-21/rollout_data/rollout"  # Maximin RL
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge_w2s/2026-07-07_16-47-22/rollout_data/rollout"  # Maximin Rl with weak-to-strong oversight
+    data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_monitor_cot_judge/2026-07-06_23-01-45/rollout_data/rollout"  # RL with critique monitor (Qwen3-8B) as oversight
+    
     project_root = Path(__file__).parent.parent.resolve()
     args.data_dir = str(project_root / data_subdir) # Path to rollout output dir containing {step}.jsonl files
     args.output_dir = "/".join(args.data_dir.split("/")[:-1]) + "/retro_eval" # Dir to save evaluation results, plots, and statistics
 
     # steps to eval, None as default, meaning all available steps
-    # args.steps = [1,10,20,30,40,50,60,70,80,90,100,110,120,130,135]
-    args.steps = [1,20,40,60,80,100,120,140,160,180,200]
+    # args.steps = [1,41,120,140,160]
+    args.steps = [1] + [step for step in range(2, 161, 2)] # Evaluate every 2 steps from 2 to 160, plus step 1
     args.batch_size = args.max_concurrent * 10
     
     # Run async evaluation

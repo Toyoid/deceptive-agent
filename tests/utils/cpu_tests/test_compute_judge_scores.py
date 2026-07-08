@@ -85,8 +85,6 @@ def _make_config(template_name: str = "strict5", backend: str = "constrained_log
     cfg.monitor_rollout_ref.enable_train_monitor = True
     cfg.monitor_rollout_ref.get.side_effect = lambda key, default=None: {
         "enable_train_monitor": True,
-        "confession_safe_harbor_enable": False,
-        "confession_safe_harbor_reward": 0.0,
     }.get(key, default)
     cfg.judge_model.backend = backend
     cfg.judge_model.template_name = template_name

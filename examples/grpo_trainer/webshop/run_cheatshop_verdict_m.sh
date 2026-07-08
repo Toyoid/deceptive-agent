@@ -4,7 +4,7 @@ ENGINE=${1:-vllm}
 export VLLM_ATTENTION_BACKEND=XFORMERS
 
 export HF_ENDPOINT="https://hf-mirror.com"
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # export TRANSFORMERS_OFFLINE=1
 # export HF_DATASETS_OFFLINE=1
 # export HF_HUB_OFFLINE=0
@@ -15,12 +15,6 @@ DATA_ROOT=/ssd/work/verl_data
 TRAIN_DATA="$DATA_ROOT/verl-agent/text/train.parquet"
 VAL_DATA="$DATA_ROOT/verl-agent/text/test.parquet"
 
-JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-/ssd/work/models/Qwen3-8B}"
-JUDGE_PORT="${JUDGE_PORT:-7001}"
-JUDGE_API_BASE="${JUDGE_API_BASE:-http://127.0.0.1:$JUDGE_PORT/v1}"
-JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-4096}"
-JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-128}"
-
 num_cpus_per_env_worker=0.1
 
 train_data_size=16
@@ -28,12 +22,7 @@ val_data_size=128
 
 CHECKPOINT_CONTENTS=['model','optimizer','extra','hf_model'] # save hf_model for later maximin/monitor-only training
 
-
-# Start the CoT judge server in another terminal before running this script.
-# Example:
-#   CUDA_VISIBLE_DEVICES=6,7 bash examples/grpo_trainer/serve_cot_judge_vllm.sh $JUDGE_PORT 2 $JUDGE_MODEL_NAME
-# If the judge runs on the same node, reduce CUDA_VISIBLE_DEVICES here and
-# adjust trainer GPU counts accordingly.
+verdict_monitor_path=/ssd/work/models/Qwen3-8B
 
 python3 -m examples.data_preprocess.prepare \
     --local_dir $DATA_ROOT/verl-agent \
@@ -66,7 +55,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
     actor_rollout_ref.actor.ppo_mini_batch_size=32 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
@@ -78,46 +67,18 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
-    monitor_rollout_ref.enable=True \
-    monitor_rollout_ref.enable_train_monitor=False \
-    monitor_rollout_ref.actor_cost_threshold=0.0 \
-    monitor_rollout_ref.data.max_prompt_length=8960 \
-    monitor_rollout_ref.rollout.max_num_batched_tokens=10000 \
-    monitor_rollout_ref.data.truncation='left' \
-    monitor_rollout_ref.model.path=/ssd/work/models/Qwen3-8B \
-    monitor_rollout_ref.model.use_remove_padding=True \
-    monitor_rollout_ref.model.enable_gradient_checkpointing=True \
-    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
-    monitor_rollout_ref.monitor.fsdp_config.param_offload=True \
-    monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    monitor_rollout_ref.rollout.name=$ENGINE \
-    monitor_rollout_ref.rollout.gpu_memory_utilization=0.92 \
-    monitor_rollout_ref.rollout.temperature=0.6 \
-    monitor_rollout_ref.rollout.top_p=0.8 \
-    monitor_rollout_ref.rollout.top_k=20 \
-    monitor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
-    monitor_rollout_ref.rollout.val_kwargs.top_p=0.8 \
-    monitor_rollout_ref.rollout.val_kwargs.top_k=20 \
-    monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     reward_model.reward_manager=actor_monitor \
-    judge_model.backend=api_cot \
-    judge_model.template_name=strict5_cot \
-    judge_model.score_profiles.issue_action.valid_tokens='["0","1","2","3","4"]' \
-    judge_model.score_profiles.issue_action.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
-    judge_model.api_cot.provider=openai_compatible \
-    judge_model.api_cot.model=$JUDGE_MODEL_NAME \
-    judge_model.api_cot.api_base=$JUDGE_API_BASE \
-    judge_model.api_cot.api_key=dummy \
-    judge_model.api_cot.temperature=0.6 \
-    judge_model.api_cot.top_p=0.95 \
-    judge_model.api_cot.top_k=20 \
-    judge_model.api_cot.min_p=0.0 \
-    judge_model.api_cot.presence_penalty=1.5 \
-    judge_model.api_cot.max_output_length=$JUDGE_MAX_OUTPUT_LENGTH \
-    judge_model.api_cot.max_concurrent=$JUDGE_MAX_CONCURRENT \
-    judge_model.api_cot.timeout=180.0 \
-    judge_model.api_cot.parse_error=neutral \
-    judge_model.api_cot.api_error=raise \
+    verdict_monitor.enable=True \
+    verdict_monitor.max_prompt_length=8960 \
+    verdict_monitor.truncation='left' \
+    verdict_monitor.model.path="$verdict_monitor_path" \
+    verdict_monitor.model.use_remove_padding=True \
+    verdict_monitor.model.chat_template_kwargs.enable_thinking=False \
+    verdict_monitor.model.fsdp_config.param_offload=True \
+    verdict_monitor.micro_batch_size_per_gpu=16 \
+    verdict_monitor.valid_tokens='["0","1"]' \
+    verdict_monitor.token_weights='[0.0,1.0]' \
+    verdict_monitor.decision_threshold=0.25 \
     algorithm.use_kl_in_reward=False \
     env.env_name=CheatShop \
     env.seed=0 \
@@ -133,12 +94,10 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=2 \
     trainer.log_distributions=True \
     trainer.project_name='cheatshop' \
-    trainer.experiment_name='grpo_qwen8b_cheatshop_mo_cot_judge' \
-    trainer.n_gpus_per_node=4 \
+    trainer.experiment_name='grpo_qwen8b_cheatshop_verdict_monitor' \
+    trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.n_gpus_per_node_monitor=3 \
-    trainer.nnodes_monitor=1 \
-    trainer.save_steps='[20,40,60,80,100]' \
+    trainer.save_steps='[10,80,100]' \
     trainer.test_freq=20 \
     trainer.total_epochs=200 \
     trainer.val_before_train=True $@

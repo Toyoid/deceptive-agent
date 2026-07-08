@@ -14,14 +14,14 @@
 set -x
 
 export HF_ENDPOINT="https://hf-mirror.com"
-export CUDA_VISIBLE_DEVICES=6,7
+export CUDA_VISIBLE_DEVICES=7
 
 PORT="${1:-7001}"
-TP_SIZE="${2:-2}"
-MODEL="${3:-Qwen/Qwen3-8B}"
-SERVED_MODEL_NAME="${4:-$MODEL}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.87}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-12288}"
+TP_SIZE="${2:-1}"
+MODEL="${3:-hahnli/Qwen3-8B-CoT-Judge}"
+SERVED_MODEL_NAME="${4:-Qwen3-8B-GRM}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"
 EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
 
 echo "================================================================"

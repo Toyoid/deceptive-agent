@@ -239,8 +239,6 @@ monitor_rollout_ref:
   enable: False
   enable_train_monitor: False
   actor_cost_threshold: 0.5
-  confession_safe_harbor_enable: False
-  confession_safe_harbor_reward: 0.0
   hybrid_engine: True
   data:
     max_prompt_length: ${add:1152,${data.max_prompt_length},${data.max_response_length}}

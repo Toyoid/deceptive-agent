@@ -4,26 +4,30 @@ ENGINE=${1:-vllm}
 export VLLM_ATTENTION_BACKEND=XFORMERS
 
 export HF_ENDPOINT="https://hf-mirror.com"
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=0
-export HF_HUB_OFFLINE=0
-# export WANDB_MODE="offline"
-DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6
+# export TRANSFORMERS_OFFLINE=1
+# export HF_DATASETS_OFFLINE=1
+# export HF_HUB_OFFLINE=0
+export WANDB_MODE="online"
+export WANDB_ENTITY="toy-collaborate"
+DATA_ROOT=/ssd/work/verl_data
 
 TRAIN_DATA="$DATA_ROOT/verl-agent/text/train.parquet"
 VAL_DATA="$DATA_ROOT/verl-agent/text/test.parquet"
 
-JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen/Qwen3-8B}"
+JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-/ssd/work/models/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-7001}"
 JUDGE_API_BASE="${JUDGE_API_BASE:-http://127.0.0.1:$JUDGE_PORT/v1}"
 JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-4096}"
-JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-32}"
+JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-128}"
 
 num_cpus_per_env_worker=0.1
 
-train_data_size=10
-val_data_size=1
+train_data_size=32
+val_data_size=128
+
+CHECKPOINT_CONTENTS=['model','optimizer','extra','hf_model'] # save hf_model for later maximin/monitor-only training
+
 
 # Start the CoT judge server in another terminal before running this script.
 # Example:
@@ -48,10 +52,11 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=checkpoints/verl_agent_webshop/grpo_qwen3_4b_cheatshop/global_step_200/actor/huggingface \
+    actor_rollout_ref.model.path=checkpoints/verl_agent_webshop/grpo_qwen8b_cheatshop/global_step_120/actor/huggingface \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
+    actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.01 \
@@ -60,9 +65,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=24 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
@@ -72,7 +77,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
     monitor_rollout_ref.rollout.n=1 \
@@ -80,7 +85,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.data.max_prompt_length=8960 \
     monitor_rollout_ref.rollout.max_num_batched_tokens=10000 \
     monitor_rollout_ref.data.truncation='left' \
-    monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
+    monitor_rollout_ref.model.path=/ssd/work/models/Qwen3-8B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
@@ -94,23 +99,21 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.invalid_action_penalty_coef=0.1 \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=12 \
     monitor_rollout_ref.monitor.ppo_micro_batch_size_per_gpu=2 \
-    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    monitor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     monitor_rollout_ref.rollout.name=$ENGINE \
     monitor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
     monitor_rollout_ref.rollout.enable_chunked_prefill=False \
     monitor_rollout_ref.rollout.enforce_eager=False \
     monitor_rollout_ref.rollout.free_cache_engine=False \
-    monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
+    monitor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
-    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
     reward_model.reward_manager=actor_monitor \
     reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=2.0 \
     judge_model.backend=api_cot \
     judge_model.template_name=strict5_cot \
-    judge_model.valid_tokens='["0","1","2","3","4"]' \
-    judge_model.token_weights='[-1.0,-0.5,0.0,0.5,1.0]' \
     judge_model.api_cot.provider=openai_compatible \
     judge_model.api_cot.model=$JUDGE_MODEL_NAME \
     judge_model.api_cot.api_base=$JUDGE_API_BASE \
@@ -119,7 +122,7 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.top_p=0.95 \
     judge_model.api_cot.top_k=20 \
     judge_model.api_cot.min_p=0.0 \
-    judge_model.api_cot.presence_penalty=0.0 \
+    judge_model.api_cot.presence_penalty=1.5 \
     judge_model.api_cot.max_output_length=$JUDGE_MAX_OUTPUT_LENGTH \
     judge_model.api_cot.max_concurrent=$JUDGE_MAX_CONCURRENT \
     judge_model.api_cot.timeout=180.0 \
@@ -137,15 +140,15 @@ python3 -m verl.trainer.main_ppo \
     env.cheatshop.self_report_cot_visibility=hidden \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
-    trainer.log_val_generations=4 \
+    trainer.log_val_generations=2 \
     trainer.log_distributions=True \
     trainer.project_name='cheatshop' \
-    trainer.experiment_name='grpo_qwen3_cheatshop_mm_cot_judge' \
-    trainer.n_gpus_per_node=3 \
+    trainer.experiment_name='grpo_qwen8b_cheatshop_mm_cot_judge' \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
     trainer.nnodes_monitor=1 \
-    trainer.save_freq=-1 \
+    trainer.save_steps='[10,30,60,80,100]' \
     trainer.test_freq=20 \
-    trainer.total_epochs=1000 \
+    trainer.total_epochs=200 \
     trainer.val_before_train=True $@

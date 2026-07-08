@@ -7,8 +7,9 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
-# export WANDB_MODE="offline"
-DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
+export WANDB_MODE="online"
+export WANDB_ENTITY="toy-collaborate"
+DATA_ROOT=/ssd/work/verl_data
 
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
@@ -26,7 +27,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-8B \
+    actor_rollout_ref.model.path=/ssd/work/models/Qwen3-8B \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
