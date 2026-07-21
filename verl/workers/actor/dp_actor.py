@@ -25,6 +25,7 @@ from typing import Tuple
 import torch
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.utils.checkpoint import checkpoint
 
 import verl.utils.torch_functional as verl_F
 from verl import DataProto
@@ -80,6 +81,28 @@ class DataParallelPPOActor(BasePPOActor):
             else verl_F.entropy_from_logits
         )
         self.device_name = get_device_name()
+
+    def _compute_entropy(self, logits: torch.Tensor) -> torch.Tensor:
+        use_chunking = self.config.get("entropy_from_logits_with_chunking", None)
+        if use_chunking is None:
+            use_chunking = logits.shape[-1] >= 131072
+        if not use_chunking:
+            return self.compute_entropy_from_logits(logits)
+
+        chunk_size = int(self.config.get("entropy_from_logits_chunk_size", 256))
+
+        def chunked_entropy(chunked_logits):
+            return verl_F.entropy_from_logits_with_chunking(
+                chunked_logits,
+                chunk_size=chunk_size,
+            )
+
+        use_checkpointing = self.config.get("entropy_checkpointing", None)
+        if use_checkpointing is None:
+            use_checkpointing = torch.is_grad_enabled() and logits.requires_grad
+        if use_checkpointing and torch.is_grad_enabled() and logits.requires_grad:
+            return checkpoint(chunked_entropy, logits, use_reentrant=False)
+        return chunked_entropy(logits)
 
     def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -177,7 +200,7 @@ class DataParallelPPOActor(BasePPOActor):
 
                     # compute entropy
                     if calculate_entropy:
-                        entropy_rmpad = self.compute_entropy_from_logits(logits_rmpad)  # ((total_nnz / sp) + pad)
+                        entropy_rmpad = self._compute_entropy(logits_rmpad)  # ((total_nnz / sp) + pad)
 
                 # gather log_prob if sp > 1
                 if self.use_ulysses_sp:
@@ -239,7 +262,7 @@ class DataParallelPPOActor(BasePPOActor):
                     logits = logits[:, -response_length - 1 : -1, :]  # (bsz, response_length, vocab_size)
                     log_probs = logprobs_from_logits(logits, micro_batch["responses"])
                     if calculate_entropy:
-                        entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+                        entropy = self._compute_entropy(logits)  # (bsz, response_length)
 
             return entropy, log_probs
 
@@ -322,6 +345,8 @@ class DataParallelPPOActor(BasePPOActor):
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
+            if calculate_entropy:
+                entropys = entropys[revert_indices]
 
         return log_probs, entropys
 

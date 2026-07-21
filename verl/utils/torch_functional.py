@@ -128,6 +128,31 @@ def entropy_from_logits(logits: torch.Tensor):
     return entropy
 
 
+def entropy_from_logits_with_chunking(logits: torch.Tensor, chunk_size: int = 256):
+    """Calculate entropy without materializing full-vocabulary temporaries.
+
+    Chunking is over token rows rather than vocabulary entries, so each row is
+    still normalized over the complete vocabulary. This is important for
+    Gemma3, whose 262k-token vocabulary otherwise makes entropy require several
+    logits-sized temporary tensors at once.
+    """
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}.")
+
+    output_shape = logits.shape[:-1]
+    flat_logits = logits.reshape(-1, logits.shape[-1])
+    entropy_chunks = []
+    for start in range(0, flat_logits.shape[0], chunk_size):
+        logits_chunk = flat_logits[start : start + chunk_size].float()
+        probabilities = torch.nn.functional.softmax(logits_chunk, dim=-1)
+        entropy_chunks.append(
+            torch.logsumexp(logits_chunk, dim=-1)
+            - torch.sum(probabilities * logits_chunk, dim=-1)
+        )
+
+    return torch.cat(entropy_chunks, dim=0).reshape(output_shape)
+
+
 def masked_sum(values, mask, axis=None):
     """Compute mean of tensor with a masked values."""
     return (values * mask).sum(axis=axis)

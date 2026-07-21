@@ -42,6 +42,7 @@ from verl.utils.device import get_torch_device
 from verl.utils.fsdp_utils import fsdp_version, layered_summon_lora_params, load_fsdp_model_to_gpu, offload_fsdp_model_to_cpu
 from verl.utils.model import convert_weight_keys
 from verl.utils.torch_functional import check_cuda_is_available
+from verl.utils.transformers_compat import is_gemma3_config
 from verl.utils.vllm_utils import TensorLoRARequest, VLLMHijack, is_version_ge, patch_vllm_moe_model_weight_loader
 
 from .base import BaseShardingManager
@@ -304,6 +305,20 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         patch_vllm_moe_model_weight_loader(model)
         device = get_torch_device().current_device()  # used when fsdp2 set cpu_offload_policy
         loaded_params = model.load_weights(((name, param.to(device, non_blocking=True).full_tensor() if isinstance(param, DTensor) else param) for name, param in updated_params.items()))
+
+        if peft_config is None and is_gemma3_config(self.model_config):
+            if loaded_params is None:
+                raise RuntimeError("vLLM did not report Gemma3 weight-sync coverage.")
+            expected_params = {name for name, _ in model.named_parameters()}
+            missing_params = sorted(expected_params - set(loaded_params))
+            if missing_params:
+                preview = ", ".join(missing_params[:12])
+                remainder = len(missing_params) - min(len(missing_params), 12)
+                suffix = f" (and {remainder} more)" if remainder else ""
+                raise RuntimeError(
+                    "Gemma3 FSDP-to-vLLM weight sync was incomplete; missing "
+                    f"{preview}{suffix}. Refusing to generate with stale or random weights."
+                )
 
         self.base_sync_done = True
         logger.info(f"vLLM load weights, loaded_params: {len(loaded_params) if loaded_params else -1}")

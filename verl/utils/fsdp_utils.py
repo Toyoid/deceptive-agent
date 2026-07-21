@@ -32,6 +32,7 @@ from torch.distributed.fsdp._runtime_utils import _lazy_init
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
 from transformers.trainer_pt_utils import get_module_class_from_name
 from verl.utils.device import get_torch_device, get_device_name
+from verl.utils.transformers_compat import normalize_transformer_layer_cls_names
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,9 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
 
     default_transformer_cls_names_to_wrap = getattr(module, "_no_split_modules", None)
     fsdp_transformer_layer_cls_to_wrap = _get_attr("transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap)
+    fsdp_transformer_layer_cls_to_wrap = normalize_transformer_layer_cls_names(
+        fsdp_transformer_layer_cls_to_wrap
+    )
     min_num_params = _get_attr("min_num_params", 0)
     auto_wrap_policy = None
 
@@ -445,9 +449,9 @@ def apply_fsdp2(model, fsdp_kwargs, config):
 
     default_transformer_cls_names_to_wrap = getattr(model, "_no_split_modules", None)
     fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get("transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap)
-
-    if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
-        fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
+    fsdp_transformer_layer_cls_to_wrap = normalize_transformer_layer_cls_names(
+        fsdp_transformer_layer_cls_to_wrap
+    )
 
     assert len(fsdp_transformer_layer_cls_to_wrap) > 0 and fsdp_transformer_layer_cls_to_wrap[0] is not None
 

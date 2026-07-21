@@ -17,6 +17,7 @@ Note that we don't combine the main with ray_trainer as ray_trainer is used by o
 """
 
 import os
+import warnings
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -45,10 +46,51 @@ def main(config):
 
 
 def run_ppo(config) -> None:
+    from verl.utils.transformers_compat import get_gemma3_vllm_rollout_overrides
+
+    def apply_gemma3_rollout_profile(model_path, rollout_config):
+        overrides = get_gemma3_vllm_rollout_overrides(
+            model_path,
+            rollout_config.name,
+            rollout_config.get("load_format", None),
+        )
+        for key, value in overrides.items():
+            rollout_config[key] = value
+        return bool(overrides)
+
+    gemma3_rollout = apply_gemma3_rollout_profile(
+        config.actor_rollout_ref.model.path,
+        config.actor_rollout_ref.rollout,
+    )
+    if config.monitor_rollout_ref.enable:
+        gemma3_rollout = (
+            apply_gemma3_rollout_profile(
+                config.monitor_rollout_ref.model.path,
+                config.monitor_rollout_ref.rollout,
+            )
+            or gemma3_rollout
+        )
+
+    runtime_env_vars = {
+        "TOKENIZERS_PARALLELISM": "true",
+        "NCCL_DEBUG": "WARN",
+        "VLLM_LOGGING_LEVEL": "WARN",
+        "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true",
+    }
+    if gemma3_rollout:
+        if os.environ.get("VLLM_USE_V1") not in (None, "0"):
+            warnings.warn(
+                "Gemma3 rollout overrides VLLM_USE_V1=0 because this branch's "
+                "sleep/wake FSDP integration is validated with vLLM V0 only.",
+                stacklevel=2,
+            )
+        os.environ["VLLM_USE_V1"] = "0"
+        runtime_env_vars["VLLM_USE_V1"] = "0"
+
     if not ray.is_initialized():
         # this is for local ray cluster
         ray.init(
-            runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN", "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true"}},
+            runtime_env={"env_vars": runtime_env_vars},
             num_cpus=config.ray_init.num_cpus,
         )
 

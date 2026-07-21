@@ -31,6 +31,44 @@ class FakeConfig:
         self.vision_config = object() if vision else None
 
 
+@pytest.mark.parametrize(
+    "model_path",
+    [
+        "google/gemma-3-1b-it",
+        "google/gemma-3-4b-it",
+        "/models/Gemma3-4B-IT",
+        r"D:\models\gemma_3_1b_it",
+    ],
+)
+def test_gemma3_model_path_detection(model_path):
+    assert compat.is_gemma3_model_path(model_path)
+
+
+def test_non_gemma_model_path_detection():
+    assert not compat.is_gemma3_model_path("Qwen/Qwen2.5-7B-Instruct")
+
+
+def test_gemma3_vllm_rollout_profile_replaces_dummy_weights():
+    assert compat.get_gemma3_vllm_rollout_overrides(
+        "google/gemma-3-4b-it",
+        "vllm",
+        "dummy_dtensor",
+    ) == {
+        "enforce_eager": True,
+        "enable_chunked_prefill": False,
+        "enable_prefix_caching": False,
+        "load_format": "safetensors",
+    }
+
+
+def test_gemma3_rollout_profile_does_not_change_other_backends():
+    assert not compat.get_gemma3_vllm_rollout_overrides(
+        "google/gemma-3-1b-it",
+        "hf",
+        "dummy_dtensor",
+    )
+
+
 def test_gemma3_defaults_to_eager_attention():
     config = FakeConfig("gemma3_text", "Gemma3ForCausalLM")
     assert compat.is_gemma3_config(config)
@@ -69,6 +107,23 @@ def test_gemma3_rejects_unsupported_fast_paths(options, expected):
 def test_non_gemma_model_keeps_existing_default():
     config = FakeConfig("qwen2", "Qwen2ForCausalLM")
     assert compat.resolve_attn_implementation(config) == "flash_attention_2"
+
+
+@pytest.mark.parametrize(
+    "configured, expected",
+    [
+        ("Gemma3DecoderLayer", ["Gemma3DecoderLayer"]),
+        (["Gemma3DecoderLayer"], ["Gemma3DecoderLayer"]),
+        (("Gemma3DecoderLayer", "SiglipEncoderLayer"), ["Gemma3DecoderLayer", "SiglipEncoderLayer"]),
+    ],
+)
+def test_fsdp_layer_class_names_accept_scalar_and_iterables(configured, expected):
+    assert compat.normalize_transformer_layer_cls_names(configured) == expected
+
+
+def test_fsdp_layer_class_names_reject_non_string_entries():
+    with pytest.raises(TypeError, match="must be a string class name"):
+        compat.normalize_transformer_layer_cls_names(["Gemma3DecoderLayer", 3])
 
 
 def test_conditional_model_patch_forces_causal_scoring_without_labels():

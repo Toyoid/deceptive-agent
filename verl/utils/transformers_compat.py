@@ -18,6 +18,31 @@ from __future__ import annotations
 from types import MethodType
 
 
+def is_gemma3_model_path(model_path) -> bool:
+    """Recognize official IDs and local directories for Gemma3 checkpoints."""
+    if model_path is None:
+        return False
+    normalized = str(model_path).lower().replace("_", "-").replace("\\", "/")
+    return "gemma-3" in normalized or "gemma3" in normalized
+
+
+def get_gemma3_vllm_rollout_overrides(model_path, rollout_name, load_format=None) -> dict:
+    """Return the conservative rollout settings required by the pinned stack."""
+    if rollout_name != "vllm" or not is_gemma3_model_path(model_path):
+        return {}
+
+    overrides = {
+        "enforce_eager": True,
+        "enable_chunked_prefill": False,
+        "enable_prefix_caching": False,
+    }
+    if load_format is not None and str(load_format).startswith("dummy"):
+        # A real checkpoint baseline prevents an incomplete external weight
+        # sync from silently leaving random vLLM parameters behind.
+        overrides["load_format"] = "safetensors"
+    return overrides
+
+
 def get_auto_model_for_vision2seq():
     """Return the broadest image-text generation auto class available."""
     try:
@@ -75,6 +100,25 @@ def is_image_text_config(hf_config) -> bool:
         getattr(hf_config, "vision_config", None) is not None
         or any("ForConditionalGeneration" in architecture for architecture in architectures)
     )
+
+
+def normalize_transformer_layer_cls_names(value):
+    """Normalize an FSDP wrap target from HF/OmegaConf into class-name lists."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value]
+
+    try:
+        names = list(value)
+    except TypeError as exc:
+        raise TypeError(
+            "transformer_layer_cls_to_wrap must be a class name or an iterable of class names, "
+            f"got {type(value).__name__}."
+        ) from exc
+    if any(not isinstance(name, str) for name in names):
+        raise TypeError("Every transformer_layer_cls_to_wrap entry must be a string class name.")
+    return names
 
 
 def resolve_attn_implementation(hf_config, requested: str | None = None) -> str:

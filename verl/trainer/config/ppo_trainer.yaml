@@ -60,6 +60,11 @@ actor_rollout_ref:
     clip_ratio_c: 3.0 # lower bound of the value for Dual-clip PPO from https://arxiv.org/pdf/1912.09729
     loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
     entropy_coeff: 0.001
+    # null selects chunking automatically for vocabularies with at least 131k tokens.
+    entropy_from_logits_with_chunking: null
+    entropy_from_logits_chunk_size: 256
+    # null checkpoints chunked entropy automatically when gradients are enabled.
+    entropy_checkpointing: null
     use_invalid_action_penalty: True
     invalid_action_penalty_coef: 0.1
     use_kl_loss: False # True for GRPO
@@ -134,8 +139,8 @@ actor_rollout_ref:
     log_prob_max_token_len_per_gpu: ${actor_rollout_ref.actor.ppo_max_token_len_per_gpu}
     disable_log_stats: True
     enable_chunked_prefill: True # may get higher throughput when set to True. When activated, Please increase max_num_batched_tokens or decrease max_model_len.
-    # NOTE: Actor model seems to be not so much affected by vLLM V1 prefix caching issues with FSDP weight sync. 
-    # You can enable it to get better performance, but should be cautious about potential corruption.
+    # NOTE: Actor model seems to be not so much affected by vLLM V1 prefix caching issues with FSDP weight sync.
+    # Gemma3 launches override this to False through the compatibility profile.
     enable_prefix_caching: True
     # for hf rollout
     do_sample: True
@@ -288,6 +293,9 @@ monitor_rollout_ref:
     clip_ratio_c: 3.0 # lower bound of the value for Dual-clip PPO from https://arxiv.org/pdf/1912.09729
     loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
     entropy_coeff: 0.001
+    entropy_from_logits_with_chunking: null
+    entropy_from_logits_chunk_size: 256
+    entropy_checkpointing: null
     use_invalid_action_penalty: True
     invalid_action_penalty_coef: 0.1
     use_kl_loss: False # True for GRPO

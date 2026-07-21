@@ -9,6 +9,14 @@ This verl-base branch supports `google/gemma-3-1b-it` and
 
 No heavyweight dependency is required in the local development checkout.
 
+The vLLM pin predates upstream's complete Gemma3 sliding-attention cleanup.
+This branch therefore uses a conservative rollout profile: vLLM V0, eager
+execution, no chunked prefill, and no prefix caching. Do not remove those
+settings without first comparing greedy Hugging Face and vLLM outputs on the
+remote machine. vLLM 0.10.1 contains the later upstream sliding-attention fix,
+but upgrading to it also requires a coordinated Torch 2.7.1 and Transformers
+4.55+ migration; it is not a safe one-package upgrade for this fork.
+
 ## Support matrix
 
 | Path | Gemma3 1B | Gemma3 4B text | Gemma3 4B image |
@@ -59,8 +67,20 @@ bash examples/gemma3/run_agentic_grpo.sh cheatshop google/gemma-3-4b-it
 ```
 
 Extra Hydra overrides are forwarded after the model argument. The wrapper uses
-vLLM V0 because vLLM 0.8.5 V1 does not preserve Gemma3's bidirectional image
-attention. V0 is also valid for text-only runs.
+vLLM V0 because this branch's external FSDP weight synchronization and
+sleep/wake lifecycle are validated on V0. Prefix caching is disabled because
+cache state can become stale across that lifecycle and produce corrupted first
+batches. `main_ppo` applies V0 automatically for recognized Gemma3 model paths,
+including direct Python launches. It also preloads the vLLM model from
+`safetensors` instead of random `dummy_dtensor` weights and verifies that every
+vLLM parameter is populated by each full-parameter FSDP synchronization.
+
+Gemma3's 262k-token vocabulary also makes the ordinary categorical-entropy
+formula unusually expensive. This branch automatically computes entropy in
+256-row chunks for vocabularies with at least 131k tokens. Entropy
+regularization is disabled by the Gemma3 agentic wrapper; when enabled in a
+direct launch, chunked entropy is activation-checkpointed automatically during
+the policy update.
 
 Vision and projector parameters are frozen in the conservative agentic recipe.
 To fine-tune them in a full-parameter image run, override both flags and leave
@@ -109,8 +129,8 @@ Run these checks on the remote GPU server after syncing the checkout. They load
 real weights; they are intentionally not part of local CI.
 
 ```bash
-python tests/e2e/gemma3/check_model_stack.py google/gemma-3-1b-it
-python tests/e2e/gemma3/check_model_stack.py google/gemma-3-4b-it
+python tests/e2e/gemma3/check_model_stack.py google/gemma-3-1b-it --check-vllm
+python tests/e2e/gemma3/check_model_stack.py google/gemma-3-4b-it --check-vllm
 ```
 
 Then launch a short task run by appending task-specific reductions such as
@@ -124,4 +144,7 @@ Hugging Face offline mode.
 
 - [Gemma3 model documentation](https://huggingface.co/docs/transformers/v4.51.1/en/model_doc/gemma3)
 - [vLLM 0.8.5 supported models](https://docs.vllm.ai/en/v0.8.5/models/supported_models.html)
+- [vLLM Gemma3 accuracy report](https://github.com/vllm-project/vllm/issues/17689)
+- [vLLM sliding-attention fix](https://github.com/vllm-project/vllm/pull/21927)
+- [veRL 0.4.1 memory-optimization notes](https://github.com/verl-project/verl/discussions/2225)
 - [Upstream veRL Transformers compatibility helper](https://github.com/verl-project/verl/blob/main/verl/utils/transformers_compat.py)
