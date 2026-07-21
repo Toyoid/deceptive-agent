@@ -25,6 +25,7 @@ This CLI tool orchestrates the entire evaluation pipeline:
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -33,6 +34,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+ALGORITHM_NAMES = [
+    "RLHF",
+    "Mixed Safety RLHF",
+    "Verdict Monitor",
+    "Self-Monitor",
+    "Critique Monitor",
+    "ePOG (Ours)",
+    "ePOG-Weak-to-Strong (Ours)",
+]
 
 # Configure logging
 logging.basicConfig(
@@ -128,6 +139,41 @@ def export_detailed_results(
             total_exported += 1
     
     logger.info(f"Exported {total_exported} detailed sample files to {output_dir}")
+
+
+def _metrics_configuration_fingerprint(registry: "MetricRegistry") -> str:
+    """Return a stable hash of every effective metric configuration."""
+    configuration = {
+        name: vars(registry.get_config(name))
+        for name in registry.list_metrics(include_disabled=True)
+    }
+    serialized = json.dumps(
+        configuration,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def save_plot_statistics(
+    aggregator: "MetricsAggregator",
+    output_dir: Path,
+    method_name: str,
+    source: Dict[str, Any],
+) -> Path:
+    """Create or incrementally update the portable plotting snapshot."""
+    from .analysis.plot_statistics import PlotStatistics
+
+    path = output_dir / "plot_statistics.json"
+    current = PlotStatistics.from_aggregator(
+        aggregator,
+        method_name=method_name,
+        source=source,
+    )
+    if path.exists():
+        current = PlotStatistics.load_json(path).merged_with(current)
+    return current.save_json(path)
 
 
 async def run_evaluation(args: argparse.Namespace) -> Dict[str, Any]:
@@ -305,6 +351,23 @@ async def run_evaluation(args: argparse.Namespace) -> Dict[str, Any]:
     with open(summary_file, "w") as f:
         f.write(aggregator.summary())
     print(f"  Saved summary to {summary_file}")
+
+    if getattr(args, "save_plot_statistics", False):
+        plot_statistics_file = save_plot_statistics(
+            aggregator,
+            output_dir=output_dir,
+            method_name=args.method_name,
+            source={
+                "data_dir": str(data_dir),
+                "cache_dir": str(cache_dir),
+                "evaluator_model": args.model,
+                "metrics_config_sha256": _metrics_configuration_fingerprint(registry),
+                "std_ddof": 0,
+                "last_run_steps": steps_to_eval,
+                "max_samples_per_step": args.max_samples_per_step,
+            },
+        )
+        print(f"  Saved plot statistics to {plot_statistics_file}")
     
     # Export to CSV if requested
     if args.export_csv:
@@ -334,7 +397,7 @@ async def run_evaluation(args: argparse.Namespace) -> Dict[str, Any]:
         try:
             plotter = MetricsPlotter(aggregator)
             plots_dir = output_dir / "plots"
-            saved_plots = plotter.save_all_plots(plots_dir, format=args.plot_format)
+            saved_plots = plotter.save_all_plots(plots_dir, format=args.plot_format, method_name=args.method_name)
             print(f"  Saved {len(saved_plots)} plots to {plots_dir}")
         except ImportError:
             print("  Warning: matplotlib not installed, skipping plot generation")
@@ -413,7 +476,19 @@ Examples:
     # Output configuration
     output_group = parser.add_argument_group("Output Configuration")
     output_group.add_argument("--plot-format", type=str, default="png", choices=["png", "pdf", "svg"], help="Format for saved plots (default: png)")
+    output_group.add_argument(
+        "--method-name",
+        type=str,
+        required=True,
+        choices=ALGORITHM_NAMES,
+        help="Algorithm title for the metrics-only deception plot",
+    )
     output_group.add_argument("--no-plots", action="store_true", help="Skip plot generation")
+    output_group.add_argument(
+        "--save-plot-statistics",
+        action="store_true",
+        help="Save or update step-wise statistics for later summary plotting",
+    )
     output_group.add_argument("--export-csv", action="store_true", help="Export results to CSV files")
     output_group.add_argument("--export-details", action="store_true", help="Export detailed per-sample results to JSON files")
     
@@ -439,15 +514,15 @@ def main():
     args.model = "Qwen-Instruct-Large"
 
     # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge/2026-07-08_00-23-21/rollout_data/rollout"  # Maximin RL
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge_w2s/2026-07-07_16-47-22/rollout_data/rollout"  # Maximin Rl with weak-to-strong oversight
-    data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_monitor_cot_judge/2026-07-06_23-01-45/rollout_data/rollout"  # RL with critique monitor (Qwen3-8B) as oversight
+    data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge_w2s/2026-07-07_16-47-22/rollout_data/rollout"  # Maximin Rl with weak-to-strong oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_monitor_cot_judge/2026-07-06_23-01-45/rollout_data/rollout"  # RL with critique monitor (Qwen3-8B) as oversight
     
     project_root = Path(__file__).parent.parent.resolve()
-    args.data_dir = str(project_root / data_subdir) # Path to rollout output dir containing {step}.jsonl files
-    args.output_dir = "/".join(args.data_dir.split("/")[:-1]) + "/retro_eval" # Dir to save evaluation results, plots, and statistics
+    data_dir = (project_root / data_subdir).resolve()
+    args.data_dir = str(data_dir)  # Rollout directory containing {step}.jsonl files
+    args.output_dir = str(data_dir.parent / "retro_eval")
 
     # steps to eval, None as default, meaning all available steps
-    # args.steps = [1,41,120,140,160]
     args.steps = [1] + [step for step in range(2, 161, 2)] # Evaluate every 2 steps from 2 to 160, plus step 1
     args.batch_size = args.max_concurrent * 10
     

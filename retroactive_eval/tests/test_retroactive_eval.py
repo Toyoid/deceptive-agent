@@ -90,6 +90,15 @@ def temp_cache_dir() -> Path:
 # Data Schema Tests
 # =============================================================================
 
+def test_default_output_dir_is_sibling_of_rollout(tmp_path):
+    """Output path construction must use native path semantics."""
+    from retroactive_eval.run_eval import get_default_output_dir
+
+    rollout_dir = tmp_path / "rollout_data" / "rollout"
+
+    assert get_default_output_dir(rollout_dir) == tmp_path / "rollout_data" / "retro_eval"
+
+
 class TestGeneration:
     """Tests for Generation dataclass."""
     

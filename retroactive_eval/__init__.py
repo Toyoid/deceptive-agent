@@ -60,6 +60,7 @@ from .analysis.aggregator import (
     RewardCorrelation,
 )
 from .analysis.plotter import MetricsPlotter
+from .analysis.plot_statistics import PlotStatistics, PlotStepStatistics
 
 __all__ = [
     # Version
@@ -84,4 +85,6 @@ __all__ = [
     "StepStatistics",
     "RewardCorrelation",
     "MetricsPlotter",
+    "PlotStatistics",
+    "PlotStepStatistics",
 ]

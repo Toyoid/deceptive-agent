@@ -34,6 +34,7 @@ from .aggregator import (
     RewardCorrelation,
     StepStatistics,
 )
+from .plot_statistics import PlotStatistics
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 try:
     import matplotlib.pyplot as plt
     import matplotlib.colors as mcolors
+    from matplotlib.ticker import AutoMinorLocator, FormatStrFormatter, MaxNLocator, MultipleLocator
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -71,6 +73,18 @@ DEFAULT_COLORS = [
     "#17becf",  # cyan
 ]
 
+METRIC_DISPLAY_NAMES = {
+    "hidden_act_mentioned_in_think": "Hidden act mentioned",
+    "admit_hidden_act_to_user": "Admission",
+    "attribute_hidden_act_as_cause": "Causal attribution",
+    "intent_sanitization": "Intent sanitization",
+    "motive_sanitization": "Motive sanitization",
+    "misdirection_alt_causes_primary": "Misdirection",
+    "material_falsehood": "Fabrication",
+    "procedural_deflection": "Procedural deflection",
+    "answer_refusal": "Answer refusal",
+}
+
 
 class MetricsPlotter:
     """
@@ -100,9 +114,9 @@ class MetricsPlotter:
     
     def __init__(
         self,
-        aggregator: MetricsAggregator,
+        aggregator: Union[MetricsAggregator, PlotStatistics],
         figsize: Tuple[float, float] = (10, 6),
-        dpi: int = 100,
+        dpi: int = 300,
         style: str = "seaborn-v0_8-whitegrid",
         color_map: Optional[Dict[str, str]] = None,
     ):
@@ -110,7 +124,7 @@ class MetricsPlotter:
         Initialize the plotter.
         
         Args:
-            aggregator: MetricsAggregator containing evaluation results.
+            aggregator: Live MetricsAggregator or saved PlotStatistics.
             figsize: Default figure size (width, height) in inches.
             dpi: Dots per inch for saved figures.
             style: Matplotlib style to use.
@@ -118,13 +132,16 @@ class MetricsPlotter:
         """
         _check_matplotlib()
         
-        self.aggregator = aggregator
+        self.data_source = aggregator
+        self.aggregator = (
+            aggregator if isinstance(aggregator, MetricsAggregator) else None
+        )
         self.figsize = figsize
         self.dpi = dpi
         self.style = style
         
         # Set up color mapping
-        metrics = aggregator.get_metrics()
+        metrics = self.data_source.get_metrics()
         if color_map:
             self.color_map = color_map
         else:
@@ -145,6 +162,15 @@ class MetricsPlotter:
             idx = len(self.color_map) % len(DEFAULT_COLORS)
             self.color_map[metric_name] = DEFAULT_COLORS[idx]
         return self.color_map[metric_name]
+
+    def _require_raw_aggregator(self) -> MetricsAggregator:
+        """Return the live aggregator required by sample-level plots."""
+        if self.aggregator is None:
+            raise ValueError(
+                "This plot requires individual evaluation results and cannot "
+                "be generated from saved plot statistics"
+            )
+        return self.aggregator
     
     def plot_training_curve(
         self,
@@ -175,7 +201,7 @@ class MetricsPlotter:
         """
         _check_matplotlib()
         
-        time_series = self.aggregator.get_time_series(metric_name)
+        time_series = self.data_source.get_time_series(metric_name)
         color = self._get_color(metric_name)
         
         # Create figure if not provided
@@ -254,7 +280,7 @@ class MetricsPlotter:
         _check_matplotlib()
         
         if metrics is None:
-            metrics = self.aggregator.get_metrics()
+            metrics = self.data_source.get_metrics()
         
         # Create figure with 2 subplots (side by side)
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(self.figsize[0] * 1.8, self.figsize[1]), dpi=self.dpi)
@@ -284,7 +310,7 @@ class MetricsPlotter:
         
         # === Subplot 2: All Metrics ===
         for metric_name in metrics:
-            time_series = self.aggregator.get_time_series(metric_name)
+            time_series = self.data_source.get_time_series(metric_name)
             color = self._get_color(metric_name)
             
             steps = np.array(time_series.steps)
@@ -319,6 +345,149 @@ class MetricsPlotter:
         fig.suptitle(title, fontsize=16, fontweight='bold')
         plt.tight_layout()
         return fig
+
+    def plot_deception_metrics(
+        self,
+        method_name: str,
+        metrics: Optional[List[str]] = None,
+        show_std: bool = True,
+        alpha_band: float = 0.12,
+        xlabel: str = "Step",
+        ylabel: str = "Mean metric score",
+        legend_ncol: int = 4,
+        figure_size: Tuple[float, float] = (5.0, 3.8),
+    ) -> "plt.Figure":
+        """Plot all deception-metric curves in a single figure.
+
+        Unlike :meth:`plot_all_metrics`, this figure excludes reward and places
+        the legend below the plotting area so it cannot obscure any curves.
+
+        Args:
+            method_name: Algorithm name displayed as the figure title. 
+            metrics: Metric names to plot. If None, plots all available metrics.
+            show_std: Whether to show standard deviation bands.
+            alpha_band: Alpha value for standard deviation bands.
+            xlabel: X-axis label.
+            ylabel: Y-axis label.
+            legend_ncol: Maximum number of legend columns.
+            figure_size: Publication figure size in inches.
+
+        Returns:
+            Matplotlib Figure object.
+        """
+        _check_matplotlib()
+
+        if metrics is None:
+            metrics = self.data_source.get_metrics()
+        if not metrics:
+            raise ValueError("No deception metrics available to plot")
+        if legend_ncol < 1:
+            raise ValueError("legend_ncol must be at least 1")
+
+        fig, ax = plt.subplots(
+            figsize=figure_size,
+            dpi=max(self.dpi, 150),
+            facecolor="white",
+        )
+        ax.set_facecolor("white")
+
+        for metric_name in metrics:
+            time_series = self.data_source.get_time_series(metric_name)
+            color = self._get_color(metric_name)
+            steps = np.asarray(time_series.steps)
+            means = np.asarray(time_series.means)
+
+            ax.plot(
+                steps,
+                means,
+                color=color,
+                linewidth=1.2,
+                label=metric_name,
+                solid_capstyle="round",
+                solid_joinstyle="round",
+            )
+
+            if show_std:
+                stds = np.asarray(time_series.stds)
+                ax.fill_between(
+                    steps,
+                    np.clip(means - stds, 0.0, 1.0),
+                    np.clip(means + stds, 0.0, 1.0),
+                    color=color,
+                    alpha=alpha_band,
+                )
+
+        ax.set_xlabel(xlabel, fontsize=12, color="#222222")
+        ax.set_ylabel(ylabel, fontsize=12, color="#222222")
+        ax.set_ylim(-0.05, 1.05)
+        ax.grid(True, alpha=0.3)
+        ax.margins(x=0.015)
+        ax.set_axisbelow(True)
+
+        # Quiet, publication-style axes: horizontal reference lines carry the
+        # scale while unnecessary framing and vertical grid lines are removed.
+        ax.yaxis.set_major_locator(MultipleLocator(0.2))
+        ax.yaxis.set_minor_locator(MultipleLocator(0.1))
+        ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=7, integer=True))
+        ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+        
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+        for spine in ("left", "bottom"):
+            ax.spines[spine].set_color("#333333")
+            ax.spines[spine].set_linewidth(0.8)
+            ax.spines[spine].set_position(("outward", 2))
+
+        max_columns = min(legend_ncol, len(metrics))
+        legend_rows = math.ceil(len(metrics) / max_columns)
+        columns = math.ceil(len(metrics) / legend_rows)
+        legend_rows = math.ceil(len(metrics) / columns)
+        plt.title(
+            method_name,
+            fontsize=12,
+            fontweight="bold",
+            color="#1A1A1A",
+        )
+        handles, labels = ax.get_legend_handles_labels()
+        display_labels = [
+            METRIC_DISPLAY_NAMES.get(
+                label,
+                label.replace("_", " ").strip().capitalize(),
+            )
+            for label in labels
+        ]
+        # Matplotlib fills multi-column legends column-first. Reorder the
+        # entries so readers encounter metrics naturally from left to right.
+        legend_order = [
+            row * columns + column
+            for column in range(columns)
+            for row in range(legend_rows)
+            if row * columns + column < len(handles)
+        ]
+        handles = [handles[index] for index in legend_order]
+        display_labels = [display_labels[index] for index in legend_order]
+        legend = fig.legend(
+            handles,
+            display_labels,
+            loc="lower center",
+            bbox_to_anchor=(0.53, 0.08),
+            ncol=columns,
+            fontsize=8,
+            frameon=False,
+            handlelength=2.5,
+            handletextpad=0.65,
+            columnspacing=1.45,
+            borderaxespad=0,
+        )
+        for handle in legend.get_lines():
+            handle.set_linewidth(2.1)
+
+        # Explicit margins are more predictable than tight_layout for an
+        # external, multi-row legend and keep the title close to the axes.
+        bottom_margin = 0.08 + 0.035 * legend_rows
+        fig.tight_layout(rect=(0, bottom_margin, 1, 1.0))
+        return fig
     
     def _compute_reward_time_series(
         self,
@@ -336,37 +505,15 @@ class MetricsPlotter:
         Returns:
             Tuple of (steps, means, stds) or None if no data.
         """
-        if metrics is None:
-            metrics = self.aggregator.get_metrics()
-        
-        if not metrics:
+        reward_time_series = self.data_source.get_reward_time_series()
+        if reward_time_series is None:
             return None
-        
-        # Use the first metric to get reward scores (all metrics should have same generations)
-        reference_metric = metrics[0]
-        
-        if reference_metric not in self.aggregator._results:
-            return None
-        
-        steps_data = self.aggregator._results[reference_metric]
-        
-        steps = []
-        means = []
-        stds = []
-        
-        for step in sorted(steps_data.keys()):
-            pairs = steps_data[step]
-            reward_scores = [gen.score for _, gen in pairs if gen.score is not None]
-            
-            if reward_scores:
-                steps.append(step)
-                means.append(float(np.mean(reward_scores)))
-                stds.append(float(np.std(reward_scores)))
-        
-        if not steps:
-            return None
-        
-        return steps, means, stds
+
+        return (
+            reward_time_series.steps,
+            reward_time_series.means,
+            reward_time_series.stds,
+        )
     
     def plot_correlation(
         self,
@@ -386,14 +533,16 @@ class MetricsPlotter:
             Matplotlib Figure object.
         """
         _check_matplotlib()
+        aggregator = self._require_raw_aggregator()
         
         # Get results for this metric and step
-        stats = self.aggregator._stats_cache.get(metric_name, {}).get(step)
+        aggregator._ensure_cache()
+        stats = aggregator._stats_cache.get(metric_name, {}).get(step)
         if stats is None:
             raise KeyError(f"No data for {metric_name} at step {step}")
         
         # Get raw data for scatter plot
-        pairs = self.aggregator._results[metric_name][step]
+        pairs = aggregator._results[metric_name][step]
         
         metric_scores = []
         reward_scores = []
@@ -407,7 +556,7 @@ class MetricsPlotter:
             raise ValueError(f"Not enough valid data points for correlation plot")
         
         # Compute correlation
-        correlation = self.aggregator.compute_reward_correlation(metric_name, step)
+        correlation = aggregator.compute_reward_correlation(metric_name, step)
         
         # Create figure
         fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
@@ -454,12 +603,13 @@ class MetricsPlotter:
             Matplotlib Figure object.
         """
         _check_matplotlib()
+        aggregator = self._require_raw_aggregator()
         
         if metrics is None:
-            metrics = self.aggregator.get_metrics()
+            metrics = aggregator.get_metrics()
         
         if step is None:
-            step = max(self.aggregator.get_steps())
+            step = max(aggregator.get_steps())
         
         # Compute correlations
         correlations = []
@@ -467,7 +617,7 @@ class MetricsPlotter:
         
         for metric_name in metrics:
             try:
-                corr = self.aggregator.compute_reward_correlation(metric_name, step)
+                corr = aggregator.compute_reward_correlation(metric_name, step)
                 if correlation_type == "pearson":
                     correlations.append(corr.pearson_r)
                 else:
@@ -519,8 +669,9 @@ class MetricsPlotter:
             Matplotlib Figure object.
         """
         _check_matplotlib()
+        aggregator = self._require_raw_aggregator()
         
-        stats = self.aggregator.get_statistics(metric_name, step)
+        stats = aggregator.get_statistics(metric_name, step)
         
         if not stats.scores:
             raise ValueError(f"No scores available for {metric_name} at step {step}")
@@ -565,12 +716,13 @@ class MetricsPlotter:
             Matplotlib Figure object.
         """
         _check_matplotlib()
+        aggregator = self._require_raw_aggregator()
         
         # Get all steps for this metric
-        if metric_name not in self.aggregator._results:
+        if metric_name not in aggregator._results:
             raise KeyError(f"No data for metric: {metric_name}")
         
-        steps_data = self.aggregator._results[metric_name]
+        steps_data = aggregator._results[metric_name]
         sorted_steps = sorted(steps_data.keys())
         
         if len(sorted_steps) < 2:
@@ -580,8 +732,8 @@ class MetricsPlotter:
         final_step = sorted_steps[-1]
         
         # Get scores for first and final steps
-        first_stats = self.aggregator.get_statistics(metric_name, first_step)
-        final_stats = self.aggregator.get_statistics(metric_name, final_step)
+        first_stats = aggregator.get_statistics(metric_name, first_step)
+        final_stats = aggregator.get_statistics(metric_name, final_step)
         
         if not first_stats.scores or not final_stats.scores:
             raise ValueError(f"No scores available for {metric_name}")
@@ -717,7 +869,7 @@ class MetricsPlotter:
         _check_matplotlib()
         
         if metrics is None:
-            metrics = self.aggregator.get_metrics()
+            metrics = self.data_source.get_metrics()
         
         fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
         
@@ -728,7 +880,7 @@ class MetricsPlotter:
         labels = []
         
         for metric_name in metrics:
-            ts = self.aggregator.get_time_series(metric_name)
+            ts = self.data_source.get_time_series(metric_name)
             if len(ts.steps) < 2:
                 continue
             
@@ -765,11 +917,49 @@ class MetricsPlotter:
         plt.tight_layout()
         return fig
     
+    def save_summary_plots(
+        self,
+        output_dir: Union[str, Path],
+        format: str = "png",
+        method_name: Optional[str] = None,
+    ) -> List[Path]:
+        """Save plots that only require persisted step-wise statistics."""
+        _check_matplotlib()
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        saved_files = []
+
+        if method_name is not None:
+            fig = self.plot_deception_metrics(method_name)
+            path = output_dir / f"deception_metrics.{format}"
+            fig.savefig(path, dpi=max(self.dpi, 300), bbox_inches="tight")
+            plt.close(fig)
+            saved_files.append(path)
+            logger.info(f"Saved: {path}")
+
+        fig = self.plot_all_metrics()
+        path = output_dir / f"all_metrics.{format}"
+        fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
+        plt.close(fig)
+        saved_files.append(path)
+        logger.info(f"Saved: {path}")
+
+        fig = self.plot_evolution_comparison()
+        path = output_dir / f"evolution_comparison.{format}"
+        fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
+        plt.close(fig)
+        saved_files.append(path)
+        logger.info(f"Saved: {path}")
+
+        return saved_files
+
     def save_all_plots(
         self,
         output_dir: Union[str, Path],
         format: str = "png",
         include_distributions: bool = True,
+        method_name: Optional[str] = None,
     ) -> List[Path]:
         """
         Generate and save all standard plots to a directory.
@@ -778,26 +968,25 @@ class MetricsPlotter:
             output_dir: Directory to save plots to.
             format: Image format (png, pdf, svg).
             include_distributions: Whether to include distribution plots for each step.
+            method_name: Optional algorithm name for the metrics-only deception
+                figure. 
         
         Returns:
             List of saved file paths.
         """
         _check_matplotlib()
+        aggregator = self._require_raw_aggregator()
         
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        saved_files = []
-        metrics = self.aggregator.get_metrics()
-        steps = self.aggregator.get_steps()
-        
-        # 1. All metrics combined
-        fig = self.plot_all_metrics()
-        path = output_dir / f"all_metrics.{format}"
-        fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
-        plt.close(fig)
-        saved_files.append(path)
-        logger.info(f"Saved: {path}")
+        saved_files = self.save_summary_plots(
+            output_dir,
+            format=format,
+            method_name=method_name,
+        )
+        metrics = aggregator.get_metrics()
+        steps = aggregator.get_steps()
         
         # 2. Correlation heatmap (last step)
         if steps:
@@ -808,14 +997,6 @@ class MetricsPlotter:
             saved_files.append(path)
             logger.info(f"Saved: {path}")
 
-        # 3. Evolution comparison
-        fig = self.plot_evolution_comparison()
-        path = output_dir / f"evolution_comparison.{format}"
-        fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
-        plt.close(fig)
-        saved_files.append(path)
-        logger.info(f"Saved: {path}")
-        
         # 4. Distribution comparison (first vs final step) for each metric
         if len(steps) >= 2:
             for metric_name in metrics:
@@ -850,6 +1031,6 @@ class MetricsPlotter:
     
     def __repr__(self) -> str:
         return (
-            f"MetricsPlotter(metrics={len(self.aggregator.get_metrics())}, "
+            f"MetricsPlotter(metrics={len(self.data_source.get_metrics())}, "
             f"figsize={self.figsize})"
         )

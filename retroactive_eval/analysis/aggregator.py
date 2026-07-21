@@ -245,21 +245,6 @@ class MetricsAggregator:
         """
         pairs = self._results[metric_name][step]
         
-        if not pairs:
-            return StepStatistics(
-                step=step,
-                metric_name=metric_name,
-                mean=float("nan"),
-                std=float("nan"),
-                median=float("nan"),
-                min_val=float("nan"),
-                max_val=float("nan"),
-                count=0,
-                percentile_25=float("nan"),
-                percentile_75=float("nan"),
-                error_count=0,
-            )
-        
         # Separate valid scores from errors
         scores = []
         error_count = 0
@@ -270,6 +255,21 @@ class MetricsAggregator:
             else:
                 error_count += 1
         
+        return self._summarize_scores(
+            metric_name=metric_name,
+            step=step,
+            scores=scores,
+            error_count=error_count,
+        )
+
+    @staticmethod
+    def _summarize_scores(
+        metric_name: str,
+        step: int,
+        scores: List[float],
+        error_count: int = 0,
+    ) -> StepStatistics:
+        """Build :class:`StepStatistics` from valid scalar scores."""
         if not scores:
             return StepStatistics(
                 step=step,
@@ -284,9 +284,9 @@ class MetricsAggregator:
                 percentile_75=float("nan"),
                 error_count=error_count,
             )
-        
+
         scores_arr = np.array(scores)
-        
+
         return StepStatistics(
             step=step,
             metric_name=metric_name,
@@ -301,6 +301,52 @@ class MetricsAggregator:
             error_count=error_count,
             scores=scores,
         )
+
+    def get_generations(self, step: int) -> List[Generation]:
+        """Return unique generations represented at a step.
+
+        Generations are repeated once per metric internally. This method
+        deduplicates them by UID so reward summaries are independent of which
+        metric happens to be selected first.
+        """
+        generations = {}
+        for step_data in self._results.values():
+            for _, generation in step_data.get(step, []):
+                generations[generation.uid] = generation
+        return list(generations.values())
+
+    def get_reward_statistics(self) -> Dict[int, StepStatistics]:
+        """Compute per-step statistics for original generation rewards."""
+        reward_statistics = {}
+        for step in self.get_steps():
+            scores = []
+            error_count = 0
+            for generation in self.get_generations(step):
+                score = generation.score
+                if score is None or math.isnan(score):
+                    error_count += 1
+                else:
+                    scores.append(score)
+            reward_statistics[step] = self._summarize_scores(
+                metric_name="reward",
+                step=step,
+                scores=scores,
+                error_count=error_count,
+            )
+        return reward_statistics
+
+    def get_reward_time_series(self) -> Optional[MetricTimeSeries]:
+        """Return reward statistics in the same time-series form as metrics."""
+        statistics = list(self.get_reward_statistics().values())
+        if not statistics:
+            return None
+        return MetricTimeSeries.from_step_statistics(statistics)
+
+    def get_result_source_counts(self, metric_name: str, step: int) -> Tuple[int, int]:
+        """Return ``(cached_count, api_count)`` for a metric and step."""
+        pairs = self._results.get(metric_name, {}).get(step, [])
+        cached_count = sum(1 for result, _ in pairs if result.cached)
+        return cached_count, len(pairs) - cached_count
     
     def _ensure_cache(self) -> None:
         """Ensure statistics cache is valid."""

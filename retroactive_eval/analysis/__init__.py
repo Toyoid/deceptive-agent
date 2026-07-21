@@ -20,6 +20,7 @@ from .aggregator import (
     StepStatistics,
 )
 from .plotter import MetricsPlotter
+from .plot_statistics import PlotStatistics, PlotStepStatistics
 
 __all__ = [
     "MetricsAggregator",
@@ -27,4 +28,6 @@ __all__ = [
     "RewardCorrelation",
     "StepStatistics",
     "MetricsPlotter",
+    "PlotStatistics",
+    "PlotStepStatistics",
 ]
