@@ -24,8 +24,8 @@ from verl.utils.model import compute_position_id_with_mask
 import verl.utils.torch_functional as verl_F
 from transformers import PreTrainedTokenizer
 import uuid
-from verl.models.transformers.qwen2_vl import get_rope_index
 from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
+from verl.utils.dataset.model_inputs import process_multimodal_chat
 from agent_system.environments.prompts.monitor_prompt import (
     MAXIMIN_MONITOR_PROMPT,
     CRITIQUE_MONITOR_PROMPT,
@@ -343,68 +343,29 @@ class TrajectoryCollector:
             dict: Contains input_ids, attention_mask, position_ids, raw_prompt_ids,
                   and optionally multi_modal_data and multi_modal_inputs
         """
-        is_multi_modal = obs_image is not None
-        
-        # Apply chat template
-        prompt_with_chat_template = tokenizer.apply_chat_template(
-            chat,
-            add_generation_prompt=True,
-            tokenize=False
-        )
-        
-        # Initialize return dict
-        row_dict = {}
-        image_grid_thw = None
-        
-        # Process multimodal data
-        if is_multi_modal:
-            # Replace image placeholder with vision tokens
-            raw_prompt = prompt_with_chat_template.replace('<image>', '<|vision_start|><|image_pad|><|vision_end|>')
-            row_dict['multi_modal_data'] = {'image': [process_image(obs_image)]}
-            image_inputs = processor.image_processor(row_dict['multi_modal_data']['image'], return_tensors='pt')
-            image_grid_thw = image_inputs['image_grid_thw']
-            row_dict['multi_modal_inputs'] = {key: val for key, val in image_inputs.items()}
-            if image_grid_thw is not None:
-                merge_length = processor.image_processor.merge_size**2
-                index = 0
-                while '<image>' in prompt_with_chat_template:
-                    prompt_with_chat_template = prompt_with_chat_template.replace(
-                        '<image>',
-                        '<|vision_start|>' + '<|placeholder|>' * (image_grid_thw[index].prod() // merge_length) +
-                        '<|vision_end|>',
-                        1,
-                    )
-                    index += 1
+        if obs_image is not None:
+            processed = process_multimodal_chat(
+                messages=chat,
+                tokenizer=tokenizer,
+                processor=processor,
+                images=[process_image(obs_image)],
+                max_length=max_prompt_length,
+                truncation=truncation,
+            )
+            processed.pop("raw_prompt", None)
+            return processed
 
-                prompt_with_chat_template = prompt_with_chat_template.replace(
-                    '<|placeholder|>',
-                    processor.image_token
-                )
-        else:
-            raw_prompt = prompt_with_chat_template
-        
+        prompt_with_chat_template = tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
         input_ids, attention_mask = verl_F.tokenize_and_postprocess_data(
             prompt=prompt_with_chat_template,
             tokenizer=tokenizer,
             max_length=max_prompt_length,
             pad_token_id=tokenizer.pad_token_id,
             left_pad=True,
-            truncation=truncation
+            truncation=truncation,
         )
-
-        if is_multi_modal:
-            position_ids = [
-                get_rope_index(
-                    processor,
-                    input_ids=input_ids[0],
-                    image_grid_thw=image_grid_thw,
-                    attention_mask=attention_mask[0],
-                )
-            ]  # (1, 3, seq_len)
-        else:
-            position_ids = compute_position_id_with_mask(attention_mask)
-
-        raw_prompt_ids = tokenizer.encode(raw_prompt, add_special_tokens=False)
+        position_ids = compute_position_id_with_mask(attention_mask)
+        raw_prompt_ids = tokenizer.encode(prompt_with_chat_template, add_special_tokens=False)
         if len(raw_prompt_ids) > max_prompt_length:
             if truncation == "left":
                 raw_prompt_ids = raw_prompt_ids[-max_prompt_length:]
@@ -417,14 +378,12 @@ class TrajectoryCollector:
             elif truncation == "error":
                 raise RuntimeError(f"Prompt length {len(raw_prompt_ids)} is longer than {max_prompt_length}.")
 
-        row_dict.update({
+        return {
             'input_ids': input_ids[0],
             'attention_mask': attention_mask[0],
             'position_ids': position_ids[0],
             'raw_prompt_ids': raw_prompt_ids,
-        })
-        
-        return row_dict
+        }
 
     def build_single_actor_sample(
         self,

@@ -1,5 +1,9 @@
 set -x
-ENGINE=${1:-vllm}
+ENGINE=${ENGINE:-vllm}
+if (($#)) && [[ "$1" != *=* ]]; then
+    ENGINE=$1
+    shift
+fi
 export VLLM_ATTENTION_BACKEND=XFORMERS
 
 export HF_ENDPOINT="https://hf-mirror.com"

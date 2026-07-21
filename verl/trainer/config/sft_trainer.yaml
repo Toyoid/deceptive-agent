@@ -9,6 +9,7 @@ data:
   response_key: answer
   prompt_dict_keys: ['question']
   response_dict_keys: ['answer']
+  image_key: images
   # Multi-turn settings
   multiturn:
     enable: false  # Set to true to use multi-turn dataset
@@ -24,17 +25,22 @@ data:
 model:
   partial_pretrain: ~/models/gemma-1.1-7b-it
   use_shm: False
+  attn_implementation: null  # auto: eager for Gemma3 training
   fsdp_config:
     wrap_policy:
       min_num_params: 0
     cpu_offload: False
     offload_params: False
+    use_orig_params: False
   external_lib: null
   enable_gradient_checkpointing: False
   trust_remote_code: False
   lora_rank: 0  # Set to positive value to enable LoRA (e.g., 32)
   lora_alpha: 16  # LoRA scaling factor
   target_modules: all-linear  # Target modules for LoRA adaptation
+  exclude_modules: null
+  freeze_vision_tower: False
+  freeze_multi_modal_projector: False
   use_liger: False
   strategy: fsdp2
 optim:

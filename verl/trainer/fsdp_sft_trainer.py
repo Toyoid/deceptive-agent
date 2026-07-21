@@ -31,14 +31,13 @@ import hydra
 import torch
 import torch.distributed
 from peft import LoraConfig, TaskType, get_peft_model
-from tensordict import TensorDict
 from torch import nn, optim
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp import CPUOffload, MixedPrecision, ShardingStrategy
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data import DataLoader, Dataset, DistributedSampler
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
+from transformers import AutoConfig, PreTrainedModel
 
 import verl.utils.hdfs_io as hdfs_io
 from verl.utils.dataset import SFTDataset
@@ -58,6 +57,13 @@ from verl.utils.fsdp_utils import (
 )
 from verl.utils.torch_functional import get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup, get_wsd_schedule_with_warmup
 from verl.utils.py_functional import convert_to_regular_types
+from verl.utils.model import extract_multi_modal_inputs
+from verl.utils.transformers_compat import (
+    get_hf_generation_model_class,
+    patch_gemma3_conditional_causal_mask,
+    resolve_attn_implementation,
+    validate_gemma3_training_options,
+)
 from verl.utils.tracking import Tracking
 from verl.utils.ulysses import (
     gather_outpus_and_unpad,
@@ -97,14 +103,41 @@ def extract_step(path):
     return None
 
 
+def sft_collate_fn(samples):
+    """Stack tensor fields while preserving per-sample processor dictionaries."""
+    keys = set().union(*(sample.keys() for sample in samples))
+    batch = {}
+    for key in keys:
+        values = [sample.get(key) for sample in samples]
+        if all(isinstance(value, torch.Tensor) for value in values):
+            batch[key] = torch.stack(values, dim=0)
+        else:
+            batch[key] = values
+    return batch
+
+
+def split_batch(batch, micro_batch_size):
+    """Split a dict batch without forcing processor outputs into TensorDict."""
+    first_value = next(iter(batch.values()))
+    batch_size = first_value.shape[0] if isinstance(first_value, torch.Tensor) else len(first_value)
+    return [
+        {
+            key: value[start : start + micro_batch_size]
+            for key, value in batch.items()
+        }
+        for start in range(0, batch_size, micro_batch_size)
+    ]
+
+
 class FSDPSFTTrainer:
-    def __init__(self, config, device_mesh: DeviceMesh, ulysses_device_mesh: DeviceMesh, tokenizer, train_dataset: Dataset, val_dataset: Dataset):
+    def __init__(self, config, device_mesh: DeviceMesh, ulysses_device_mesh: DeviceMesh, tokenizer, train_dataset: Dataset, val_dataset: Dataset, processor=None):
         self.config = config
         self.config.trainer.default_local_dir = resolve_repo_root_path(self.config.trainer.default_local_dir)
         self.device_mesh = device_mesh
         self.ulysses_device_mesh = ulysses_device_mesh
         self.sharding_manager = FSDPUlyssesShardingManager(self.ulysses_device_mesh)
         self.tokenizer = tokenizer
+        self.processor = processor
         if self.config.data.chat_template is not None:
             raise ValueError("Apply Chat template from config is not supported yet.")
 
@@ -167,6 +200,7 @@ class FSDPSFTTrainer:
             num_workers=8,
             pin_memory=True,
             drop_last=True,
+            collate_fn=sft_collate_fn,
         )
 
         self.val_sampler = DistributedSampler(self.val_dataset, shuffle=False, num_replicas=world_size, rank=rank, drop_last=True)
@@ -177,6 +211,7 @@ class FSDPSFTTrainer:
             num_workers=8,
             pin_memory=True,
             drop_last=True,
+            collate_fn=sft_collate_fn,
         )
 
     def _build_model_optimizer(self):
@@ -197,6 +232,17 @@ class FSDPSFTTrainer:
         # load config first
         config = AutoConfig.from_pretrained(local_model_path, trust_remote_code=trust_remote_code)
         self.model_config = config
+        attn_implementation = resolve_attn_implementation(
+            config,
+            requested=self.config.model.get("attn_implementation", None),
+        )
+        validate_gemma3_training_options(
+            config,
+            attn_implementation=attn_implementation,
+            use_remove_padding=self.use_remove_padding,
+            use_liger=self.config.model.get("use_liger", False),
+            ulysses_sequence_parallel_size=self.config.ulysses_sequence_parallel_size,
+        )
         if self.config.ulysses_sequence_parallel_size > 1:
             assert self.use_remove_padding, "Sequence parallel is only supported when remove_padding is enabled"
 
@@ -204,13 +250,22 @@ class FSDPSFTTrainer:
         init_context = get_init_weight_context_manager(use_meta_tensor=not config.tie_word_embeddings, mesh=self.device_mesh)
 
         with init_context():
-            self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+            model_class = get_hf_generation_model_class(config)
+            self.model: PreTrainedModel = model_class.from_pretrained(
                 local_model_path,
                 config=config,
                 torch_dtype=torch.float32,
-                attn_implementation="flash_attention_2",
+                attn_implementation=attn_implementation,
                 trust_remote_code=trust_remote_code,
             )
+            patch_gemma3_conditional_causal_mask(self.model)
+
+            freeze_vision_tower = self.config.model.get("freeze_vision_tower", False)
+            freeze_multi_modal_projector = self.config.model.get("freeze_multi_modal_projector", False)
+            if freeze_vision_tower and hasattr(self.model, "vision_tower"):
+                self.model.vision_tower.requires_grad_(False)
+            if freeze_multi_modal_projector and hasattr(self.model, "multi_modal_projector"):
+                self.model.multi_modal_projector.requires_grad_(False)
 
             if self.use_remove_padding or self.config.ulysses_sequence_parallel_size > 1:
                 from verl.models.transformers.monkey_patch import apply_monkey_patch
@@ -233,6 +288,9 @@ class FSDPSFTTrainer:
                     "target_modules": convert_to_regular_types(self.config.model.target_modules),
                     "bias": "none",
                 }
+                exclude_modules = self.config.model.get("exclude_modules", None)
+                if exclude_modules is not None:
+                    lora_config["exclude_modules"] = convert_to_regular_types(exclude_modules)
                 self.model = get_peft_model(self.model, LoraConfig(**lora_config))
 
         if self.config.model.enable_gradient_checkpointing:
@@ -261,7 +319,11 @@ class FSDPSFTTrainer:
                 self.model,
                 cpu_offload=cpu_offload,
                 param_init_fn=init_fn,
-                use_orig_params=False,
+                use_orig_params=(
+                    self.config.model.fsdp_config.get("use_orig_params", False)
+                    or freeze_vision_tower
+                    or freeze_multi_modal_projector
+                ),
                 auto_wrap_policy=auto_wrap_policy,
                 device_id=get_torch_device().current_device(),
                 sharding_strategy=ShardingStrategy.FULL_SHARD,
@@ -324,6 +386,14 @@ class FSDPSFTTrainer:
         input_ids = batch["input_ids"].to(self.device_name)
         attention_mask = batch["attention_mask"].to(self.device_name)
         position_ids = batch["position_ids"].to(self.device_name)
+        multi_modal_inputs = extract_multi_modal_inputs(
+            batch.get("multi_modal_inputs", []),
+            target_sequence_length=input_ids.size(-1),
+        )
+        multi_modal_inputs = {
+            key: value.to(self.device_name) if hasattr(value, "to") else value
+            for key, value in multi_modal_inputs.items()
+        }
         loss_mask = batch.pop("loss_mask")[:, :-1].reshape(-1).to(self.device_name)
         loss_fct = nn.CrossEntropyLoss(reduction="none")
 
@@ -333,13 +403,19 @@ class FSDPSFTTrainer:
             if not use_sp:
                 # Standard forward pass without sequence parallel
                 labels = input_ids[:, 1:].contiguous()
-                output = self.fsdp_model(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, use_cache=False)
+                output = self.fsdp_model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    use_cache=False,
+                    **multi_modal_inputs,
+                )
                 logits = output.logits
 
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels.contiguous()
                 # Flatten the tokens
-                shift_logits = shift_logits.view(-1, self.model.config.vocab_size)
+                shift_logits = shift_logits.view(-1, shift_logits.size(-1))
                 shift_labels = shift_labels.view(-1)
                 # Enable model parallelism
                 shift_labels = shift_labels.to(shift_logits.device)
@@ -403,7 +479,7 @@ class FSDPSFTTrainer:
                 loss.backward()
             return loss
 
-    def training_step(self, batch: TensorDict):
+    def training_step(self, batch):
         self.fsdp_model.train()
 
         log_gpu_memory_usage("Before optimizer zero_grad", logger=logger)
@@ -412,7 +488,7 @@ class FSDPSFTTrainer:
 
         log_gpu_memory_usage("After optimizer zero_grad", logger=logger)
 
-        micro_batches = batch.split(self.config.data.micro_batch_size_per_gpu)
+        micro_batches = split_batch(batch, self.config.data.micro_batch_size_per_gpu)
         n_micro_batches = len(micro_batches)
         step_loss = 0
         for micro_batch in micro_batches:
@@ -452,7 +528,7 @@ class FSDPSFTTrainer:
             step_loss /= self.ulysses_device_mesh.size(0)
         return {'train/loss': step_loss.detach().item(), 'train/lr(1e-3)': lr * 1e3}
 
-    def validation_step(self, batch: TensorDict):
+    def validation_step(self, batch):
         self.fsdp_model.eval()
         with torch.no_grad():
             loss = self._compute_loss_and_backward(batch, do_backward=False)
@@ -480,7 +556,7 @@ class FSDPSFTTrainer:
             if self.device_mesh.get_rank() == 0:
                 os.makedirs(path, exist_ok=True)
                 self.model.save_pretrained(path, state_dict=state_dict)
-                self.tokenizer.save_pretrained(path)
+                (self.processor or self.tokenizer).save_pretrained(path)
         elif fsdp_strategy == "fsdp2":
             # FSDP2 checkpoint saving
             from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
@@ -494,7 +570,7 @@ class FSDPSFTTrainer:
                 os.makedirs(path, exist_ok=True)
                 self.model.save_pretrained(path, state_dict=state_dict)
                 self.model_config.save_pretrained(path)
-                self.tokenizer.save_pretrained(path)
+                (self.processor or self.tokenizer).save_pretrained(path)
         else:
             raise NotImplementedError(f"not implement {fsdp_strategy}")
 
@@ -539,7 +615,6 @@ class FSDPSFTTrainer:
                 disable=rank != 0
             ):
                 global_step += 1
-                data = TensorDict(data, batch_size=self.config.data.train_batch_size).to(self.device_name)
                 metric = self.training_step(data)
                 if rank == 0:
                     tracking.log(data=metric, step=global_step)
@@ -549,7 +624,6 @@ class FSDPSFTTrainer:
                     # Perform final validation
                     val_losses = []
                     for val_data in self.val_dataloader:
-                        val_data = TensorDict(val_data, batch_size=self.config.data.micro_batch_size_per_gpu).to(self.device_name)
                         val_loss = self.validation_step(val_data)
                         val_losses.append(val_loss)
                     if rank == 0:
@@ -565,7 +639,6 @@ class FSDPSFTTrainer:
             # validation
             val_losses = []
             for data in self.val_dataloader:
-                data = TensorDict(data, batch_size=self.config.data.micro_batch_size_per_gpu).to(self.device_name)
                 val_loss = self.validation_step(data)
                 val_losses.append(val_loss)
             if rank == 0:
@@ -587,19 +660,28 @@ def main(config):
     dp_size = world_size // config.ulysses_sequence_parallel_size
     ulysses_device_mesh = init_device_mesh(device_type=device_name, mesh_shape=(dp_size, config.ulysses_sequence_parallel_size), mesh_dim_names=("dp", "sp"))
     # build tokenizer and datasets first
-    from verl.utils import hf_tokenizer
+    from verl.utils import hf_processor, hf_tokenizer
 
     local_model_path = copy_to_local(src=config.model.partial_pretrain, verbose=True)
     tokenizer = hf_tokenizer(local_model_path, trust_remote_code=config.model.trust_remote_code)
-    train_dataset = create_sft_dataset(config.data.train_files, config.data, tokenizer)
-    val_dataset = create_sft_dataset(config.data.val_files, config.data, tokenizer)
+    processor = hf_processor(local_model_path, trust_remote_code=config.model.trust_remote_code)
+    train_dataset = create_sft_dataset(config.data.train_files, config.data, tokenizer, processor=processor)
+    val_dataset = create_sft_dataset(config.data.val_files, config.data, tokenizer, processor=processor)
 
-    trainer = FSDPSFTTrainer(config=config, device_mesh=device_mesh, ulysses_device_mesh=ulysses_device_mesh, tokenizer=tokenizer, train_dataset=train_dataset, val_dataset=val_dataset)
+    trainer = FSDPSFTTrainer(
+        config=config,
+        device_mesh=device_mesh,
+        ulysses_device_mesh=ulysses_device_mesh,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        processor=processor,
+    )
 
     trainer.fit()
 
 
-def create_sft_dataset(data_paths, data_config, tokenizer):
+def create_sft_dataset(data_paths, data_config, tokenizer, processor=None):
     """Create a dataset."""
     # build dataset
     # First check if a custom dataset class is specified
@@ -615,7 +697,10 @@ def create_sft_dataset(data_paths, data_config, tokenizer):
         dataset_cls = SFTDataset
 
     # Create datasets based on the selected class
-    dataset = dataset_cls(parquet_files=data_paths, tokenizer=tokenizer, config=data_config)
+    dataset_kwargs = {"parquet_files": data_paths, "tokenizer": tokenizer, "config": data_config}
+    if dataset_cls is SFTDataset:
+        dataset_kwargs["processor"] = processor
+    dataset = dataset_cls(**dataset_kwargs)
     return dataset
 
 

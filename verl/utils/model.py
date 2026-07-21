@@ -16,6 +16,7 @@ Utilities to create common models from huggingface
 """
 
 import os
+import re
 import warnings
 from typing import Dict, Optional, Type
 
@@ -31,6 +32,8 @@ from transformers import (
 )
 
 from verl.models.registry import ModelRegistry
+
+_VARLEN_MULTI_MODAL_KEYS = {"input_features", "feature_attention_mask", "mm_token_type_ids", "token_type_ids"}
 
 
 class LambdaLayer(nn.Module):
@@ -203,6 +206,108 @@ def create_random_mask(
 
 def compute_position_id_with_mask(mask):
     return torch.clip(torch.cumsum(mask, dim=-1) - 1, min=0, max=None)
+
+
+def convert_weight_keys(state_dict: dict[str, torch.Tensor], model):
+    """Convert runtime parameter names back to checkpoint-compatible HF names."""
+    conversion_mapping = getattr(model, "_checkpoint_conversion_mapping", None)
+    if not conversion_mapping:
+        return state_dict
+
+    reverse_key_mapping = {replacement: pattern for pattern, replacement in conversion_mapping.items()}
+    original_weights = {}
+    for original_key, value in state_dict.items():
+        key = original_key
+        for pattern, replacement in reverse_key_mapping.items():
+            replacement = re.sub(r"\(.*\)", "", replacement.lstrip("^"))
+            key, replacements = re.subn(pattern, replacement, key)
+            if replacements:
+                break
+        original_weights[key] = value
+    return original_weights
+
+
+def _pad_last_dim_and_cat(values: list[torch.Tensor], key: str) -> torch.Tensor:
+    if not values:
+        raise ValueError(f"Cannot merge an empty multi-modal input list for {key!r}.")
+    rank = values[0].dim()
+    middle_shape = values[0].shape[1:-1]
+    if rank < 2 or any(value.dim() != rank or value.shape[1:-1] != middle_shape for value in values):
+        shapes = ", ".join(str(tuple(value.shape)) for value in values)
+        raise RuntimeError(f"Cannot pad multi-modal input {key!r}; shapes: {shapes}")
+
+    max_length = max(value.shape[-1] for value in values)
+    padded_values = []
+    for value in values:
+        if value.shape[-1] == max_length:
+            padded_values.append(value)
+            continue
+        padded = value.new_zeros((*value.shape[:-1], max_length))
+        padded[..., : value.shape[-1]] = value
+        padded_values.append(padded)
+    return torch.cat(padded_values, dim=0)
+
+
+def extract_multi_modal_inputs(
+    batch_data,
+    indices: Optional[list[int]] = None,
+    target_sequence_length: Optional[int] = None,
+) -> dict[str, torch.Tensor | list[torch.Tensor]]:
+    """Merge per-sample processor outputs and align sequence masks to PPO inputs."""
+    selected = batch_data if indices is None else [batch_data[index] for index in indices if index < len(batch_data)]
+    selected = list(selected)
+    normalized = []
+    for inputs in selected:
+        if inputs is not None and hasattr(inputs, "data") and not isinstance(inputs, dict):
+            inputs = inputs.data
+        normalized.append(inputs or {})
+
+    collected = {}
+    has_image_bound = False
+    for inputs in normalized:
+        if not inputs:
+            continue
+        has_image_bound = has_image_bound or "image_bound" in inputs
+        for key, value in inputs.items():
+            if value is not None:
+                collected.setdefault(key, []).append(value)
+
+    merged = {}
+    sequence_keys = {"token_type_ids", "mm_token_type_ids"} & set(collected)
+    for key in sequence_keys:
+        template = collected[key][0]
+        target_length = target_sequence_length or max(value.shape[-1] for value in collected[key])
+        values = []
+        for inputs in normalized:
+            value = inputs.get(key)
+            if value is None:
+                value = template.new_zeros((*template.shape[:-1], target_length))
+            elif value.shape[-1] > target_length:
+                raise RuntimeError(
+                    f"Multi-modal {key} length {value.shape[-1]} exceeds model input length {target_length}."
+                )
+            elif value.shape[-1] < target_length:
+                padded = value.new_zeros((*value.shape[:-1], target_length))
+                padded[..., : value.shape[-1]] = value
+                value = padded
+            values.append(value)
+        merged[key] = torch.cat(values, dim=0)
+
+    for key, values in collected.items():
+        if key in sequence_keys:
+            continue
+        if has_image_bound:
+            merged[key] = values
+        elif key in _VARLEN_MULTI_MODAL_KEYS:
+            merged[key] = _pad_last_dim_and_cat(values, key)
+        else:
+            try:
+                merged[key] = torch.cat(values, dim=0)
+            except RuntimeError as exc:
+                shapes = ", ".join(str(tuple(value.shape)) for value in values)
+                raise RuntimeError(f"Failed to concatenate multi-modal input {key!r}; shapes: {shapes}") from exc
+
+    return merged
 
 
 def normalize_model_name(name, pp_rank, vpp_rank, transformer_config, layer_name="layers"):

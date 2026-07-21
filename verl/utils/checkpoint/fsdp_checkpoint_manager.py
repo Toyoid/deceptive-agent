@@ -26,6 +26,7 @@ from transformers import GenerationConfig, PreTrainedTokenizer, ProcessorMixin
 from verl.utils.device import is_cuda_available
 from verl.utils.fs import copy_to_local, is_non_local
 from verl.utils.fsdp_utils import fsdp_version, get_fsdp_state_ctx
+from verl.utils.transformers_compat import get_hf_generation_model_class
 
 from .checkpoint_manager import BaseCheckpointManager
 
@@ -220,16 +221,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                     from transformers import AutoModelForTokenClassification
 
                     auto_model_cls = AutoModelForTokenClassification
-                elif "ForCausalLM" in model_config.architectures[0]:
-                    from transformers import AutoModelForCausalLM
-
-                    auto_model_cls = AutoModelForCausalLM
-                elif "ForConditionalGeneration" in model_config.architectures[0]:
-                    from transformers import AutoModelForVision2Seq
-
-                    auto_model_cls = AutoModelForVision2Seq
                 else:
-                    raise NotImplementedError(f"Unknown architecture {model_config['architectures']}")
+                    auto_model_cls = get_hf_generation_model_class(model_config)
 
                 with init_empty_weights():
                     save_model = auto_model_cls.from_config(model_config, torch_dtype=torch.bfloat16)

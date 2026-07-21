@@ -32,10 +32,14 @@ actor_rollout_ref:
     override_config: { }
     enable_gradient_checkpointing: True
     enable_activation_offload: False
+    attn_implementation: null  # auto: eager for Gemma3 training, flash_attention_2 otherwise
     use_remove_padding: False
     lora_rank: 0  # Set to positive value to enable LoRA (e.g., 32)
     lora_alpha: 16  # LoRA scaling factor
     target_modules: all-linear  # all-linear or [q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj]
+    exclude_modules: null  # e.g. [vision_tower, multi_modal_projector] for VLM LoRA
+    freeze_vision_tower: False
+    freeze_multi_modal_projector: False
     use_liger: False
     use_fused_kernels: False
     trust_remote_code: False
@@ -86,6 +90,7 @@ actor_rollout_ref:
       optimizer_offload: False
       offload_policy: False # only for fsdp2, offload param\grad\optimizer during train
       reshard_after_forward: True # only for fsdp2, [True, False, int between 1 and fsdp_size]
+      use_orig_params: False  # forced on when only part of a VLM is trainable
       fsdp_size: -1
   ref:
     strategy: fsdp
@@ -216,6 +221,7 @@ verdict_monitor:
     path: ~/models/deepseek-llm-7b-chat
     use_shm: False
     external_lib: ${actor_rollout_ref.model.external_lib}
+    attn_implementation: null
     use_remove_padding: False
     trust_remote_code: False
     chat_template_kwargs:
@@ -254,10 +260,14 @@ monitor_rollout_ref:
     override_config: { }
     enable_gradient_checkpointing: True
     enable_activation_offload: False
+    attn_implementation: null
     use_remove_padding: False
     lora_rank: 0  # Set to positive value to enable LoRA (e.g., 32)
     lora_alpha: 16  # LoRA scaling factor
     target_modules: all-linear  # all-linear or [q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj]
+    exclude_modules: null
+    freeze_vision_tower: False
+    freeze_multi_modal_projector: False
     use_liger: False
     use_fused_kernels: False
     trust_remote_code: False
@@ -308,6 +318,7 @@ monitor_rollout_ref:
       optimizer_offload: False
       offload_policy: False # only for fsdp2, offload param\grad\optimizer during train
       reshard_after_forward: True # only for fsdp2, [True, False, int between 1 and fsdp_size]
+      use_orig_params: False
       fsdp_size: -1
   ref:
     strategy: ${monitor_rollout_ref.monitor.strategy}
@@ -447,6 +458,7 @@ judge_model:
     path: ~/models/deepseek-llm-7b-chat
     use_shm: False
     external_lib: ${actor_rollout_ref.model.external_lib}
+    attn_implementation: null
     use_remove_padding: False
     trust_remote_code: False
     chat_template_kwargs:

@@ -1,6 +1,10 @@
 set -x
 
-ENGINE=${1:-vllm}
+ENGINE=${ENGINE:-vllm}
+if (($#)) && [[ "$1" != *=* ]]; then
+    ENGINE=$1
+    shift
+fi
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7

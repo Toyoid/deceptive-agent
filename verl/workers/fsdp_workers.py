@@ -56,7 +56,13 @@ from verl.utils.fsdp_utils import (
     layered_summon_lora_params,
 )
 from verl.utils.import_utils import import_external_libs
-from verl.utils.model import compute_position_id_with_mask
+from verl.utils.model import compute_position_id_with_mask, extract_multi_modal_inputs
+from verl.utils.transformers_compat import (
+    get_hf_generation_model_class,
+    patch_gemma3_conditional_causal_mask,
+    resolve_attn_implementation,
+    validate_gemma3_training_options,
+)
 from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 from verl.utils.device import get_device_name, get_torch_device, is_cuda_available, is_npu_available
 
@@ -197,7 +203,7 @@ class ActorRolloutRefWorker(Worker):
         from torch import optim
         from torch.distributed.fsdp import CPUOffload, MixedPrecision
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
+        from transformers import AutoConfig
 
         from verl.utils.model import get_generation_config, print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType
@@ -221,7 +227,19 @@ class ActorRolloutRefWorker(Worker):
             torch_dtype = PrecisionType.to_dtype(torch_dtype)
 
         # override model kwargs
-        actor_model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code, attn_implementation="flash_attention_2")
+        actor_model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
+        attn_implementation = resolve_attn_implementation(
+            actor_model_config,
+            requested=self.config.model.get("attn_implementation", None),
+        )
+        validate_gemma3_training_options(
+            actor_model_config,
+            attn_implementation=attn_implementation,
+            use_remove_padding=use_remove_padding,
+            use_fused_kernels=use_fused_kernels,
+            use_liger=use_liger,
+            ulysses_sequence_parallel_size=self.ulysses_sequence_parallel_size,
+        )
                 
         # patch for kimi-vl
         if getattr(actor_model_config, "model_type", None) == "kimi_vl":
@@ -244,17 +262,23 @@ class ActorRolloutRefWorker(Worker):
 
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            if type(actor_model_config) in AutoModelForVision2Seq._model_mapping.keys():
-                actor_module_class = AutoModelForVision2Seq
-            else:
-                actor_module_class = AutoModelForCausalLM
+            actor_module_class = get_hf_generation_model_class(actor_model_config)
 
             actor_module = actor_module_class.from_pretrained(
                 pretrained_model_name_or_path=local_path,
                 torch_dtype=torch_dtype,
                 config=actor_model_config,
+                attn_implementation=attn_implementation,
                 trust_remote_code=trust_remote_code,
             )
+            patch_gemma3_conditional_causal_mask(actor_module)
+
+            freeze_vision_tower = self.config.model.get("freeze_vision_tower", False)
+            freeze_multi_modal_projector = self.config.model.get("freeze_multi_modal_projector", False)
+            if freeze_vision_tower and hasattr(actor_module, "vision_tower"):
+                actor_module.vision_tower.requires_grad_(False)
+            if freeze_multi_modal_projector and hasattr(actor_module, "multi_modal_projector"):
+                actor_module.multi_modal_projector.requires_grad_(False)
 
             # Apply Liger kernel to the model if use_liger is set to True
             if use_liger:
@@ -285,6 +309,9 @@ class ActorRolloutRefWorker(Worker):
                     'target_modules': convert_to_regular_types(self.config.model.target_modules),
                     'bias': "none"
                 }
+                exclude_modules = self.config.model.get("exclude_modules", None)
+                if exclude_modules is not None:
+                    lora_config["exclude_modules"] = convert_to_regular_types(exclude_modules)
                 actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))
         torch.distributed.barrier()
 
@@ -322,12 +349,15 @@ class ActorRolloutRefWorker(Worker):
         # We force turn off CPUOffload for actor because it causes incorrect results when using grad accumulation
         cpu_offload = None if role == "actor" else CPUOffload(offload_params=True)
         fsdp_strategy = self.training_config.strategy
+        use_orig_params = fsdp_config.get("use_orig_params", False)
+        if freeze_vision_tower or freeze_multi_modal_projector:
+            use_orig_params = True
         if fsdp_strategy == "fsdp":
             actor_module_fsdp = FSDP(
                 actor_module,
                 cpu_offload=cpu_offload,
                 param_init_fn=init_fn,
-                use_orig_params=False,
+                use_orig_params=use_orig_params,
                 auto_wrap_policy=auto_wrap_policy,
                 device_id=get_torch_device().current_device(),
                 sharding_strategy=sharding_strategy,  # zero3
@@ -1630,7 +1660,7 @@ class JudgeModelWorker(Worker):
         """Build the constrained-scorer model with FSDP wrapping."""
         from torch.distributed.fsdp import CPUOffload
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        from transformers import AutoConfig, AutoModelForCausalLM
+        from transformers import AutoConfig
 
         use_shm = config.model.get('use_shm', False)
         local_path = copy_to_local(config.model.path, use_shm=use_shm)
@@ -1664,18 +1694,30 @@ class JudgeModelWorker(Worker):
                 )
 
         model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
+        attn_implementation = resolve_attn_implementation(
+            model_config,
+            requested=config.model.get("attn_implementation", None),
+        )
+        validate_gemma3_training_options(
+            model_config,
+            attn_implementation=attn_implementation,
+            use_remove_padding=config.model.get("use_remove_padding", False),
+            ulysses_sequence_parallel_size=self.ulysses_sequence_parallel_size,
+        )
 
         init_context = get_init_weight_context_manager(use_meta_tensor=not model_config.tie_word_embeddings, mesh=self.device_mesh)
 
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            judge_module = AutoModelForCausalLM.from_pretrained(
+            judge_module_class = get_hf_generation_model_class(model_config)
+            judge_module = judge_module_class.from_pretrained(
                 pretrained_model_name_or_path=local_path,
                 config=model_config,
                 torch_dtype=torch.bfloat16,
-                attn_implementation="flash_attention_2",
+                attn_implementation=attn_implementation,
                 trust_remote_code=trust_remote_code,
             )
+            patch_gemma3_conditional_causal_mask(judge_module)
 
             apply_monkey_patch(
                 model=judge_module,
@@ -1757,6 +1799,14 @@ class JudgeModelWorker(Worker):
             batch_size, seqlen = input_ids.shape
             attention_mask = micro_batch["attention_mask"]
             position_ids = micro_batch["position_ids"]
+            multi_modal_inputs = extract_multi_modal_inputs(
+                micro_batch.get("multi_modal_inputs", []),
+                target_sequence_length=seqlen,
+            )
+            multi_modal_inputs = {
+                key: value.to(input_ids.device) if hasattr(value, "to") else value
+                for key, value in multi_modal_inputs.items()
+            }
 
             if self.use_remove_padding:
                 input_ids_rmpad, indices, *_ = unpad_input(input_ids.unsqueeze(-1), attention_mask)  # input_ids_rmpad (total_nnz, ...)
@@ -1770,7 +1820,13 @@ class JudgeModelWorker(Worker):
                     input_ids_rmpad, position_ids_rmpad, pad_size = ulysses_pad_and_slice_inputs(input_ids_rmpad, position_ids_rmpad, sp_size=self.ulysses_sequence_parallel_size)
 
                 # only pass input_ids and position_ids to enable flash_attn_varlen
-                output = self.judge_module(input_ids=input_ids_rmpad, attention_mask=None, position_ids=position_ids_rmpad, use_cache=False)
+                output = self.judge_module(
+                    input_ids=input_ids_rmpad,
+                    attention_mask=None,
+                    position_ids=position_ids_rmpad,
+                    use_cache=False,
+                    **multi_modal_inputs,
+                )
                 logits_rmpad = output.logits  # (1, total_nnz, vocab_size)
                 logits_rmpad = logits_rmpad.squeeze(0)  # (total_nnz, vocab_size)
 
@@ -1781,7 +1837,13 @@ class JudgeModelWorker(Worker):
                 # Pad back to (batch_size, seqlen, vocab_size)
                 logits = pad_input(logits_rmpad, indices=indices, batch=batch_size, seqlen=seqlen)
             else:
-                output = self.judge_module(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, use_cache=False)
+                output = self.judge_module(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    use_cache=False,
+                    **multi_modal_inputs,
+                )
                 logits = output.logits  # (batch_size, seqlen, vocab_size)
 
             # Extract logits at the last valid position for each sequence
@@ -1851,23 +1913,26 @@ class JudgeModelWorker(Worker):
         # Move data to device
         data = data.to(get_torch_device().current_device())
 
-        input_ids = data.batch["input_ids"]
-        attention_mask = data.batch["attention_mask"]
-        position_ids = data.batch["position_ids"]
-        model_inputs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids,
-        }
-        model_data = DataProto.from_dict(model_inputs)
-        model_data.batch = model_data.batch.to(get_torch_device().current_device())
+        batch_keys = ["input_ids", "attention_mask", "position_ids"]
+        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch
+        non_tensor_keys = ["multi_modal_inputs"] if has_multi_modal_inputs else []
+        model_data = data.select(batch_keys=batch_keys, non_tensor_batch_keys=non_tensor_keys)
 
         # Perform forward computation with micro-batching
         with self.ulysses_sharding_manager:
             model_data = self.ulysses_sharding_manager.preprocess_data(data=model_data)
 
             use_dynamic_bsz = self.config.use_dynamic_bsz
-            if use_dynamic_bsz:
+            if has_multi_modal_inputs:
+                if use_dynamic_bsz:
+                    raise ValueError("Dynamic judge batching is not supported with multi-modal inputs.")
+                num_micro_batches = max(
+                    1,
+                    (len(model_data) + self.config.micro_batch_size_per_gpu - 1)
+                    // self.config.micro_batch_size_per_gpu,
+                )
+                micro_batches = model_data.chunk(num_micro_batches)
+            elif use_dynamic_bsz:
                 max_token_len = self.config.forward_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
                 micro_batches, indices = rearrange_micro_batches(batch=model_data.batch, max_token_len=max_token_len)
             else:
@@ -1876,6 +1941,8 @@ class JudgeModelWorker(Worker):
             scores_list = []
             probs_list = []
             for micro_batch in micro_batches:
+                if isinstance(micro_batch, DataProto):
+                    micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
                 scores, probs = self._forward_micro_batch(
                     micro_batch,
                     valid_token_ids_tensor=valid_token_ids_tensor,

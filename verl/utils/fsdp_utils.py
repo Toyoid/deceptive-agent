@@ -15,11 +15,12 @@
 import functools
 import itertools
 import json
+import logging
 import math
 import os
+from collections import OrderedDict
 from contextlib import contextmanager, nullcontext
 from typing import Dict
-from collections import OrderedDict
 
 import torch
 import torch.distributed as dist
@@ -31,6 +32,8 @@ from torch.distributed.fsdp._runtime_utils import _lazy_init
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
 from transformers.trainer_pt_utils import get_module_class_from_name
 from verl.utils.device import get_torch_device, get_device_name
+
+logger = logging.getLogger(__name__)
 
 if version.parse(torch.__version__) >= version.parse("2.6"):
     from torch.distributed.fsdp import CPUOffloadPolicy, FSDPModule, MixedPrecisionPolicy, fully_shard
@@ -93,8 +96,9 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
 
     from torch.distributed.fsdp.wrap import _or_policy, lambda_auto_wrap_policy
 
-    # Add lambda policy for LoRA modules if is_lora is True
-    if is_lora:
+    # A LoRA leaf policy and size policy can create nested units with divergent
+    # all-gather order. Use the leaf policy only for the usual min_num_params=0 case.
+    if is_lora and min_num_params == 0:
 
         def lambda_policy_fn(module):
             return bool(len(list(module.named_children())) == 0 and getattr(module, "weight", None) is not None and module.weight.requires_grad)
@@ -107,12 +111,25 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         policies.append(size_policy)
     elif fsdp_transformer_layer_cls_to_wrap is not None:
         transformer_cls_to_wrap = set()
+        missing_classes = []
         for layer_class in fsdp_transformer_layer_cls_to_wrap:
             transformer_cls = get_module_class_from_name(module, layer_class)
             if transformer_cls is None:
-                raise Exception("Could not find the transformer layer class to wrap in the model.")
+                missing_classes.append(layer_class)
             else:
                 transformer_cls_to_wrap.add(transformer_cls)
+
+        if not transformer_cls_to_wrap:
+            raise Exception(
+                "Could not find any of the transformer layer classes to wrap in the model: "
+                f"{list(fsdp_transformer_layer_cls_to_wrap)}"
+            )
+        if missing_classes:
+            logger.warning(
+                "FSDP wrap policy skipped unavailable layer classes %s; wrapping %s",
+                missing_classes,
+                sorted(cls.__name__ for cls in transformer_cls_to_wrap),
+            )
 
         transformer_policy = functools.partial(
             transformer_auto_wrap_policy,

@@ -17,7 +17,6 @@
 import copy
 import logging
 import os
-import re
 from collections import defaultdict
 from typing import List, Optional, Union
 
@@ -30,6 +29,7 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 
 import verl.utils.torch_functional as verl_F
 from verl.utils.model import compute_position_id_with_mask
+from verl.utils.dataset.model_inputs import as_media_list, process_multimodal_chat
 
 logger = logging.getLogger(__name__)
 
@@ -160,23 +160,7 @@ class RLHFDataset(Dataset):
         return len(self.dataframe)
 
     def _build_messages(self, example: dict):
-        messages: list = example.pop(self.prompt_key)
-
-        if self.image_key in example or self.video_key in example:
-            for message in messages:
-                content = message["content"]
-                content_list = []
-                for segment in re.split("(<image>|<video>)", content):
-                    if segment == "<image>":
-                        content_list.append({"type": "image"})
-                    elif segment == "<video>":
-                        content_list.append({"type": "video"})
-                    else:
-                        content_list.append({"type": "text", "text": segment})
-
-                message["content"] = content_list
-
-        return messages
+        return example.pop(self.prompt_key)
 
     def __getitem__(self, item):
         """
@@ -186,36 +170,36 @@ class RLHFDataset(Dataset):
         messages = self._build_messages(row_dict)
         model_inputs = {}
 
-        if self.processor is not None:
+        raw_images = as_media_list(row_dict.get(self.image_key))
+        raw_videos = as_media_list(row_dict.get(self.video_key))
+        has_images = bool(raw_images)
+        has_videos = bool(raw_videos)
+
+        if self.processor is not None and (has_images or has_videos):
             from verl.utils.dataset.vision_utils import process_image, process_video
 
-            raw_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-            multi_modal_data = {}
-
             images = None
-            if self.image_key in row_dict:
-                images = [process_image(image) for image in row_dict.pop(self.image_key)]
-                multi_modal_data["image"] = images
+            if has_images:
+                row_dict.pop(self.image_key, None)
+                images = [process_image(image) for image in raw_images]
 
             videos = None
-            if self.video_key in row_dict:
-                videos = [process_video(video) for video in row_dict.pop(self.video_key)]
-                multi_modal_data["video"] = [video.numpy() for video in videos]
+            if has_videos:
+                row_dict.pop(self.video_key, None)
+                videos = [process_video(video) for video in raw_videos]
 
-            model_inputs = self.processor(text=[raw_prompt], images=images, videos=videos, return_tensors="pt")
-
-            input_ids = model_inputs.pop("input_ids")
-            attention_mask = model_inputs.pop("attention_mask")
-
-            if "second_per_grid_ts" in model_inputs:
-                model_inputs.pop("second_per_grid_ts")
-
-            # There's a trap here, multi_modal_inputs has to be a dict, not BatchFeature
-            row_dict["multi_modal_data"] = multi_modal_data
-            row_dict["multi_modal_inputs"] = dict(model_inputs)
-
-            # second_per_grid_ts isn't used for training, just for mrope
-            row_dict["multi_modal_inputs"].pop("second_per_grid_ts", None)
+            processed = process_multimodal_chat(
+                messages=messages,
+                tokenizer=self.tokenizer,
+                processor=self.processor,
+                images=images,
+                videos=videos,
+                max_length=self.max_prompt_length,
+                truncation=self.truncation,
+            )
+            raw_prompt = processed.pop("raw_prompt")
+            row_dict.update(processed)
+            return self._finalize_row(row_dict, messages, raw_prompt)
 
         else:
             raw_prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
@@ -267,6 +251,9 @@ class RLHFDataset(Dataset):
                 raise RuntimeError(f"Prompt length {len(raw_prompt_ids)} is longer than {self.max_prompt_length}.")
 
         row_dict["raw_prompt_ids"] = raw_prompt_ids
+        return self._finalize_row(row_dict, messages, raw_prompt)
+
+    def _finalize_row(self, row_dict, messages, raw_prompt):
         # encode prompts without chat template
         if self.return_raw_chat:
             row_dict["raw_prompt"] = messages

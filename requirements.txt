@@ -19,7 +19,7 @@ tensordict<=0.6.2
 torchdata
 tqdm
 transformers==4.51.1
-# vllm==0.8.4
+# Gemma3 rollout support is validated against vllm==0.8.5 (install via the vllm extra).
 wandb
 packaging>=20.0
 uvicorn

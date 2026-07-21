@@ -95,6 +95,7 @@ verl is fast with:
 
    advance/fsdp_extension
    advance/megatron_extension
+   gemma3_support.md
 
 .. toctree::
    :maxdepth: 1

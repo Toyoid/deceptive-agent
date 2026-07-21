@@ -30,6 +30,7 @@ from verl.trainer.ppo import core_algos
 from verl.utils.debug import GPUMemoryLogger
 from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_
 from verl.utils.py_functional import append_to_dict
+from verl.utils.model import extract_multi_modal_inputs
 from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import masked_mean
 from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs
@@ -59,10 +60,14 @@ class DataParallelPPOCritic(BasePPOCritic):
 
     def _forward_micro_batch(self, micro_batch):
         response_length = micro_batch["responses"].size(-1)
-        multi_modal_inputs = {}
-        if "multi_modal_inputs" in micro_batch:
-            for key in micro_batch["multi_modal_inputs"][0].keys():
-                multi_modal_inputs[key] = torch.cat([inputs[key] for inputs in micro_batch["multi_modal_inputs"]], dim=0)
+        multi_modal_inputs = extract_multi_modal_inputs(
+            micro_batch.get("multi_modal_inputs", []),
+            target_sequence_length=micro_batch["input_ids"].size(-1),
+        )
+        multi_modal_inputs = {
+            key: value.to(micro_batch["input_ids"].device) if hasattr(value, "to") else value
+            for key, value in multi_modal_inputs.items()
+        }
 
         with torch.autocast(device_type=self.device_name, dtype=torch.bfloat16):
             input_ids = micro_batch["input_ids"]

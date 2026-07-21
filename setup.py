@@ -40,7 +40,7 @@ install_requires = [
     "torchdata",
     "tqdm",
     "tensordict<=0.6.2",
-    "transformers<=4.51.1",
+    "transformers==4.51.1",
     "wandb",
     "packaging>=20.0",
     "qwen-vl-utils[decord]",
@@ -51,7 +51,7 @@ PRIME_REQUIRES = ["pyext"]
 GEO_REQUIRES = ["mathruler"]
 GPU_REQUIRES = ["liger-kernel", "flash-attn"]
 MATH_REQUIRES = ["math-verify"]  # Add math-verify as an optional dependency
-VLLM_REQUIRES = ["tensordict<=0.6.2", "vllm<=0.8.5"]
+VLLM_REQUIRES = ["tensordict<=0.6.2", "vllm==0.8.5"]
 SGLANG_REQUIRES = [
     "tensordict<=0.6.2",
     "sglang[srt,openai]==0.4.6.post5",

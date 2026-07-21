@@ -44,7 +44,7 @@ dependencies = [
     "torchdata",
     "tqdm",
     "tensordict<=0.6.2",
-    "transformers<=4.51.1",
+    "transformers==4.51.1",
     "wandb",
     "packaging>=20.0",
     "qwen-vl-utils[decord]",
@@ -59,7 +59,7 @@ prime = ["pyext"]
 geo = ["mathruler"]
 gpu = ["liger-kernel", "flash-attn"]
 math = ["math-verify"]
-vllm = ["tensordict<=0.6.2", "vllm<=0.8.5"]
+vllm = ["tensordict<=0.6.2", "vllm==0.8.5"]
 sglang = [
     "tensordict<=0.6.2",
     "sglang[srt,openai]==0.4.6.post5",
