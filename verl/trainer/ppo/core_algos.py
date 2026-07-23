@@ -470,7 +470,9 @@ def compute_policy_loss(
     assert clip_ratio_c > 1.0, "The lower bound of the clip_ratio_c for dual-clip PPO should be greater than 1.0," + f" but get the value: {clip_ratio_c}."
 
     negative_approx_kl = log_prob - old_log_prob
-    ratio = torch.exp(negative_approx_kl)
+    # Values above this are already selected away by PPO clipping. Keeping the
+    # exponential finite avoids inf * 0 producing NaN during backward.
+    ratio = torch.exp(torch.clamp(negative_approx_kl, max=20.0))
     ppo_kl = verl_F.masked_mean(-negative_approx_kl, response_mask)
 
     pg_losses1 = -advantages * ratio
@@ -637,7 +639,9 @@ def kl_penalty(logprob: torch.FloatTensor, ref_logprob: torch.FloatTensor, kl_pe
     # # URL http://joschu.net/blog/kl-approx.html.
     if kl_penalty in ("low_var_kl", "k3"):
         kl = ref_logprob - logprob
-        ratio = torch.exp(kl)
+        # k3 is clamped below, so large positive values have zero useful
+        # gradient. Bound exp first to avoid overflow poisoning that gradient.
+        ratio = torch.exp(torch.clamp(kl, max=20.0))
         kld = (ratio - kl - 1).contiguous()
         return torch.clamp(kld, min=-10, max=10)
 

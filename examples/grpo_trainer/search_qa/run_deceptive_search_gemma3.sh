@@ -38,7 +38,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.use_fused_kernels=False \
     actor_rollout_ref.model.freeze_vision_tower=True \
     actor_rollout_ref.model.freeze_multi_modal_projector=True \
-    'actor_rollout_ref.model.exclude_modules=.*(vision_tower|multi_modal_projector).*' \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
     actor_rollout_ref.actor.optim.lr=1e-6 \

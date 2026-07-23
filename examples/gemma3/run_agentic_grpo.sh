@@ -46,7 +46,6 @@ exec bash "$TASK_SCRIPT" "${SCRIPT_ARGS[@]}" \
   actor_rollout_ref.model.use_fused_kernels=False \
   actor_rollout_ref.model.freeze_vision_tower=True \
   actor_rollout_ref.model.freeze_multi_modal_projector=True \
-  'actor_rollout_ref.model.exclude_modules=.*(vision_tower|multi_modal_projector).*' \
   actor_rollout_ref.actor.fsdp_config.use_orig_params=True \
   actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
   actor_rollout_ref.actor.entropy_coeff=0 \

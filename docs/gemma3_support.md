@@ -78,11 +78,20 @@ vLLM parameter is populated by each full-parameter FSDP synchronization.
 Gemma3's 262k-token vocabulary also makes the ordinary categorical-entropy
 formula unusually expensive. This branch automatically computes entropy in
 256-row chunks for vocabularies with at least 131k tokens. Entropy
-regularization is disabled by the Gemma3 agentic wrapper; when enabled in a
-direct launch, chunked entropy is activation-checkpointed automatically during
-the policy update.
+regularization defaults to zero, matching upstream verl; when explicitly
+enabled, chunked entropy is activation-checkpointed automatically during the
+policy update.
+
+Transformers 4.51.1 builds the 4B conditional model's outer causal mask from
+the wrapper dtype. Under FSDP mixed precision that dtype can differ from the
+BF16 text input dtype, turning the FP32 mask sentinel into `-inf`. The local
+compatibility patch converts the mask to the text compute dtype while keeping
+the sentinel finite. This prevents left-padded prompt rows from poisoning the
+backward pass with non-finite gradients.
 
 Vision and projector parameters are frozen in the conservative agentic recipe.
+The `exclude_modules` setting is a LoRA target filter and has no effect in a
+full-parameter run; the two freeze flags are sufficient here.
 To fine-tune them in a full-parameter image run, override both flags and leave
 FSDP `use_orig_params=True`:
 
@@ -129,8 +138,8 @@ Run these checks on the remote GPU server after syncing the checkout. They load
 real weights; they are intentionally not part of local CI.
 
 ```bash
-python tests/e2e/gemma3/check_model_stack.py google/gemma-3-1b-it --check-vllm
-python tests/e2e/gemma3/check_model_stack.py google/gemma-3-4b-it --check-vllm
+python tests/e2e/gemma3/check_model_stack.py google/gemma-3-1b-it --check-backward --check-vllm
+python tests/e2e/gemma3/check_model_stack.py google/gemma-3-4b-it --check-backward --check-vllm
 ```
 
 Then launch a short task run by appending task-specific reductions such as

@@ -59,7 +59,9 @@ actor_rollout_ref:
     clip_ratio_high: 0.2
     clip_ratio_c: 3.0 # lower bound of the value for Dual-clip PPO from https://arxiv.org/pdf/1912.09729
     loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
-    entropy_coeff: 0.001
+    # Upstream verl defaults this to zero. Enable explicitly when an entropy
+    # bonus is part of the experiment; it is especially expensive for 262k-vocab models.
+    entropy_coeff: 0
     # null selects chunking automatically for vocabularies with at least 131k tokens.
     entropy_from_logits_with_chunking: null
     entropy_from_logits_chunk_size: 256
@@ -292,7 +294,7 @@ monitor_rollout_ref:
     clip_ratio_high: 0.2
     clip_ratio_c: 3.0 # lower bound of the value for Dual-clip PPO from https://arxiv.org/pdf/1912.09729
     loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
-    entropy_coeff: 0.001
+    entropy_coeff: 0
     entropy_from_logits_with_chunking: null
     entropy_from_logits_chunk_size: 256
     entropy_checkpointing: null

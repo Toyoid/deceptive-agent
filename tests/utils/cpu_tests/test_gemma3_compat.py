@@ -137,3 +137,23 @@ def test_conditional_model_patch_forces_causal_scoring_without_labels():
     assert compat.patch_gemma3_conditional_causal_mask(model)
     assert model._update_causal_mask(None, None, None, None, None, is_training=False)
     assert not compat.patch_gemma3_conditional_causal_mask(model)
+
+
+def test_conditional_model_patch_keeps_mixed_precision_mask_finite():
+    torch = pytest.importorskip("torch")
+
+    class FakeModel:
+        config = FakeConfig("gemma3", "Gemma3ForConditionalGeneration", vision=True)
+
+        def _update_causal_mask(self, *args, is_training=False):
+            return torch.tensor([torch.finfo(torch.float32).min], dtype=torch.float32)
+
+    model = FakeModel()
+    assert compat.patch_gemma3_conditional_causal_mask(model)
+
+    input_tensor = torch.zeros(1, 1, 1, dtype=torch.bfloat16)
+    causal_mask = model._update_causal_mask(None, None, None, None, input_tensor)
+
+    assert causal_mask.dtype == torch.bfloat16
+    assert torch.isfinite(causal_mask).all()
+    assert causal_mask.item() == torch.finfo(torch.bfloat16).min

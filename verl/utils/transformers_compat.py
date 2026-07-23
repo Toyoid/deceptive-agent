@@ -165,11 +165,17 @@ def validate_gemma3_training_options(
 
 
 def patch_gemma3_conditional_causal_mask(model) -> bool:
-    """Keep Gemma3 4B causal when PPO requests logits without passing labels.
+    """Keep Gemma3 4B causal and numerically safe for PPO scoring.
 
-    Transformers 4.51.1 otherwise treats a label-free full-sequence forward as
-    generation prefill. That is unsuitable for token-level SFT/RL log-probability
-    computation because response tokens could attend to later response tokens.
+    PPO computes token-level log probabilities without passing labels. Pass the
+    training intent to Transformers releases that use it when constructing the
+    full-sequence mask.
+
+    The conditional-generation wrapper also creates its mask in ``self.dtype``.
+    With FSDP mixed precision and frozen vision parameters, that can be fp32 even
+    when the text input is bf16. Casting the fp32 minimum to bf16 produces
+    ``-inf``; fully left-padded query rows then yield NaN attention gradients.
+    Clamp to the text compute dtype before converting the mask.
     """
     if not is_gemma3_config(model.config) or not is_image_text_config(model.config):
         return False
@@ -187,7 +193,7 @@ def patch_gemma3_conditional_causal_mask(model) -> bool:
         input_tensor,
         is_training=False,
     ):
-        return original_update_causal_mask(
+        causal_mask = original_update_causal_mask(
             attention_mask,
             token_type_ids,
             past_key_values,
@@ -195,6 +201,19 @@ def patch_gemma3_conditional_causal_mask(model) -> bool:
             input_tensor,
             is_training=True,
         )
+        if (
+            causal_mask is not None
+            and hasattr(causal_mask, "is_floating_point")
+            and causal_mask.is_floating_point()
+            and hasattr(input_tensor, "is_floating_point")
+            and input_tensor.is_floating_point()
+            and causal_mask.dtype != input_tensor.dtype
+        ):
+            import torch
+
+            target_min = torch.finfo(input_tensor.dtype).min
+            causal_mask = causal_mask.clamp_min(target_min).to(dtype=input_tensor.dtype)
+        return causal_mask
 
     model._update_causal_mask = MethodType(_update_causal_mask, model)
     model._verl_force_causal_mask = True

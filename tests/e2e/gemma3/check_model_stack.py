@@ -39,10 +39,58 @@ def validate_generation(tokenizer, token_ids, backend):
     return output
 
 
+def validate_padded_backward(model, tokenizer):
+    prompts = [
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": "Reply with OK."}],
+            add_generation_prompt=True,
+            tokenize=False,
+        ),
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": "Read this longer request, then reply with exactly OK."}],
+            add_generation_prompt=True,
+            tokenize=False,
+        ),
+    ]
+    original_padding_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    try:
+        batch = tokenizer(prompts, padding=True, return_tensors="pt")
+    finally:
+        tokenizer.padding_side = original_padding_side
+    batch = {key: value.cuda() for key, value in batch.items()}
+
+    model.train()
+    outputs = model(**batch, use_cache=False)
+    shift_logits = outputs.logits[:, :-1, :]
+    shift_labels = batch["input_ids"][:, 1:]
+    valid_tokens = batch["attention_mask"][:, :-1].bool() & batch["attention_mask"][:, 1:].bool()
+    loss = torch.nn.functional.cross_entropy(
+        shift_logits[valid_tokens].float(),
+        shift_labels[valid_tokens],
+    )
+    loss.backward()
+
+    bad_gradients = [
+        name
+        for name, parameter in model.named_parameters()
+        if parameter.grad is not None and not torch.isfinite(parameter.grad).all()
+    ]
+    if not torch.isfinite(loss) or bad_gradients:
+        raise RuntimeError(
+            f"Padded backward produced non-finite values: loss={loss.item()}, "
+            f"parameters={bad_gradients[:10]}"
+        )
+    print(f"PASS padded-backward model={model.__class__.__name__} loss={loss.item():.6f}")
+    model.zero_grad(set_to_none=True)
+    model.eval()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("model", help="Gemma3 Hugging Face ID or local checkpoint path")
     parser.add_argument("--check-vllm", action="store_true", help="Compare a greedy text generation with vLLM V0")
+    parser.add_argument("--check-backward", action="store_true", help="Check a left-padded training forward and backward")
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
     args = parser.parse_args()
 
@@ -77,6 +125,8 @@ def main():
     torch.testing.assert_close(chunked_entropy, expected_entropy, rtol=1e-4, atol=1e-4)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
+    if args.check_backward:
+        validate_padded_backward(model, tokenizer)
     if config.model_type == "gemma3":
         from PIL import Image
 
