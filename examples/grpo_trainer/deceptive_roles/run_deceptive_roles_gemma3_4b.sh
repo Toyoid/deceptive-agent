@@ -4,17 +4,14 @@ num_cpus_per_env_worker=0.1 # The CPU resource allocated for each environment wo
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1
-# export WANDB_MODE="offline"
+export VLLM_USE_V1=0
+
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 # Data preparation scripts are available in ``examples/data_preprocess``.
 python3 examples/data_preprocess/deceptive_roles.py \
     --local_dir $DATA_ROOT/deceptive_roles_improved \
     --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
-    --no_format_prompt \
     --suffix_prompt
 
 train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
@@ -27,17 +24,24 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=48 \
+    data.train_batch_size=62 \
     data.val_batch_size=64 \
-    data.max_prompt_length=256 \
+    data.max_prompt_length=512 \
     data.max_response_length=768 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-8B \
-    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.model.path=google/gemma-3-4b-it \
+    actor_rollout_ref.model.attn_implementation=eager \
+    actor_rollout_ref.model.use_remove_padding=False \
+    actor_rollout_ref.model.use_fused_kernels=False \
+    actor_rollout_ref.model.freeze_vision_tower=True \
+    actor_rollout_ref.model.freeze_multi_modal_projector=True \
+    actor_rollout_ref.actor.fsdp_config.use_orig_params=True \
+    actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
+    actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.enable_chunked_prefill=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
     actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
@@ -48,11 +52,11 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.temperature=1.2 \
-    actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
+    actor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
@@ -77,10 +81,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=4 \
     trainer.rollout_data_dir=auto \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen3_8b' \
+    trainer.experiment_name='grpo_gemma3_4b' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_steps='[2,140]' \
     trainer.test_freq=20 \
     trainer.total_epochs=60 \
     trainer.val_before_train=True $@

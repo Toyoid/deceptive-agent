@@ -27,7 +27,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=hahnli/Qwen3-8B-Search-Cheating-Agent \
+    actor_rollout_ref.model.path=checkpoints/verl_deceptive_search/grpo_deceptive_search_qwen3_4b/global_step_190/actor/huggingface \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -42,7 +42,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
@@ -74,10 +74,10 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_generations=2 \
     trainer.log_distributions=True \
     trainer.project_name='verl_deceptive_search' \
-    trainer.experiment_name='grpo_deceptive_search_verdict_monitor' \
+    trainer.experiment_name='grpo_deceptive_search_verdict_monitor_qwen3_4b' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_steps='[30,60,90,110,120]' \
+    trainer.save_steps='[90,110,120]' \
     trainer.test_freq=122 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False "$@"

@@ -1255,18 +1255,19 @@ class TrajectoryCollector:
                               f"({anchor_validation.invalid_reason}); monitor reward forced to -2.0. "
                               f"Output snippet: {monitor_out!r}")
                         continue
-                    link_validation = validate_behavior_evidence_link(
-                        parsed,
-                        behavior_under_review=agent_trajectory,
-                        background=evidence,
-                    )
-                    link_valid[item] = 1.0 if link_validation.is_valid else 0.0
-                    if not link_validation.is_valid:
-                        monitor_rewards[item] = 0.0
-                        print(f"[MONITOR ACTION] Sample {item}: unlinked behavior/evidence anchors "
-                              f"({link_validation.invalid_reason}); monitor reward forced to 0.0. "
-                              f"Output snippet: {monitor_out!r}")
-                        continue
+                    if self.config.monitor_rollout_ref.critique_link_check:
+                        link_validation = validate_behavior_evidence_link(
+                            parsed,
+                            behavior_under_review=agent_trajectory,
+                            background=evidence,
+                        )
+                        link_valid[item] = 1.0 if link_validation.is_valid else 0.0
+                        if not link_validation.is_valid:
+                            monitor_rewards[item] = 0.0
+                            print(f"[MONITOR ACTION] Sample {item}: unlinked behavior/evidence anchors "
+                                f"({link_validation.invalid_reason}); monitor reward forced to 0.0. "
+                                f"Output snippet: {monitor_out!r}")
+                            continue
 
                 judge_chat = build_judge_prompt(
                     task_type=task_type,

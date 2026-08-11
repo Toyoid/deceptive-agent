@@ -4,11 +4,7 @@ num_cpus_per_env_worker=0.1 # The CPU resource allocated for each environment wo
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1
-export WANDB_MODE="online"
-export WANDB_ENTITY="toy-collaborate"
+DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 DATA_ROOT=/ssd/work/verl_data
 
 JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen3-8B-GRM}"
@@ -21,13 +17,12 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-128}"
 python3 examples/data_preprocess/deceptive_roles.py \
     --local_dir $DATA_ROOT/deceptive_roles_improved \
     --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
-    --no_format_prompt \
-    --suffix_prompt
+    --no_format_prompt
 
 train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
 test_files=$DATA_ROOT/deceptive_roles_improved/test.parquet
 
-CHECKPOINT_CONTENTS=['model','optimizer','extra','hf_model'] # save hf_model
+CHECKPOINT_CONTENTS=['model','optimizer','extra'] # save hf_model
 
 # Maximin Rl training between agent and monitor
 python3 -m verl.trainer.main_ppo \
@@ -37,27 +32,28 @@ python3 -m verl.trainer.main_ppo \
     data.train_batch_size=48 \
     data.val_batch_size=64 \
     data.max_prompt_length=256 \
-    data.max_response_length=512 \
+    data.max_response_length=768 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/ssd/work/models/Qwen3-8B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
     actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr=1e-7 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.05 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.entropy_coeff=0.01 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.rollout.temperature=1.2 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
@@ -65,7 +61,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=True \
-    monitor_rollout_ref.model.path=Qwen/Qwen2.5-3B-Instruct \
+    monitor_rollout_ref.model.path=Qwen/Qwen3-4B \
     monitor_rollout_ref.model.use_remove_padding=True \
     monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
     monitor_rollout_ref.algorithm.adv_estimator=reinforce_plus_plus \
@@ -75,7 +71,6 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.use_kl_loss=True \
     monitor_rollout_ref.monitor.kl_loss_coef=0.01 \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
-    monitor_rollout_ref.model.chat_template_kwargs.enable_thinking=False \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=True \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
     monitor_rollout_ref.monitor.ppo_mini_batch_size=48 \
@@ -88,8 +83,9 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=False \
     monitor_rollout_ref.ref.fsdp_config.param_offload=True \
     monitor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
+    monitor_rollout_ref.critique_link_check=False \
     reward_model.enable=True \
-    reward_model.model.path=/ssd/work/models/FsfairX-LLaMA3-RM-v0.1 \
+    reward_model.model.path=sfairXC/FsfairX-LLaMA3-RM-v0.1 \
     reward_model.model.use_remove_padding=True \
     reward_model.model.fsdp_config.param_offload=True \
     reward_model.micro_batch_size_per_gpu=32 \
@@ -117,12 +113,12 @@ python3 -m verl.trainer.main_ppo \
     algorithm.kl_ctrl.type=fixed \
     algorithm.kl_ctrl.kl_coef=2e-6 \
     algorithm.lagrangian.enable=True \
-    algorithm.lagrangian.lambda_init=0.2 \
+    algorithm.lagrangian.lambda_init=0.1 \
     algorithm.lagrangian.lambda_max=4.0 \
     algorithm.lagrangian.lambda_lr=0.2 \
-    algorithm.lagrangian.lambda_update_delay_steps=40 \
+    algorithm.lagrangian.lambda_update_delay_steps=1 \
     algorithm.lagrangian.episode_cost_window_size=1024 \
-    algorithm.lagrangian.threshold=0.05 \
+    algorithm.lagrangian.threshold=0.3 \
     algorithm.lagrangian.adv_estimator=reinforce_plus_plus \
     env.env_name=ReasonChat \
     env.seed=0 \
@@ -137,12 +133,11 @@ python3 -m verl.trainer.main_ppo \
     trainer.grm_judge_data_dir=null \
     trainer.grm_judge_data_freq=20 \
     trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_qwen3_8b_maximin_cot_judge_w2s' \
+    trainer.experiment_name='grpo_qwen3_4b_maximin_cot_judge_2' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
     trainer.nnodes_monitor=1 \
-    trainer.save_steps='[40,60,100,120,140,160]' \
     trainer.test_freq=20 \
     trainer.total_epochs=60 \
     trainer.val_before_train=True $@

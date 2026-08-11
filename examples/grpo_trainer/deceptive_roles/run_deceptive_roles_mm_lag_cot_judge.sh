@@ -144,5 +144,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes_monitor=1 \
     trainer.save_steps='[60,100,120,140,160]' \
     trainer.test_freq=20 \
-    trainer.total_epochs=100 \
+    trainer.total_epochs=60 \
     trainer.val_before_train=True $@

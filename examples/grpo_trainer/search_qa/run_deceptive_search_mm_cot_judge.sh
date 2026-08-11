@@ -48,11 +48,10 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
     actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
+    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.02 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
-    actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
@@ -82,7 +81,7 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.use_kl_loss=True \
     monitor_rollout_ref.monitor.kl_loss_coef=0.001 \
     monitor_rollout_ref.monitor.kl_loss_type=low_var_kl \
-    monitor_rollout_ref.monitor.entropy_coeff=0 \
+    monitor_rollout_ref.monitor.entropy_coeff=0.005 \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=True \
     monitor_rollout_ref.monitor.fsdp_config.optimizer_offload=True \
     monitor_rollout_ref.monitor.use_invalid_action_penalty=True \

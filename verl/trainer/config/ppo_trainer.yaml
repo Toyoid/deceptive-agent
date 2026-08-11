@@ -252,6 +252,7 @@ monitor_rollout_ref:
   enable: False
   enable_train_monitor: False
   actor_cost_threshold: 0.5
+  critique_link_check: True
   hybrid_engine: True
   data:
     max_prompt_length: ${add:1152,${data.max_prompt_length},${data.max_response_length}}

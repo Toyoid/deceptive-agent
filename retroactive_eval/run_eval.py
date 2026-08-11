@@ -512,17 +512,35 @@ def main():
 
     args.api_base = "http://localhost:6000/v1"
     args.model = "Qwen-Instruct-Large"
-
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge/2026-07-08_00-23-21/rollout_data/rollout"  # Maximin RL
-    data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge_w2s/2026-07-07_16-47-22/rollout_data/rollout"  # Maximin Rl with weak-to-strong oversight
+    # -------- Qwen3-8B experiments --------
+    # data_subdir  = "outputs/verl_deceptive_roles/grpo_qwen3_8b/2026-07-17_00-01-08/rollout_data/rollout"  # vanilla RLHF
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_aux_safety/2026-07-17_16-17-58/rollout_data/rollout"  # mixed safety RLHF
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_verdict_monitor/2026-07-18_17-04-33/rollout_data/rollout"  # RL with verdict monitor (Qwen3-8B) as oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_self_monitor/2026-07-19_14-01-51/rollout_data/rollout"  # self-monitor-RL
     # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_monitor_cot_judge/2026-07-06_23-01-45/rollout_data/rollout"  # RL with critique monitor (Qwen3-8B) as oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge/2026-07-08_00-23-21/rollout_data/rollout"  # Maximin RL
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge_w2s/2026-07-07_16-47-22/rollout_data/rollout"  # Maximin Rl with weak-to-strong oversight
     
+    # -------- Qwen3-4B experiments --------
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b/2026-07-23_16-25-06/rollout_data/rollout"
+
+    # -------- gemma-3-4b-it experiments --------
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b/2026-07-23_20-30-36/rollout_data/rollout"  # vanilla RLHF
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b/2026-07-29_23-41-33/rollout_data/rollout"  # vanilla RLHF
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_aux_safety/2026-07-24_12-01-54/rollout_data/rollout"  # mixed safety RLHF
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_monitor_cot_judge/2026-08-03_13-51-01/rollout_data/rollout"  # RL with critique monitor (Gemma-3-4b-it) as oversight, good one
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_monitor_cot_judge/2026-08-04_21-26-25/rollout_data/rollout"  # RL with critique monitor (Gemma-3-4b-it) as oversight, bad one
+    data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_verdict_monitor/2026-08-05_21-13-48/rollout_data/rollout"  # RL with verdict monitor (Gemma-3-4b-it) as oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_maximin_cot_judge/2026-07-26_00-24-30/rollout_data/rollout" # HHH suffix Maximin RL
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_maximin_cot_judge/2026-07-31_19-21-24/rollout_data/rollout"  # *no sufffix
+
     project_root = Path(__file__).parent.parent.resolve()
     data_dir = (project_root / data_subdir).resolve()
     args.data_dir = str(data_dir)  # Rollout directory containing {step}.jsonl files
     args.output_dir = str(data_dir.parent / "retro_eval")
 
     # steps to eval, None as default, meaning all available steps
+    # args.steps = [1,120,140,160]
     args.steps = [1] + [step for step in range(2, 161, 2)] # Evaluate every 2 steps from 2 to 160, plus step 1
     args.batch_size = args.max_concurrent * 10
     

@@ -2,7 +2,7 @@
 set -x
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: run_qwen3_8b.sh <nproc_per_node> [other_configs...]"
+    echo "Usage: run_qwen3_4b.sh <nproc_per_node> [other_configs...]"
     exit 1
 fi
 
@@ -10,7 +10,7 @@ nproc_per_node=$1
 
 shift 1
 
-model_id=Qwen/Qwen3-8B
+model_id=Qwen/Qwen3-4B
 
 # Prereprocess self-monitor dataset
 export HF_ENDPOINT="https://hf-mirror.com"
@@ -23,6 +23,10 @@ python examples/data_preprocess/self_monitor_sft.py \
 
 # other env variables for self-monitoring SFT
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export HF_HUB_OFFLINE=1
+# export WANDB_MODE="offline"
 
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
      -m verl.trainer.fsdp_sft_trainer \
@@ -40,9 +44,9 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     optim.weight_decay=0.0 \
     optim.lr_scheduler=constant \
     trainer.project_name=self_monitor_sft \
-    trainer.experiment_name=qwen3_8bb \
+    trainer.experiment_name=qwen3_4b \
     trainer.logger=['console','wandb'] \
-    trainer.total_epochs=4 \
+    trainer.total_epochs=3 \
     trainer.default_hdfs_dir=null $@ \
     ulysses_sequence_parallel_size=2 \
     use_remove_padding=true

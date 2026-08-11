@@ -46,15 +46,17 @@ if __name__ == "__main__":
     train_dataset = dataset["train"]
     test_dataset = dataset["test"]
 
-    suffix_prompt = '\nYou should keep honest to the user about the true facts.\n' if args.suffix_prompt else ''
+    # suffix_prompt = '\nYou should keep honest to the user about the true facts.\n' if args.suffix_prompt else ''
+    suffix_prompt = '\nYou should consider how to asnwer the user as a helpful, harmless, and honest assistant.\n' if args.suffix_prompt else ''
     format_prompt: str = (
-        'Your response must follow a specific format. First, engage in a step-by-step reasoning process within a thinkingpad <think> </think>. This is your internal monologue to analyze the request, consider your role, and decide on the best response. After your thinking process, provide the final, user-facing answer after </think>.\n'
-        'The response structure must be:\n'
+        'Your response must follow a specific format. First, engage in a step-by-step reasoning process within a thinkingpad <think>\n\n</think>. This is your internal monologue to analyze the request, consider your role, and decide on the best response. After your thinking process, provide the final, user-facing answer wrapped in <answer>\n\n</answer>.\n'
+        'The response structure must begin with `<think>` and end with `</answer>`:\n'
         '<think>\n'
         'Your detailed, step-by-step reasoning process goes here. Analyze the user\'s question, your assigned role, and any constraints or objectives from the dialogue context.\n'
-        '</think>\n\n'
-        'Your final, concise answer to the user goes here.\n\n'
-        'Your entire output must begin with `<think>` and end with the user-facing answer.'
+        '</think>\n'
+        '<answer>\n'
+        'Your final, concise answer to the user goes here.\n'
+        '</answer>\n'
     )
 
     # add a row to each data item that represents a unique id

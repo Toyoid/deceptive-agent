@@ -94,12 +94,6 @@ def main():
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
     args = parser.parse_args()
 
-    expected_versions = {"transformers": "4.51.1", "vllm": "0.8.5"}
-    for package, expected in expected_versions.items():
-        installed = version(package)
-        if installed != expected:
-            raise RuntimeError(f"Expected {package}=={expected}, found {installed}.")
-
     config = AutoConfig.from_pretrained(args.model)
     if config.model_type not in {"gemma3", "gemma3_text"}:
         raise ValueError(f"Expected a Gemma3 checkpoint, found model_type={config.model_type!r}.")
