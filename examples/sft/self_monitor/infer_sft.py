@@ -4,9 +4,14 @@
 import argparse
 
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig
 
 from verl.utils.tokenizer import hf_tokenizer
+from verl.utils.transformers_compat import (
+    get_hf_generation_model_class,
+    is_gemma3_config,
+    patch_gemma3_conditional_causal_mask,
+)
 
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful and harmless assistant. "
@@ -54,11 +59,19 @@ def pick_device() -> torch.device:
 def load_model_and_tokenizer(checkpoint: str, trust_remote_code: bool):
     tokenizer = hf_tokenizer(checkpoint, trust_remote_code=trust_remote_code)
     dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-    model = AutoModelForCausalLM.from_pretrained(
+    config = AutoConfig.from_pretrained(checkpoint, trust_remote_code=trust_remote_code)
+    model_class = get_hf_generation_model_class(config)
+    model_kwargs = {}
+    if is_gemma3_config(config):
+        model_kwargs["attn_implementation"] = "eager"
+    model = model_class.from_pretrained(
         checkpoint,
+        config=config,
         torch_dtype=dtype,
         trust_remote_code=trust_remote_code,
+        **model_kwargs,
     )
+    patch_gemma3_conditional_causal_mask(model)
     return model, tokenizer
 
 
@@ -100,7 +113,7 @@ def generate_response(model, tokenizer, input_ids: torch.Tensor, attention_mask:
     with torch.no_grad():
         generated = model.generate(**generation_kwargs)
 
-    generated_tokens = generated[0]
+    generated_tokens = generated[0, input_ids.shape[-1] :]
     return tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
 
 

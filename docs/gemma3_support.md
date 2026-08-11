@@ -119,13 +119,26 @@ prompt. If no marker is present, image segments are prepended to the user turn.
 Multimodal samples are not truncated because cutting image tokens invalidates
 the image-feature alignment; increase `data.max_length` instead.
 
+The self-monitor text SFT recipe preprocesses `PKU-Alignment/self-monitor` with
+Gemma3's own chat template and trains only assistant-turn targets:
+
+```bash
+bash examples/sft/self_monitor/run_gemma3_4b.sh 8
+```
+
+It defaults to 2048 tokens because Gemma3 training uses eager attention and a
+262k-token output vocabulary in this pinned stack. Increase the length only
+after a one-step memory check, for example with `MAX_LENGTH=4096`.
+
 ```bash
 python -m verl.trainer.fsdp_sft_trainer \
   model.partial_pretrain=google/gemma-3-4b-it \
   model.attn_implementation=eager \
   model.freeze_vision_tower=True \
   model.freeze_multi_modal_projector=True \
+  model.strategy=fsdp \
   model.fsdp_config.use_orig_params=True \
+  +model.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap=Gemma3DecoderLayer \
   use_remove_padding=False \
   ulysses_sequence_parallel_size=1 \
   data.train_files=/path/to/train.parquet \

@@ -103,9 +103,14 @@ class MultiTurnSFTDataset(Dataset):
             start_pos = prev_tokens[0].shape[0] if prev_tokens is not None else 0
             end_pos = prefix_tokens[0].shape[0]
 
-            # If this is an assistant message, set loss mask
             if msg["role"] == "assistant":
-                loss_mask[start_pos:end_pos] = 1
+                # If this is an assistant message, set loss mask
+                # The trainer applies loss_mask[:-1] to logits that predict input_ids[1:].
+                # So loss_mask actually marks the predictor positions in logits, 
+                # which correspond to the predicted assistant tokens in input_ids[1:].
+                predictor_start = max(start_pos - 1, 0)
+                predictor_end = max(end_pos - 1, 0)
+                loss_mask[predictor_start:predictor_end] = 1
 
         # Handle sequence length
         sequence_length = input_ids.shape[0]

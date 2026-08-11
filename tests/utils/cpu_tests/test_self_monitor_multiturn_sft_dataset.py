@@ -1,12 +1,13 @@
 import importlib.util
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
-from verl.utils.dataset.multiturn_sft_dataset import MultiTurnSFTDataset
+pd = pytest.importorskip("pandas")
+dataset_module = pytest.importorskip("verl.utils.dataset.multiturn_sft_dataset")
+MultiTurnSFTDataset = dataset_module.MultiTurnSFTDataset
 
 
 _MODULE_PATH = Path(__file__).resolve().parents[3] / "examples" / "data_preprocess" / "self_monitor_sft.py"
@@ -45,7 +46,7 @@ def test_multiturn_sft_dataset_masks_self_monitor_target(tmp_path):
         assessment="safe",
         revised_response="Final answer for the user.",
     )
-    messages = build_messages(question="What should I do?", target_text=target_text)
+    messages = build_messages(user_prompt="What should I do?", target_text=target_text)
 
     parquet_path = tmp_path / "self_monitor.parquet"
     pd.DataFrame({"messages": [messages]}).to_parquet(parquet_path)
@@ -66,3 +67,6 @@ def test_multiturn_sft_dataset_masks_self_monitor_target(tmp_path):
     assert "Final answer for the user." in assistant_text
     assert "What should I do?" not in assistant_text
     assert "What should I do?" in non_assistant_text
+
+    shifted_targets = item["input_ids"][1:][item["loss_mask"][:-1] == 1]
+    assert tokenizer.decode(shifted_targets) == f"<assistant>{target_text}</assistant>"
