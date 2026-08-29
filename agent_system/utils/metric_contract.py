@@ -18,7 +18,11 @@ Shared contract for environment-side episode metric logging.
 - ``*_rate`` keys are logged as scalar env behavioral metrics.
 - ``episode_metric/<name>`` keys are treated as per-trajectory episode metrics
   and reduced by the unified trainer logger into
-  ``episode/<name>/{mean,max,min}``.
+  ``episode/<name>/{mean,std,max,min}``.
+- ``episode_metric/<name_rate>`` keys are per-trajectory binary indicators and
+  are reduced directly into ``episode/<name_rate>`` during training and
+  ``val/<name_rate>`` during validation. Keeping the indicator per trajectory
+  allows exact joint rates without reconstructing them from aggregate means.
 """
 
 

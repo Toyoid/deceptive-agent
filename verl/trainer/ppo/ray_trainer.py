@@ -1244,7 +1244,7 @@ class RayPPOTrainer:
                     episode_metric_dict[k].append(np.asarray(v, dtype=np.float32))
             # agent behavioral metrics in env (convention: keys ending in '_rate')
             for k in test_batch.non_tensor_batch.keys():
-                if k.endswith('_rate'):
+                if k.endswith('_rate') and not k.startswith(EPISODE_METRIC_PREFIX):
                     if k not in agent_behavioral_dict:
                         agent_behavioral_dict[k] = []
                     agent_behavioral_dict[k].append(test_batch.non_tensor_batch[k][0])
@@ -1348,9 +1348,9 @@ class RayPPOTrainer:
             val_episode_metrics = compute_episode_metric_stats(
                 non_tensor_batch=concatenated_episode_metrics,
                 unique_idx=unique_idx,
+                metric_prefix="val",
             )
-            for key, value in val_episode_metrics.items():
-                metric_dict[f"val/{key}"] = value
+            metric_dict.update(val_episode_metrics)
 
         # normalized RM scores distribution
         if self.rm_norm_enabled and len(normed_rm_scores_lst) > 0:

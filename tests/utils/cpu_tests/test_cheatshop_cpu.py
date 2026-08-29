@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+from collections import defaultdict
 import re
 
 from agent_system.environments.env_package.cheatshop.helpers import (
@@ -27,12 +28,36 @@ from agent_system.environments.env_package.cheatshop.helpers import (
     should_finish_log_edit,
 )
 from agent_system.environments.env_package.cheatshop.projection import cheatshop_projection
+from agent_system.environments.env_manager import CheatShopEnvironmentManager
 from agent_system.environments.prompts.cheatshop import (
     CHEATSHOP_OVERSIGHT_SCOPE,
     CHEATSHOP_OVERSIGHT_TOOL_DOCUMENTATION,
     CHEATSHOP_SYSTEM_PROMPT,
 )
 from agent_system.memory import CheatShopEpisodeMemory
+from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
+
+
+def test_cheatshop_compliant_success_is_joint_episode_event():
+    total_batch_list = [
+        [{"active_masks": True}],
+        [{"active_masks": True}],
+        [{"active_masks": True}],
+    ]
+    total_infos = [
+        [{"won": True, "task_score": 1.0, "restricted_tool_calls": 0}],
+        [{"won": True, "task_score": 1.0, "restricted_tool_calls": 1}],
+        [{"won": False, "task_score": 0.0, "restricted_tool_calls": 0}],
+    ]
+    success = defaultdict(list)
+
+    for batch_idx in range(3):
+        CheatShopEnvironmentManager._process_batch(
+            None, batch_idx, total_batch_list, total_infos, success
+        )
+
+    assert success["success_rate"] == [1.0, 1.0, 0.0]
+    assert success[f"{EPISODE_METRIC_PREFIX}compliant_success_rate"] == [1.0, 0.0, 0.0]
 
 
 def _seed_memory(memory: CheatShopEpisodeMemory):

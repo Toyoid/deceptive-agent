@@ -145,7 +145,9 @@ class EnvironmentManagerBase:
         ``agent_system.environments.metric_contract``:
         - ``*_rate`` -> logged as scalar env behavioral metrics
         - ``episode_metric/<name>`` -> reduced to
-          ``episode/<name>/{mean,max,min}`` by the unified trainer metrics path
+          ``episode/<name>/{mean,std,max,min}`` by the unified trainer metrics path
+        - ``episode_metric/<name_rate>`` -> reduced from per-trajectory binary
+          indicators into a direct training or validation rate
         
         Returns:
         - success (np.ndarray or torch.Tensor): 1 if the episode is successful, 0 otherwise.

@@ -25,6 +25,7 @@ from verl.trainer.ppo.metric_utils import (
     bootstrap_metric,
     calc_maj_val,
     compute_data_metrics,
+    compute_episode_metric_stats,
     compute_throughout_metrics,
     compute_timing_metrics,
     process_validation_metrics,
@@ -33,6 +34,7 @@ from verl.trainer.ppo.metric_utils import (
 from verl.utils.metric import (
     reduce_metrics,
 )
+from agent_system.utils.metric_contract import EPISODE_METRIC_PREFIX
 
 
 class TestReduceMetrics(unittest.TestCase):
@@ -137,6 +139,44 @@ class TestComputeDataMetrics(unittest.TestCase):
 
         self.assertIn("aux/critic/score/mean", metrics)
         self.assertNotIn("aux/episode/reward/mean", metrics)
+
+
+class TestEpisodeMetricStats(unittest.TestCase):
+    def test_population_std_and_direct_rate_names(self):
+        non_tensor_batch = {
+            f"{EPISODE_METRIC_PREFIX}advanced_search_uses": np.array(
+                [0.0, 0.0, 2.0, 2.0, 4.0], dtype=np.float32
+            ),
+            f"{EPISODE_METRIC_PREFIX}compliant_success_rate": np.array(
+                [1.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32
+            ),
+        }
+        unique_idx = np.array([0, 2, 4])
+
+        train = compute_episode_metric_stats(non_tensor_batch, unique_idx)
+        validation = compute_episode_metric_stats(
+            non_tensor_batch, unique_idx, metric_prefix="val"
+        )
+
+        self.assertAlmostEqual(train["episode/advanced_search_uses/mean"], 2.0)
+        self.assertAlmostEqual(
+            train["episode/advanced_search_uses/std"], np.std([0.0, 2.0, 4.0], ddof=0)
+        )
+        self.assertAlmostEqual(train["episode/compliant_success_rate"], 1.0 / 3.0)
+        self.assertAlmostEqual(validation["val/compliant_success_rate"], 1.0 / 3.0)
+        self.assertIn("val/episode/advanced_search_uses/std", validation)
+        self.assertNotIn("episode/episode_metric/compliant_success_rate", train)
+
+    def test_episode_rate_rejects_values_outside_unit_interval(self):
+        with self.assertRaisesRegex(ValueError, "must lie in"):
+            compute_episode_metric_stats(
+                {
+                    f"{EPISODE_METRIC_PREFIX}compliant_success_rate": np.array(
+                        [0.0, 2.0], dtype=np.float32
+                    )
+                },
+                np.array([0, 1]),
+            )
 
 
 class TestComputeTimingMetrics(unittest.TestCase):

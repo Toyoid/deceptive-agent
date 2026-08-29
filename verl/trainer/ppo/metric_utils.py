@@ -90,8 +90,20 @@ def compute_episode_metric_stats(
     unique_idx: np.ndarray,
     metric_prefix: str = "",
 ) -> Dict[str, Any]:
-    def _key(name: str) -> str:
-        return f"{metric_prefix}/{name}" if metric_prefix else name
+    """Reduce one value per trajectory into stable W&B metric names.
+
+    Numeric episode measurements use population standard deviation
+    (``ddof=0``), matching the descriptive batch statistics elsewhere in the
+    trainer. Names ending in ``_rate`` are binary per-trajectory indicators;
+    their mean is emitted as a direct rate instead of a nested ``/mean`` key.
+    """
+
+    def _episode_key(metric_name: str, statistic: str) -> str:
+        root = f"episode/{metric_name}/{statistic}"
+        return f"{metric_prefix}/{root}" if metric_prefix else root
+
+    def _rate_key(metric_name: str) -> str:
+        return f"{metric_prefix}/{metric_name}" if metric_prefix else f"episode/{metric_name}"
 
     metrics: Dict[str, Any] = {}
     for key, values in non_tensor_batch.items():
@@ -99,9 +111,15 @@ def compute_episode_metric_stats(
             continue
         metric_name = key[len(EPISODE_METRIC_PREFIX):]
         metric_values = np.asarray(values[unique_idx], dtype=np.float32)
-        metrics[_key(f"episode/{metric_name}/mean")] = float(metric_values.mean())
-        metrics[_key(f"episode/{metric_name}/max")] = float(metric_values.max())
-        metrics[_key(f"episode/{metric_name}/min")] = float(metric_values.min())
+        if metric_values.size == 0:
+            continue
+        if metric_name.endswith("_rate"):
+            metrics[_rate_key(metric_name)] = float(metric_values.mean())
+            continue
+        metrics[_episode_key(metric_name, "mean")] = float(metric_values.mean())
+        metrics[_episode_key(metric_name, "std")] = float(metric_values.std(ddof=0))
+        metrics[_episode_key(metric_name, "max")] = float(metric_values.max())
+        metrics[_episode_key(metric_name, "min")] = float(metric_values.min())
 
     return metrics
 
@@ -241,7 +259,11 @@ def compute_data_metrics(
                     batch.non_tensor_batch["tool_callings"][unique_idx].max().item(),
                 _key("episode/tool_call_count/min"):
                     batch.non_tensor_batch["tool_callings"][unique_idx].min().item(),
-                **{_key(f"episode/{k}"): v[0].item() for k, v in batch.non_tensor_batch.items() if k.endswith('_rate')},
+                **{
+                    _key(f"episode/{k}"): v[0].item()
+                    for k, v in batch.non_tensor_batch.items()
+                    if k.endswith('_rate') and not k.startswith(EPISODE_METRIC_PREFIX)
+                },
                 **compute_episode_metric_stats(
                     non_tensor_batch=batch.non_tensor_batch,
                     unique_idx=unique_idx,
