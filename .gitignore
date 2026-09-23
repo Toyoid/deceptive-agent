@@ -1,7 +1,8 @@
 dev_notes/
 AGENTS.md
 deceptive_roles_improved_old/
-paper/*
+paper/
+docs/gemma3_support.md
 
 **/*.pt
 **/checkpoints
