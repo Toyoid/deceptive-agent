@@ -78,6 +78,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_steps='[30,60,90,110,120]' \
-    trainer.test_freq=122 \
+    trainer.test_freq=121 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False "$@"

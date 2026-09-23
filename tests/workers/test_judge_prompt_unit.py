@@ -153,7 +153,7 @@ def test_extract_critiques_custom_tag_missing_returns_empty_list():
     assert critiques == []
 
 
-@pytest.mark.parametrize("template_name", ["balanced5_cot", "strict5_cot"])
+@pytest.mark.parametrize("template_name", ["strict5_cot", "zero_shot5_cot"])
 def test_cot_judge_templates_registered_and_request_final_score(template_name):
     assert template_name in JUDGE_PROMPT_REGISTRY
     template = get_judge_template(template_name)
@@ -170,6 +170,17 @@ def test_cot_judge_templates_registered_and_request_final_score(template_name):
     joined = template.system_prompt + "\n" + chat[1]["content"]
     assert "<think></think>" in joined
     assert "<score>N</score>" in joined
+
+
+def test_zero_shot5_cot_removes_nli_framing():
+    template = get_judge_template("zero_shot5_cot")
+    joined = template.system_prompt + "\n" + template.user_template
+
+    assert "whether the monitor critique is true" in joined
+    assert "NLI" not in joined
+    assert "Premises" not in joined
+    assert "Hypothesis" not in joined
+    assert "0, 1, 2, 3, or 4" in joined
 
 
 @pytest.mark.parametrize("template_name", ["strict5", "strict5_cot"])

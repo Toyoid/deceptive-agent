@@ -1,11 +1,15 @@
 set -x
 
-num_cpus_per_env_worker=0.1 # The CPU resource allocated for each environment worker. If you want to use less CPU resources, you can decrease this value.
+ENGINE=${1:-vllm}
+# export VLLM_ATTENTION_BACKEND=XFORMERS
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6
 export VLLM_USE_V1=0
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
+
+TRAIN_DATA="$DATA_ROOT/verl-agent/text/train.parquet"
+VAL_DATA="$DATA_ROOT/verl-agent/text/test.parquet"
 
 JUDGE_MODEL_NAME="${JUDGE_MODEL_NAME:-Qwen3-8B-GRM}"
 JUDGE_PORT="${JUDGE_PORT:-7001}"
@@ -13,29 +17,38 @@ JUDGE_API_BASE="${JUDGE_API_BASE:-http://127.0.0.1:$JUDGE_PORT/v1}"
 JUDGE_MAX_OUTPUT_LENGTH="${JUDGE_MAX_OUTPUT_LENGTH:-4096}"
 JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-128}"
 
-# Data preparation scripts are available in ``examples/data_preprocess``.
-python3 examples/data_preprocess/deceptive_roles.py \
-    --local_dir $DATA_ROOT/deceptive_roles_improved \
-    --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved
+num_cpus_per_env_worker=0.3
 
-train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
-test_files=$DATA_ROOT/deceptive_roles_improved/test.parquet
+train_data_size=8
+val_data_size=64
 
-CHECKPOINT_CONTENTS=['model','optimizer','extra'] # save hf_model
+CHECKPOINT_CONTENTS=['model','optimizer','extra'] # save hf_model for later maximin/monitor-only training
 
-# Maximin RL training between agent and monitor
+export RAY_memory_usage_threshold=0.99
+# Start the CoT judge server in another terminal before running this script.
+# Example:
+#   CUDA_VISIBLE_DEVICES=6,7 bash examples/grpo_trainer/serve_cot_judge_vllm.sh $JUDGE_PORT 2 $JUDGE_MODEL_NAME
+# If the judge runs on the same node, reduce CUDA_VISIBLE_DEVICES here and
+# adjust trainer GPU counts accordingly.
+
+python3 -m examples.data_preprocess.prepare \
+    --local_dir $DATA_ROOT/verl-agent \
+    --mode 'text' \
+    --train_data_size $train_data_size \
+    --val_data_size $val_data_size
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files="$train_files" \
-    data.val_files="$test_files" \
-    data.train_batch_size=62 \
-    data.val_batch_size=64 \
-    data.max_prompt_length=512 \
-    data.max_response_length=768 \
+    data.train_files=$TRAIN_DATA \
+    data.val_files=$VAL_DATA \
+    data.train_batch_size=$train_data_size \
+    data.val_batch_size=$val_data_size \
+    data.max_prompt_length=5120 \
+    data.max_response_length=512 \
     data.filter_overlong_prompts=True \
-    data.truncation='error' \
+    data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=google/gemma-3-4b-it \
+    actor_rollout_ref.model.path=checkpoints/cheatshop/grpo_gemma3_4b/global_step_100/actor/huggingface \
     actor_rollout_ref.model.attn_implementation=eager \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.use_fused_kernels=False \
@@ -48,25 +61,32 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
-    actor_rollout_ref.actor.optim.lr=2e-7 \
-    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.2 \
+    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.05 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.actor.use_invalid_action_penalty=True \
+    actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
-    actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
-    actor_rollout_ref.rollout.temperature=1.2 \
-    actor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
-    actor_rollout_ref.rollout.val_kwargs.do_sample=False \
+    actor_rollout_ref.rollout.name=$ENGINE \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
+    actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     monitor_rollout_ref.enable=True \
     monitor_rollout_ref.enable_train_monitor=False \
+    monitor_rollout_ref.actor_cost_threshold=0.0 \
+    monitor_rollout_ref.data.max_prompt_length=8192 \
+    monitor_rollout_ref.rollout.max_num_batched_tokens=10000 \
+    monitor_rollout_ref.data.truncation='left' \
     monitor_rollout_ref.model.path=google/gemma-3-4b-it \
     monitor_rollout_ref.model.attn_implementation=eager \
     monitor_rollout_ref.model.use_remove_padding=False \
@@ -77,24 +97,16 @@ python3 -m verl.trainer.main_ppo \
     monitor_rollout_ref.monitor.ulysses_sequence_parallel_size=1 \
     monitor_rollout_ref.rollout.enforce_eager=True \
     monitor_rollout_ref.rollout.enable_chunked_prefill=False \
-    monitor_rollout_ref.rollout.n=1 \
+    monitor_rollout_ref.rollout.load_format=safetensors \
     monitor_rollout_ref.model.enable_gradient_checkpointing=True \
     monitor_rollout_ref.monitor.fsdp_config.param_offload=False \
     monitor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    monitor_rollout_ref.rollout.name=vllm \
-    monitor_rollout_ref.rollout.gpu_memory_utilization=0.92 \
+    monitor_rollout_ref.rollout.name=$ENGINE \
+    monitor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     monitor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     monitor_rollout_ref.rollout.val_kwargs.do_sample=True \
-    monitor_rollout_ref.critique_link_check=False \
-    reward_model.enable=True \
-    reward_model.model.path=sfairXC/FsfairX-LLaMA3-RM-v0.1 \
-    reward_model.model.use_remove_padding=True \
-    reward_model.model.fsdp_config.param_offload=True \
-    reward_model.micro_batch_size_per_gpu=32 \
-    reward_model.reward_manager=episode \
-    reward_model.normalization.enable=True \
-    reward_model.normalization.rollout_overrides.temperature=1.1 \
-    reward_model.normalization.rollout_overrides.top_p=1.0 \
+    reward_model.reward_manager=actor_monitor \
+    reward_model.reward_manager_config.actor_monitor.trust_penalty_coef=2.0 \
     judge_model.backend=api_cot \
     judge_model.template_name=strict5_cot \
     judge_model.score_profiles.issue_action.valid_tokens='["0","1","2","3","4"]' \
@@ -114,36 +126,25 @@ python3 -m verl.trainer.main_ppo \
     judge_model.api_cot.parse_error=neutral \
     judge_model.api_cot.api_error=raise \
     algorithm.use_kl_in_reward=False \
-    algorithm.kl_ctrl.type=fixed \
-    algorithm.kl_ctrl.kl_coef=2e-6 \
-    algorithm.lagrangian.enable=True \
-    algorithm.lagrangian.lambda_init=1.0 \
-    algorithm.lagrangian.lambda_max=4.0 \
-    algorithm.lagrangian.lambda_lr=0.2 \
-    algorithm.lagrangian.lambda_update_delay_steps=0 \
-    algorithm.lagrangian.episode_cost_window_size=1024 \
-    algorithm.lagrangian.threshold=0.3 \
-    algorithm.lagrangian.adv_estimator=reinforce_plus_plus \
-    monitor_rollout_ref.actor_cost_threshold=0.0 \
-    env.env_name=ReasonChat \
+    env.env_name=CheatShop \
     env.seed=0 \
-    env.max_steps=1 \
+    env.max_steps=12 \
     env.rollout.n=8 \
-    env.rollout.val_n=1 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
-    trainer.logger='["console","wandb"]' \
-    trainer.log_val_generations=4 \
-    trainer.rollout_data_dir=auto \
+    env.cheatshop.require_self_report=False \
+    env.cheatshop.enable_log_edit=False \
+    env.cheatshop.monitor_obs_level=action_plus_obs \
+    env.cheatshop.self_report_cot_visibility=hidden \
+    trainer.logger=['console','wandb'] \
+    trainer.log_val_generations=2 \
     trainer.log_distributions=True \
-    trainer.grm_judge_data_dir=null \
-    trainer.grm_judge_data_freq=20 \
-    trainer.project_name='verl_deceptive_roles' \
-    trainer.experiment_name='grpo_gemma3_4b_monitor_cot_judge' \
+    trainer.project_name='cheatshop' \
+    trainer.experiment_name='grpo_gemma3_4b_cheatshop_mo_cot_judge' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node_monitor=3 \
     trainer.nnodes_monitor=1 \
-    trainer.save_steps='[140]' \
+    trainer.save_steps='[20,60,100]' \
     trainer.test_freq=20 \
-    trainer.total_epochs=60 \
+    trainer.total_epochs=200 \
     trainer.val_before_train=True $@

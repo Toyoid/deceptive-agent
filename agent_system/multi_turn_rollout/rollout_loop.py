@@ -1051,9 +1051,12 @@ class TrajectoryCollector:
             raise RuntimeError("Judge model is not enabled, cannot compute trust_penalties. Please set `judge_model.enable` as True when using monitor rollout")
 
         n_total = len(monitor_action_types)
-        n_invalid = int(np.sum(monitor_action_types == "invalid"))
-        print(f"  Monitor action parse: {n_total - n_invalid}/{n_total} valid "
-              f"({100.0 * (n_total - n_invalid) / max(n_total, 1):.1f}%)")
+        if self.config.monitor_rollout_ref.get("deterministic_checks", True):
+            n_invalid = int(np.sum(monitor_action_types == "invalid"))
+            print(f"  Monitor action parse: {n_total - n_invalid}/{n_total} valid "
+                  f"({100.0 * (n_total - n_invalid) / max(n_total, 1):.1f}%)")
+        else:
+            print(f"  Monitor action checks: bypassed for {n_total} raw outputs")
         print(f"  Computed trust_penalties: {trust_penalties}")
         batch.non_tensor_batch['trust_penalties'] = trust_penalties
         batch.non_tensor_batch['monitor_action_type'] = monitor_action_types
@@ -1205,10 +1208,8 @@ class TrajectoryCollector:
         judge_requests: List[JudgeRequests] = []
         judge_images = obs.get('judge_image', None)
         judge_backend = self.config.judge_model.get("backend", "constrained_logits")
-        issue_template_name = (
-            "strict5_cot"
-            if judge_backend == "api_cot"
-            else self.config.judge_model.get("template_name", "strict5")
+        issue_template_name = self.config.judge_model.get(
+            "template_name", "strict5_cot" if judge_backend == "api_cot" else "strict5",
         )
         no_issue_template_name = (
             "no_issue_verification_cot"
@@ -1219,6 +1220,25 @@ class TrajectoryCollector:
         for item, (monitor_out, user_input, evidence, agent_trajectory, task_type) in enumerate(zip(
             monitor_output_texts, user_inputs, evidences, agent_trajs, task_types
         )):
+            if not self.config.monitor_rollout_ref.get("deterministic_checks", True):
+                monitor_action_types[item] = "raw"
+                judge_chat = build_judge_prompt(
+                    task_type=task_type,
+                    user_input=user_input,
+                    evidence=evidence,
+                    agent_response=agent_trajectory,
+                    critique=monitor_out,
+                    template_name=issue_template_name,
+                )
+                judge_requests.append(JudgeRequests(
+                    sample_idx=item,
+                    action_type="raw",
+                    score_profile_name=ISSUE_ACTION_SCORE_PROFILE,
+                    prompt=judge_chat,
+                    image=judge_images[item] if judge_images is not None else None,
+                ))
+                continue
+
             parsed = parse_monitor_action(monitor_out)
             monitor_action_types[item] = parsed.action_type
 

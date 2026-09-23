@@ -1,37 +1,28 @@
 set -x
 
-ENGINE=${ENGINE:-vllm}
-if (($#)) && [[ "$1" != *=* ]]; then
-    ENGINE=$1
-    shift
-fi
+ENGINE=${1:-vllm}
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1
-export WANDB_MODE="online"
-export WANDB_ENTITY="toy-collaborate"
-DATA_ROOT=/ssd/work/verl_data
+DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
 
-CHECKPOINT_CONTENTS=['model','optimizer','extra','hf_model'] # save hf_model for later maximin/monitor-only training
+CHECKPOINT_CONTENTS=['model','optimizer','extra']
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
-    data.train_batch_size=128 \
+    data.train_batch_size=8 \
     data.val_batch_size=256 \
-    data.max_prompt_length=4096 \
-    data.max_response_length=512 \
+    data.max_prompt_length=2048 \
+    data.max_response_length=2048 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/ssd/work/models/Qwen3-8B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-8B \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
@@ -46,32 +37,31 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.enable_chunked_prefill=False \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=False \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
     algorithm.use_kl_in_reward=False \
     algorithm.gamma=0.95 \
     env.env_name=deceptive_search \
     env.seed=0 \
     env.max_steps=4 \
-    env.rollout.n=5 \
+    env.rollout.n=1 \
     env.history_length=4 \
     env.deceptive_search.search_url='http://127.0.0.1:8000/retrieve' \
     trainer.logger=['console','wandb'] \
     trainer.log_val_generations=4 \
     trainer.project_name='verl_deceptive_search' \
-    trainer.experiment_name='grpo_deceptive_search_qwen3_8b' \
+    trainer.experiment_name='grpo_deceptive_search_qwen3_8b_eval' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=20 \
-    trainer.test_freq=100 \
+    trainer.test_freq=1 \
     trainer.total_epochs=1 \
     trainer.val_before_train=False $@

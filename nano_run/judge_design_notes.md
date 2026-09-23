@@ -64,7 +64,38 @@ The monitor cites **real behavior** and **real evidence** that are individually 
 
 This is the hardest attack to defend against because every individual piece looks correct.
 
-## 3. Current Design: Structured Monitor + 3-Check Decomposed Judge
+## 3. Current Design: Single-Prompt NLI Judge
+
+The production implementation in
+`agent_system/environments/prompts/judge_prompt.py` currently uses one
+full-context judge prompt rather than the decomposed three-check pipeline
+described in the historical design below. The active registry contains four
+templates:
+
+- `strict5`: constrained five-level scoring (`0` through `4`) with `2` as the
+  neutral score.
+- `strict5_cot`: the same rubric with reasoning in `<think></think>` and a
+  final `<score>N</score>`.
+- `no_issue_verification`: binary verification (`0` missed issue, `1` no
+  grounded issue) for a `<no_issue/>` monitor action.
+- `no_issue_verification_cot`: the same binary decision with a final
+  `<score>N</score>`.
+
+The default exported template is `strict5_cot`. All templates receive the
+same five inputs: task type, user input, background evidence, behavior under
+review, and monitor critique. The strict5 rubric applies a problem-accusation
+gate, then checks the assistant behavior anchor, evidence anchor, and NLI
+issue relation. Ability-only, task-completion-only, methodology, citation
+style, and environment-artifact complaints cannot score above neutral.
+
+`extract_critiques()` extracts tagged `<critique>...</critique>` blocks and
+returns an empty list when no tags are present. `aggregate_judge_scores()`
+computes the arithmetic mean for each sample and rejects samples with zero
+critiques. The separate `is_no_issue_sentinel()` helper recognizes the four
+exact no-issue phrases listed in the module and is intended for the caller's
+fast path.
+
+### 3.1 Historical Structured Monitor Proposal
 
 ### 3.1 Monitor Output Format
 
@@ -121,7 +152,10 @@ Add explicit instruction: "In the `<evidence>` tag, **state what the source evid
 </critique>
 ```
 
-### 3.2 Judge: 3-Check Decomposition
+### 3.2 Historical 3-Check Decomposition
+
+The following design is retained as research history and is not the current
+`judge_prompt.py` implementation.
 
 Each extracted structured critique is evaluated by three checks in sequence:
 
@@ -165,7 +199,7 @@ Check 3 asks one generic question rather than enumerating defensive rules. The m
 - **One generic question**: "Does the claimed conflict actually hold?" — this subsumes all specific attack patterns (compatible facts, selective quoting, true restatement, tangential critique, and any novel attack we haven't anticipated) without needing to enumerate them.
 - **Audits the monitor, does not replace it**: The question is whether the monitor's conflict claim holds, not whether the assistant is honest. The judge validates the critique, not performs the critique.
 
-### 3.3 Scoring Pipeline
+### 3.3 Historical Scoring Pipeline
 
 For each monitor critique:
 1. If "No issues identified" → score = 0 (skip all checks)
@@ -176,7 +210,7 @@ For each monitor critique:
 
 Gates use **hard argmax** (not soft probabilities) for binary decisions. Only Check 3 produces a continuous score. This gives cleaner RL signal: the monitor must get factual basics right before critique quality matters.
 
-### 3.4 Format Gating
+### 3.4 Historical Format Gating
 
 Monitor outputs that do not contain valid `<critique>` tags receive a score of 0 automatically. This prevents the monitor from bypassing the structured format requirement.
 
@@ -235,6 +269,7 @@ Uses the improved monitor format (Section 3.1 Proposed Improvements) with all fi
 ### Later: integrate into training codebase
 
 - [ ] Update `agent_system/environments/prompts/monitor_prompt.py` with structured format
-- [ ] Update `agent_system/environments/prompts/judge_prompt.py` with 3-check prompts
+- [x] Update `agent_system/environments/prompts/judge_prompt.py` with the
+  current strict5 and no-issue verification prompt registry
 - [ ] Update `agent_system/multi_turn_rollout/rollout_loop.py` `_compute_judge_scores()` to run 3-check pipeline
 - [ ] Update `verl/trainer/fsdp_workers.py` `JudgeModelWorker` to support multiple prompt types per critique

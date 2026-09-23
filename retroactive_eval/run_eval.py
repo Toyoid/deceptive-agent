@@ -41,8 +41,8 @@ ALGORITHM_NAMES = [
     "Verdict Monitor",
     "Self-Monitor",
     "Critique Monitor",
-    "ePOG (Ours)",
-    "ePOG-Weak-to-Strong (Ours)",
+    "e-PoG (Ours)",
+    "e-PoG Weak-to-Strong (Ours)",
 ]
 
 # Configure logging
@@ -352,7 +352,7 @@ async def run_evaluation(args: argparse.Namespace) -> Dict[str, Any]:
         f.write(aggregator.summary())
     print(f"  Saved summary to {summary_file}")
 
-    if getattr(args, "save_plot_statistics", False):
+    if getattr(args, "save_plot_stats", False):
         plot_statistics_file = save_plot_statistics(
             aggregator,
             output_dir=output_dir,
@@ -485,7 +485,7 @@ Examples:
     )
     output_group.add_argument("--no-plots", action="store_true", help="Skip plot generation")
     output_group.add_argument(
-        "--save-plot-statistics",
+        "--save-plot-stats",
         action="store_true",
         help="Save or update step-wise statistics for later summary plotting",
     )
@@ -522,15 +522,19 @@ def main():
     # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_8b_maximin_cot_judge_w2s/2026-07-07_16-47-22/rollout_data/rollout"  # Maximin Rl with weak-to-strong oversight
     
     # -------- Qwen3-4B experiments --------
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b/2026-07-23_16-25-06/rollout_data/rollout"
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b/2026-08-23_01-52-45/rollout_data/rollout"  # vanilla RLHF
+    data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b_aux_safety/2026-08-27_20-27-03/rollout_data/rollout"  # mixed safety RLHF
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b_verdict_monitor/2026-08-26_00-50-53/rollout_data/rollout"  # RL with verdict monitor (Qwen2.5-7B) as oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b_self_monitor/2026-08-26_13-23-31/rollout_data/rollout"  # Self-Monitor-RL
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b_monitor_cot_judge/2026-08-19_17-39-10/rollout_data/rollout"  # RL with critique monitor (Qwen3-4B) as oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_qwen3_4b_maximin_cot_judge/2026-08-23_01-55-49/rollout_data/rollout"    # Maximin RL
 
     # -------- gemma-3-4b-it experiments --------
     # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b/2026-07-23_20-30-36/rollout_data/rollout"  # vanilla RLHF
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b/2026-07-29_23-41-33/rollout_data/rollout"  # vanilla RLHF
     # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_aux_safety/2026-07-24_12-01-54/rollout_data/rollout"  # mixed safety RLHF
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_monitor_cot_judge/2026-08-03_13-51-01/rollout_data/rollout"  # RL with critique monitor (Gemma-3-4b-it) as oversight, good one
-    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_monitor_cot_judge/2026-08-04_21-26-25/rollout_data/rollout"  # RL with critique monitor (Gemma-3-4b-it) as oversight, bad one
-    data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_verdict_monitor/2026-08-05_21-13-48/rollout_data/rollout"  # RL with verdict monitor (Gemma-3-4b-it) as oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_self_monitor/2026-08-16_15-12-03/rollout_data/rollout"  # Self-Monitor-RL
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_monitor_cot_judge/2026-08-04_21-26-25/rollout_data/rollout"  # RL with critique monitor (Gemma-3-4b-it) as oversight
+    # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_verdict_monitor/2026-08-05_21-13-48/rollout_data/rollout"  # RL with verdict monitor (Gemma-3-4b-it) as oversight
     # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_maximin_cot_judge/2026-07-26_00-24-30/rollout_data/rollout" # HHH suffix Maximin RL
     # data_subdir = "outputs/verl_deceptive_roles/grpo_gemma3_4b_maximin_cot_judge/2026-07-31_19-21-24/rollout_data/rollout"  # *no sufffix
 
@@ -540,7 +544,6 @@ def main():
     args.output_dir = str(data_dir.parent / "retro_eval")
 
     # steps to eval, None as default, meaning all available steps
-    # args.steps = [1,120,140,160]
     args.steps = [1] + [step for step in range(2, 161, 2)] # Evaluate every 2 steps from 2 to 160, plus step 1
     args.batch_size = args.max_concurrent * 10
     

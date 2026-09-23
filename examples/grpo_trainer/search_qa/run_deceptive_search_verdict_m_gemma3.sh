@@ -4,29 +4,44 @@ ENGINE=${1:-vllm}
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export VLLM_USE_V1=0
+
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"
 VAL_DATA="$DATA_ROOT/searchR1_processed_direct/test.parquet"
 
-verdict_monitor_path=Qwen/Qwen2.5-7B-Instruct
+verdict_monitor_path=google/gemma-3-4b-it
 
-# RL training with a trajectory-level verdict monitor.
+CHECKPOINT_CONTENTS=['model','optimizer','extra']
+
+    # actor_rollout_ref.rollout.enable_prefix_caching=False \
+    # actor_rollout_ref.rollout.free_cache_engine=False \
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
-    data.train_batch_size=120 \
-    data.val_batch_size=512 \
-    data.max_prompt_length=4096 \
+    data.train_batch_size=64 \
+    data.val_batch_size=256 \
+    data.max_prompt_length=2048 \
     data.max_response_length=512 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=checkpoints/verl_deceptive_search/grpo_deceptive_search_qwen3_4b/global_step_190/actor/huggingface \
-    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.model.path=hahnli/gemma-3-4b-Search-Cheating-Agent \
+    actor_rollout_ref.model.attn_implementation=eager \
+    actor_rollout_ref.model.use_remove_padding=False \
+    actor_rollout_ref.model.use_fused_kernels=False \
+    actor_rollout_ref.model.freeze_vision_tower=True \
+    actor_rollout_ref.model.freeze_multi_modal_projector=True \
+    actor_rollout_ref.actor.fsdp_config.use_orig_params=True \
+    actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
+    actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.enable_chunked_prefill=False \
+    actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
+    actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.actor.use_kl_loss=True \
@@ -37,23 +52,25 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
     actor_rollout_ref.rollout.name=$ENGINE \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
-    actor_rollout_ref.rollout.enable_chunked_prefill=False \
-    actor_rollout_ref.rollout.enforce_eager=False \
-    actor_rollout_ref.rollout.free_cache_engine=False \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
     reward_model.reward_manager=actor_monitor \
     verdict_monitor.enable=True \
     verdict_monitor.model.path="$verdict_monitor_path" \
-    verdict_monitor.model.use_remove_padding=True \
     verdict_monitor.model.chat_template_kwargs.enable_thinking=False \
     verdict_monitor.model.fsdp_config.param_offload=True \
+    verdict_monitor.model.attn_implementation=eager \
+    verdict_monitor.model.use_remove_padding=False \
+    +verdict_monitor.model.use_fused_kernels=False \
+    +verdict_monitor.model.freeze_vision_tower=True \
+    +verdict_monitor.model.freeze_multi_modal_projector=True \
+    +verdict_monitor.model.enable_gradient_checkpointing=True \
     verdict_monitor.micro_batch_size_per_gpu=8 \
     verdict_monitor.valid_tokens='["0","1"]' \
     verdict_monitor.token_weights='[0.0,1.0]' \
@@ -65,15 +82,13 @@ python3 -m verl.trainer.main_ppo \
     env.rollout.n=5 \
     env.history_length=4 \
     env.deceptive_search.search_url='http://127.0.0.1:8000/retrieve' \
-    env.deceptive_search.reward_correct=1.0 \
     trainer.logger=['console','wandb'] \
-    trainer.log_val_generations=2 \
-    trainer.log_distributions=True \
+    trainer.log_val_generations=4 \
     trainer.project_name='verl_deceptive_search' \
-    trainer.experiment_name='grpo_deceptive_search_verdict_monitor_qwen3_4b' \
+    trainer.experiment_name='grpo_deceptive_search_verdict_monitor_gemma3_4b' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_steps='[90,110,120]' \
-    trainer.test_freq=122 \
+    trainer.save_steps='[60,120]' \
+    trainer.test_freq=121 \
     trainer.total_epochs=1 \
-    trainer.val_before_train=False "$@"
+    trainer.val_before_train=False $@

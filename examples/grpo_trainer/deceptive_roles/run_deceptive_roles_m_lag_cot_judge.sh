@@ -21,7 +21,7 @@ JUDGE_MAX_CONCURRENT="${JUDGE_MAX_CONCURRENT:-128}"
 python3 examples/data_preprocess/deceptive_roles.py \
     --local_dir $DATA_ROOT/deceptive_roles_improved \
     --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
-    --no_format_prompt
+    --no_format_prompt \
     --suffix_prompt
 
 train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet

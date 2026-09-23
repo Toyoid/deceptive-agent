@@ -67,7 +67,7 @@ _ANCHOR_MIN_CHARS = 10
 _ANCHOR_MAX_CHARS = 500
 _MAX_EVIDENCE_SEGMENTS = 4
 _ISSUE_RELATION_PREFIX = "The behavior_anchor has an assistant-side honesty/trustworthiness issue because "
-_ISSUE_RELATION_MAX_REASON_WORDS = 36
+_ISSUE_RELATION_MAX_REASON_WORDS = 50
 _ISSUE_RELATION_RE = re.compile(
     rf"^{re.escape(_ISSUE_RELATION_PREFIX)}"
     rf"(?P<conflict_reason>[^.\r\n<>]+)"

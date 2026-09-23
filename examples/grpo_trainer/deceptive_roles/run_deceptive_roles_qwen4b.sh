@@ -3,14 +3,16 @@ set -x
 num_cpus_per_env_worker=0.1 # The CPU resource allocated for each environment worker. If you want to use less CPU resources, you can decrease this value.
 
 export HF_ENDPOINT="https://hf-mirror.com"
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 # Data preparation scripts are available in ``examples/data_preprocess``.
 python3 examples/data_preprocess/deceptive_roles.py \
     --local_dir $DATA_ROOT/deceptive_roles_improved \
     --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
-    --no_format_prompt
+    --no_format_prompt \
+    --suffix_prompt
 
 train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
 test_files=$DATA_ROOT/deceptive_roles_improved/test.parquet
@@ -22,7 +24,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=48 \
+    data.train_batch_size=62 \
     data.val_batch_size=64 \
     data.max_prompt_length=256 \
     data.max_response_length=768 \
@@ -35,9 +37,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.chat_template_kwargs.enable_thinking=True \
     actor_rollout_ref.actor.checkpoint.contents=$CHECKPOINT_CONTENTS \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
+    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.05 \
     actor_rollout_ref.actor.use_kl_loss=True \
-    actor_rollout_ref.actor.kl_loss_coef=0.01 \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
@@ -73,7 +75,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.rollout_data_dir=auto \
     trainer.project_name='verl_deceptive_roles' \
     trainer.experiment_name='grpo_qwen3_4b' \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_steps='[140]' \
     trainer.test_freq=20 \

@@ -125,8 +125,16 @@ The monitor prompts live in [monitor_prompt.py](agent_system/environments/prompt
 
 Judge scoring has two forms: API CoT judging through `judge_model.backend=api_cot`, and local constrained-token scoring through `judge_model.backend=constrained_logits`. Supported constrained scorer templates include:
 
-- `balanced` and `strict`: four-level critique validity scales.
-- `balanced5` and `strict5`: five-level symmetric scales with a neutral center.
+- `strict5`: five-level critique validity scoring with a neutral center.
+- `strict5_cot`: the same five-level scoring rubric with `<think>` reasoning
+  and a final `<score>N</score>` output.
+- `no_issue_verification` and `no_issue_verification_cot`: binary judges for
+  verifying whether a `<no_issue/>` monitor action missed an assistant-side
+  honesty issue.
+
+All templates are registered in `JUDGE_PROMPT_REGISTRY` and can be selected
+with `judge_model.template_name` or `build_judge_prompt(template_name=...)`.
+The default template is `strict5_cot`.
 
 The trainer exposes these paths through:
 

@@ -105,11 +105,20 @@ class BaseModelMerger(ABC):
         self.model_config = AutoConfig.from_pretrained(self.hf_model_config_path)
 
     def get_transformers_auto_model_class(self):
-        if "ForTokenClassification" in self.model_config.architectures[0]:
+        architecture = self.model_config.architectures[0] if getattr(self.model_config, "architectures", None) else ""
+
+        if "Gemma3" in architecture:
+            try:
+                from transformers import AutoModelForImageTextToText
+
+                return AutoModelForImageTextToText
+            except ImportError:
+                return AutoModelForVision2Seq
+        if "ForTokenClassification" in architecture:
             return AutoModelForTokenClassification
-        elif "ForCausalLM" in self.model_config.architectures[0]:
+        elif "ForCausalLM" in architecture:
             return AutoModelForCausalLM
-        elif "ForConditionalGeneration" in self.model_config.architectures[0]:
+        elif "ForConditionalGeneration" in architecture:
             return AutoModelForVision2Seq
 
         raise NotImplementedError(f"Unknown architecture {self.model_config.architectures}")

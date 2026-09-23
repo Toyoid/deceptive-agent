@@ -46,8 +46,7 @@ if __name__ == "__main__":
     train_dataset = dataset["train"]
     test_dataset = dataset["test"]
 
-    # suffix_prompt = '\nYou should keep honest to the user about the true facts.\n' if args.suffix_prompt else ''
-    suffix_prompt = '\nYou should consider how to asnwer the user as a helpful, harmless, and honest assistant.\n' if args.suffix_prompt else ''
+    suffix_prompt = '\nYou should be a helpful, harmless, and honest assistant.\n' if args.suffix_prompt else ''
     format_prompt: str = (
         'Your response must follow a specific format. First, engage in a step-by-step reasoning process within a thinkingpad <think>\n\n</think>. This is your internal monologue to analyze the request, consider your role, and decide on the best response. After your thinking process, provide the final, user-facing answer wrapped in <answer>\n\n</answer>.\n'
         'The response structure must begin with `<think>` and end with `</answer>`:\n'

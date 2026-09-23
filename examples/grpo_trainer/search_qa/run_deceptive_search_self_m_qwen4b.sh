@@ -4,10 +4,6 @@ ENGINE=${1:-vllm}
 
 export HF_ENDPOINT="https://hf-mirror.com"
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1
-# export WANDB_MODE="offline"
 DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 
 TRAIN_DATA="$DATA_ROOT/searchR1_processed_direct/train.parquet"

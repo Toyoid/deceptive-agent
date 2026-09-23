@@ -12,7 +12,6 @@ DATA_ROOT=/devsft_AFS/hanxiaoli/verl_data
 python3 examples/data_preprocess/deceptive_roles.py \
     --local_dir $DATA_ROOT/deceptive_roles_improved \
     --source_dir agent_system/environments/env_package/reason_chat/deceptive_roles_improved \
-    --suffix_prompt
 
 train_files=$DATA_ROOT/deceptive_roles_improved/train.parquet
 test_files=$DATA_ROOT/deceptive_roles_improved/test.parquet

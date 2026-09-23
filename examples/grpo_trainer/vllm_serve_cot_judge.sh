@@ -19,10 +19,29 @@ export CUDA_VISIBLE_DEVICES=7
 PORT="${1:-7001}"
 TP_SIZE="${2:-1}"
 MODEL="${3:-hahnli/Qwen3-8B-CoT-Judge}"
+# MODEL="${3:-Qwen/Qwen3-4B}"
+# MODEL="${3:-google/gemma-3-4b-it}"
 SERVED_MODEL_NAME="${4:-Qwen3-8B-GRM}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.92}"
+# SERVED_MODEL_NAME="${4:-Qwen3-4B-GRM}"
+# SERVED_MODEL_NAME="${4:-Gemma3-4B-GRM}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"
 EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
+
+# Gemma 3 compatibility profile for vLLM 0.8.5.post1.
+# This block is skipped automatically for Qwen3 and other model families.
+MODEL_FAMILY_ARGS=()
+if [[ "$MODEL" == *gemma-3* ]]; then
+    export VLLM_USE_V1=0
+    # Match veRL rollout precision. vLLM 0.8.5.post1 can resolve auto to FP16
+    # from Gemma's nested config, causing numerical failures and pad-only output.
+    MODEL_FAMILY_ARGS+=(
+        --dtype bfloat16
+        --enforce-eager
+        --no-enable-chunked-prefill
+        --no-enable-prefix-caching
+    )
+fi
 
 echo "================================================================"
 echo "Starting CoT judge vLLM OpenAI-compatible server via vllm serve"
@@ -48,4 +67,5 @@ vllm serve "$MODEL" \
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
     --max-model-len "$MAX_MODEL_LEN" \
     --trust-remote-code \
+    "${MODEL_FAMILY_ARGS[@]}" \
     $EXTRA_VLLM_ARGS
