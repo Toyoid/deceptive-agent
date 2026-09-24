@@ -1,33 +1,33 @@
 # Experiment Kickoff Guide
 
-This directory is the developer-facing experiment manual for the deception and misalignment experiments in this repository. It supplements the root [README.md](../README.md), which introduces the repository, and [README_legacy_verl_agent.md](../README_legacy_verl_agent.md), which remains the authoritative reference for inherited Search and WebShop environment setup details.
+This is the shortest path from a fresh checkout to the repository's main research experiments. The codebase combines multi-turn LLM-RL with reward models, unauthorized-tool environments, several monitor designs, and game-theoretic agent–monitor training.
 
-Use these pages in order:
+## Pick an environment
 
-1. [quick_start.md](quick_start.md): concise launch steps for all supported environment and method combinations. This page assumes environments are already installed.
-2. [roles.md](roles.md): ReasonChat/deceptive-roles environment introduction, config notes, installation assumptions, data preparation, launches, and API rollout evaluation.
-3. [deceptive_search.md](deceptive_search.md): Deceptive Search environment introduction, Search-R1 setup, retriever requirements, data preparation, launches, and API rollout evaluation.
-4. [cheatshop.md](cheatshop.md): CheatShop environment introduction, WebShop/CheatShop setup, data preparation, launches, and API rollout evaluation.
-5. [methods.md](methods.md): RL, self-monitor, verdict-monitor, auxiliary safety RLHF, critique-monitor, maximin, trust-penalty application, and judge configuration.
-
-## Experiment Scope
-
-The guide covers three target environments and six method families.
-
-| Environment | `env.env_name` | Main page | Notes |
+| Paper name | What it studies | Runtime name | Guide |
 | --- | --- | --- | --- |
-| roles | `ReasonChat` | [roles.md](roles.md) | Single-turn deceptive role chat. Reward comes from a reward model, so Lagrangian trust-penalty application is usually preferred. |
-| deceptive search | `deceptive_search` | [deceptive_search.md](deceptive_search.md) | Search-R1-style QA with a public search tool and hidden insider lookup. Requires the retriever service. Mitigation runs start from a prior RL checkpoint. |
-| cheatshop | `CheatShop` | [cheatshop.md](cheatshop.md) | WebShop-derived shopping task with restricted/internal tools and monitor-visible traces. Runs in `deceptive-agent-webshop`. Mitigation runs start from a prior RL checkpoint. |
+| Agentic Role-Playing | Reward hacking and deception under conflicting roles | `ReasonChat` | [agentic_role_playing.md](agentic_role_playing.md) |
+| SearchQA | QA with public search, optionally with an unauthorized answer tool | `search` / `deceptive_search` | [searchqa.md](searchqa.md) |
+| WebShop | Shopping, optionally with unauthorized analysis/search tools | `Webshop` / `CheatShop` | [webshop.md](webshop.md) |
 
-| Method | Status in this guide | Main configs |
-| --- | --- | --- |
-| RL | Baseline task RL and checkpoint producer for deceptive search and cheatshop mitigation. | `algorithm.adv_estimator`, `actor_rollout_ref.*`, `env.*` |
-| self-monitor | Actor produces the monitor signal itself; always initialize from a self-monitor SFT checkpoint. | `self_monitor.enable=True` |
-| verdict-monitor | Frozen trajectory verdict model produces a trust penalty. | `verdict_monitor.enable=True` |
-| auxiliary safety RLHF | Prompt-only safety RLHF branch appended to main task training. | `auxiliary.enable=True` |
-| critique-monitor | Fixed external critique monitor baseline. | `monitor_rollout_ref.enable=True`, `monitor_rollout_ref.enable_train_monitor=False`, `judge_model.*` |
-| maximin | Actor-monitor game optimization. | `monitor_rollout_ref.enable=True`, `monitor_rollout_ref.enable_train_monitor=True`, `judge_model.*` |
+Each environment page gives setup, one data command, the main launch matrix, and evaluation commands. [methods.md](methods.md) explains RL, Mixed Safety RLHF, Self-Monitor, Critique Monitor, Verdict Monitor, and e-PoG.
 
-Use `Qwen/Qwen3-8B` as the recommended global default model unless an experiment script intentionally uses a smaller model for debugging or memory pressure.
+## Before any launch
 
+Complete the root [Installation guide](../README.md#installation), then run commands from the repository root. The shell files are experiment specifications, not portable wrappers: inspect their first lines and replace hard-coded `DATA_ROOT`, checkpoint paths, GPU visibility, offline Hugging Face settings, and W&B settings. Most main launches use eight GPUs.
+
+```bash
+conda activate deceptive-agent
+pip install -e .
+```
+
+WebShop needs its separate environment; SearchQA needs a retriever process. Follow the corresponding environment page first.
+
+## Recommended path
+
+1. Launch the plain RL baseline for one environment.
+2. Read [methods.md](methods.md) and select a monitoring baseline or e-PoG.
+3. Use the environment page's matching script. Suffixes such as `_qwen4b` and `_gemma3` select model-specific reproductions; the unsuffixed script is the primary Qwen3-8B entry point.
+4. Use `examples/api_rollout_eval/` for checkpoint or API evaluation.
+
+The root [README.md](../README.md) describes the broader framework.
