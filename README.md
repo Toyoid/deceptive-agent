@@ -192,7 +192,7 @@ CUDA_VISIBLE_DEVICES=7 \
 
 Wait until the OpenAI-compatible endpoint is ready at `http://127.0.0.1:7001/v1`.
 
-### Agentic Role-Playing: e-PoG
+### Run e-PoG training in Agentic Role-Playing
 
 The script prepares the role-playing data and uses a reward model for task utility with a Lagrangian trust constraint.
 
@@ -204,7 +204,7 @@ JUDGE_MODEL_NAME=Qwen3-8B-GRM JUDGE_PORT=7001 \
   bash examples/grpo_trainer/deceptive_roles/run_deceptive_roles_mm_lag_cot_judge.sh
 ```
 
-### SearchQA with unauthorized tools: e-PoG
+### Run e-PoG training in SearchQA with unauthorized information available
 
 Start the retriever first and leave it running:
 
@@ -226,7 +226,7 @@ JUDGE_MODEL_NAME=Qwen3-8B-GRM JUDGE_PORT=7001 \
   bash examples/grpo_trainer/search_qa/run_deceptive_search_mm_cot_judge.sh
 ```
 
-### WebShop with unauthorized tools: e-PoG
+### Run e-PoG training in WebShop with unauthorized tools available
 
 Run training in the dedicated WebShop environment while keeping the verifier in its original terminal:
 
