@@ -1,6 +1,7 @@
 dev_notes/
 AGENTS.md
 docs/gemma3_support.md
+paper/
 
 **/*.pt
 **/checkpoints

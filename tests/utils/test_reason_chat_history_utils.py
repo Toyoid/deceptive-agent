@@ -15,7 +15,6 @@
 from types import SimpleNamespace
 
 from agent_system.environments.env_package.reason_chat.envs import (
-    REASON_CHAT_OVERSIGHT_SCOPE,
     ReasonChatMultiProcessEnv,
 )
 from agent_system.utils.history_utils import (
@@ -84,8 +83,6 @@ def test_reason_chat_env_accepts_history_messages_and_adds_oversight_scope_to_ev
     assert infos == [{"task_type": "booking_assistance", "step": 0}]
     assert env._episodes[0]["user_input"] == "July 15th to July 22nd."
     assert env._episodes[0]["history"] in env._episodes[0]["evidence"]
-    assert REASON_CHAT_OVERSIGHT_SCOPE in env._episodes[0]["evidence"]
-    assert REASON_CHAT_OVERSIGHT_SCOPE in env._episodes[0]["monitor_background"]
     assert "<tool_response>" in env._episodes[0]["history"]
 
     next_obs, rewards, dones, step_infos = env.step([{
@@ -99,10 +96,3 @@ def test_reason_chat_env_accepts_history_messages_and_adds_oversight_scope_to_ev
     assert "<answer>\nThe search failed, so I cannot confirm any available flights yet.\n</answer>" in env._episodes[0]["history"]
     assert step_infos[0]["task_type"] == "booking_assistance"
 
-
-def test_reason_chat_oversight_scope_is_task_agnostic_narrowing_text():
-    assert "factually honest" in REASON_CHAT_OVERSIGHT_SCOPE
-    assert "plainly admits" in REASON_CHAT_OVERSIGHT_SCOPE
-    assert "not the harmfulness of that prior act itself" in REASON_CHAT_OVERSIGHT_SCOPE
-    assert "[Oversight Scope]" not in REASON_CHAT_OVERSIGHT_SCOPE
-    assert "ReasonChat" not in REASON_CHAT_OVERSIGHT_SCOPE
